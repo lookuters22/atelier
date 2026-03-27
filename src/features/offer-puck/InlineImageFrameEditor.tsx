@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { inlineEditStopDragProps, useInlineEditStopDrag } from "./inlineEditStopDrag";
 
 export type InlineImageDraft = {
@@ -102,11 +102,16 @@ export function InlineImageFrameEditor<T extends InlineImageDraft, S extends Inl
   const moveLayerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<S | null>(null);
   const interactionRef = useRef<CropInteraction | null>(null);
+  const [hintDismissed, setHintDismissed] = useState(false);
 
   useInlineEditStopDrag(stageRef, Boolean(editor), editor?.frameRect);
 
   useEffect(() => {
     editorRef.current = editor;
+  }, [editor]);
+
+  useEffect(() => {
+    setHintDismissed(false);
   }, [editor]);
 
   useEffect(() => {
@@ -240,6 +245,7 @@ export function InlineImageFrameEditor<T extends InlineImageDraft, S extends Inl
 
       if (!moveLayer.contains(target)) return;
       stopEvent(event);
+      setHintDismissed(true);
       const placement = getImagePlacement(
         current.frameRect.width,
         current.frameRect.height,
@@ -317,6 +323,17 @@ export function InlineImageFrameEditor<T extends InlineImageDraft, S extends Inl
 
   return createPortal(
     <div className="pointer-events-none fixed inset-0 z-[180]">
+      <style>{`
+        @keyframes offer-drag-hint-slide {
+          0%, 100% { transform: translateX(0); opacity: 0.55; }
+          50% { transform: translateX(6px); opacity: 1; }
+        }
+        @keyframes offer-drag-hand-sweep {
+          0% { transform: translateX(-14px); opacity: 0.72; }
+          50% { transform: translateX(14px); opacity: 1; }
+          100% { transform: translateX(-14px); opacity: 0.72; }
+        }
+      `}</style>
       <div
         ref={stageRef}
         className="pointer-events-auto absolute overflow-visible"
@@ -356,9 +373,31 @@ export function InlineImageFrameEditor<T extends InlineImageDraft, S extends Inl
           <div className="pointer-events-none absolute inset-0 border border-white/85 shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
         </div>
         <div className="pointer-events-none absolute inset-0 border border-white/95 shadow-[0_0_0_1px_rgba(255,255,255,0.25)]" />
-        <div className="pointer-events-none absolute inset-x-0 text-center" style={{ bottom: -34 }}>
-          <span className="rounded-full bg-black/72 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/90 shadow-lg backdrop-blur-sm">
-            {hintText}
+        <div
+          className={
+            "pointer-events-none absolute inset-0 flex items-center justify-center transition-all duration-300 " +
+            (hintDismissed ? "scale-95 opacity-0" : "scale-100 opacity-100")
+          }
+        >
+          <span
+            className="font-sans inline-flex flex-col items-center gap-2 text-center text-[11px] font-medium uppercase tracking-[0.2em] text-white/82"
+            style={{ textShadow: "0 2px 12px rgba(0,0,0,0.45)", fontFamily: "var(--font-sans)" }}
+          >
+            <span className="relative flex h-9 w-24 items-center justify-center" aria-hidden>
+              <span className="absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-gradient-to-r from-white/0 via-white/30 to-white/0" />
+              <span
+                className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/78 shadow-[0_10px_24px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-xl"
+                style={{ animation: "offer-drag-hand-sweep 1.55s ease-in-out infinite" }}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4 text-black/65" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 11V6.5a1.5 1.5 0 0 1 3 0V10" />
+                  <path d="M11 10V5.5a1.5 1.5 0 0 1 3 0V10" />
+                  <path d="M14 10V6.5a1.5 1.5 0 0 1 3 0V11" />
+                  <path d="M8 10.5V9a1.5 1.5 0 0 0-3 0v4.5c0 4 2.8 6.5 6.8 6.5H14c3.3 0 6-2.7 6-6v-2.5a1.5 1.5 0 0 0-3 0V12" />
+                </svg>
+              </span>
+            </span>
+            <span>{hintText}</span>
           </span>
         </div>
         <button
@@ -369,30 +408,32 @@ export function InlineImageFrameEditor<T extends InlineImageDraft, S extends Inl
           style={{ touchAction: "none" }}
           {...inlineEditStopDragProps}
         />
-        <button
-          type="button"
-          className="absolute right-1 top-1 z-40 rounded-full bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-black shadow-lg"
-          {...inlineEditStopDragProps}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onCommit();
-          }}
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          className="absolute left-1 top-1 z-40 rounded-full bg-black/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white shadow-lg"
-          {...inlineEditStopDragProps}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onCancel();
-          }}
-        >
-          Cancel
-        </button>
+        <div className="absolute right-1 top-1 z-40 flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded-full bg-black/78 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white shadow-lg"
+            {...inlineEditStopDragProps}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onCancel();
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="rounded-full bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-black shadow-lg"
+            {...inlineEditStopDragProps}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onCommit();
+            }}
+          >
+            Save
+          </button>
+        </div>
       </div>
     </div>,
     document.body,
