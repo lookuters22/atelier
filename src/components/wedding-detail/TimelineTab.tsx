@@ -19,6 +19,7 @@ export function TimelineTab({
   draftExpanded,
   toggleDraftExpanded,
   approveDraft,
+  isApprovingDraft,
   editDraftInComposer,
   draftDefault,
 }: {
@@ -34,6 +35,7 @@ export function TimelineTab({
   draftExpanded: boolean;
   toggleDraftExpanded: () => void;
   approveDraft: () => void;
+  isApprovingDraft: boolean;
   editDraftInComposer: () => void;
   draftDefault: string;
 }) {
@@ -156,21 +158,23 @@ export function TimelineTab({
               </button>
               {draftExpanded ? (
                 <div className="relative z-[1] border-t border-border/60 px-3 pb-3 pt-0 sm:pl-[3.25rem]">
-                  <p className="pt-2 text-[13px] leading-relaxed text-ink">{draftDefault}</p>
+                  <p className="whitespace-pre-wrap pt-2 text-[13px] leading-relaxed text-ink">{draftDefault}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-accent-hover"
+                      disabled={isApprovingDraft}
+                      className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={(e) => {
                         e.stopPropagation();
                         approveDraft();
                       }}
                     >
-                      Approve & send
+                      {isApprovingDraft ? "Approving\u2026" : "Approve & send"}
                     </button>
                     <button
                       type="button"
-                      className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-muted transition hover:border-accent/40 hover:text-ink"
+                      disabled={isApprovingDraft}
+                      className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-muted transition hover:border-accent/40 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={(e) => {
                         e.stopPropagation();
                         editDraftInComposer();

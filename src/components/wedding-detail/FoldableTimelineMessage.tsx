@@ -65,7 +65,7 @@ export function FoldableTimelineMessage({
       {expanded ? (
         <div className="border-t border-border/60 px-3 pb-3 pt-2 sm:pl-[3.25rem]">
           {msg.meta ? <p className="text-[11px] text-ink-faint">{msg.meta}</p> : null}
-          <p className="mt-1.5 text-[13px] leading-relaxed text-ink">{msg.body}</p>
+          <p className="whitespace-pre-wrap mt-1.5 text-[13px] leading-relaxed text-ink">{msg.body}</p>
         </div>
       ) : null}
     </article>

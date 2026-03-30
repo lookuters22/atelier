@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
@@ -7,8 +7,11 @@ import {
   ChevronDown,
   Filter,
   Mail,
+  MoreHorizontal,
+  Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useUnfiledInbox, type UnfiledThread } from "../hooks/useUnfiledInbox";
 
 type FilterId =
   | "all"
@@ -26,60 +29,15 @@ type InboxRow = {
   weddingId: string | null;
   subject: string;
   snippet: string;
+  sender: string;
   time: string;
   badges: string[];
   categories: FilterId[];
-  confidence: null | { label: string; pct: number };
+  suggestedWeddingId: string | null;
+  suggestedCoupleName: string | null;
+  suggestedReasoning: string | null;
+  confidencePct: number;
 };
-
-const rows: InboxRow[] = [
-  {
-    id: "1",
-    wedding: "Sofia & Marco",
-    weddingId: "lake-como",
-    subject: "Re: Final timeline · Villa Cetinale",
-    snippet:
-      "The planner shared v3 of the run-of-show. Hot meals for vendors confirmed for 6:30pm.",
-    time: "12 min ago",
-    badges: ["Booked", "Planner"],
-    categories: ["active_weddings", "needs_reply", "planner"],
-    confidence: null,
-  },
-  {
-    id: "2",
-    wedding: "Unfiled",
-    weddingId: null,
-    subject: "FW: Insurance certificate — Castello Brown",
-    snippet: "Forwarding the COI from the venue coordinator for your records.",
-    time: "32 min ago",
-    badges: ["Unfiled"],
-    categories: ["unfiled"],
-    confidence: { label: "Maybe Amelia & James", pct: 62 },
-  },
-  {
-    id: "3",
-    wedding: "Priya & Daniel",
-    weddingId: "london",
-    subject: "Consultation follow-up",
-    snippet: "We loved the mood board. Can we add a second photographer for the ceremony only?",
-    time: "Yesterday",
-    badges: ["Inquiry", "Couple", "Has draft"],
-    categories: ["inquiries", "draft"],
-    confidence: null,
-  },
-  {
-    id: "4",
-    wedding: "Clara & Noah",
-    weddingId: "santorini",
-    subject: "Re: Thank you — gallery & album",
-    snippet:
-      "We finally sat down with the album. Thank you again for everything last season.",
-    time: "Last week",
-    badges: ["Delivered"],
-    categories: ["past_weddings"],
-    confidence: null,
-  },
-];
 
 const FOCUS_FILTERS: { id: FilterId; label: string; Icon: LucideIcon }[] = [
   { id: "inquiries", label: "Inquiries", Icon: Mail },
@@ -95,11 +53,6 @@ const QUICK_FILTERS: { id: FilterId; label: string }[] = [
   { id: "planner", label: "Planner" },
 ];
 
-function rowMatches(row: InboxRow, filter: FilterId): boolean {
-  if (filter === "all") return true;
-  return row.categories.includes(filter);
-}
-
 function filterLabel(filter: FilterId): string {
   const focus = FOCUS_FILTERS.find((x) => x.id === filter);
   if (focus) return focus.label;
@@ -107,10 +60,56 @@ function filterLabel(filter: FilterId): string {
   return q?.label ?? "All messages";
 }
 
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  return "Last week";
+}
+
+function threadToRow(
+  t: UnfiledThread,
+  weddingLookup: Map<string, string>,
+): InboxRow {
+  const meta = t.ai_routing_metadata;
+  const suggestedId = meta?.suggested_wedding_id ?? null;
+  const suggestedName = suggestedId ? (weddingLookup.get(suggestedId) ?? null) : null;
+
+  return {
+    id: t.id,
+    wedding: "Unfiled",
+    weddingId: null,
+    subject: t.title,
+    snippet: t.snippet,
+    sender: t.sender,
+    time: formatTimeAgo(t.last_activity_at),
+    badges: ["Unfiled"],
+    categories: ["unfiled"],
+    suggestedWeddingId: suggestedId,
+    suggestedCoupleName: suggestedName,
+    suggestedReasoning: meta?.reasoning ?? null,
+    confidencePct: meta?.confidence_score ?? 0,
+  };
+}
+
 export function InboxPage() {
+  const [searchParams] = useSearchParams();
+  const initialFilter = (searchParams.get("filter") as FilterId) || "unfiled";
+
   const [filterOpen, setFilterOpen] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<FilterId>("inquiries");
+  const [activeFilter, setActiveFilter] = useState<FilterId>(initialFilter);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [linkSelections, setLinkSelections] = useState<Record<string, string>>({});
+
+  const { unfiledThreads, activeWeddings, isLoading, linkThread, deleteThread } = useUnfiledInbox();
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function close(e: MouseEvent) {
@@ -120,15 +119,44 @@ export function InboxPage() {
     return () => document.removeEventListener("mousedown", close);
   }, [filterOpen]);
 
-  const visible = useMemo(
-    () => rows.filter((r) => rowMatches(r, activeFilter)),
-    [activeFilter],
+  useEffect(() => {
+    function closeMenu(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpenId(null);
+    }
+    if (menuOpenId) document.addEventListener("mousedown", closeMenu);
+    return () => document.removeEventListener("mousedown", closeMenu);
+  }, [menuOpenId]);
+
+  const weddingLookup = useMemo(
+    () => new Map(activeWeddings.map((w) => [w.id, w.couple_names])),
+    [activeWeddings],
   );
+
+  const rows = useMemo(
+    () => unfiledThreads.map((t) => threadToRow(t, weddingLookup)),
+    [unfiledThreads, weddingLookup],
+  );
+
+  const visible = useMemo(() => {
+    if (activeFilter === "unfiled" || activeFilter === "all") return rows;
+    return [];
+  }, [activeFilter, rows]);
 
   const selectFilter = (id: FilterId) => {
     setActiveFilter(id);
     setFilterOpen(false);
   };
+
+  function getDefaultSelection(row: InboxRow): string {
+    if (linkSelections[row.id] !== undefined) return linkSelections[row.id];
+    return row.suggestedWeddingId ?? "";
+  }
+
+  function handleLinkThread(threadId: string, fallbackSuggestion: string | null) {
+    const weddingId = linkSelections[threadId] ?? fallbackSuggestion;
+    if (!weddingId) return;
+    linkThread(threadId, weddingId);
+  }
 
   return (
     <div className="space-y-6">
@@ -234,18 +262,22 @@ export function InboxPage() {
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {isLoading ? (
+        <div className="rounded-2xl border border-border bg-surface px-6 py-12 text-center">
+          <p className="text-[14px] text-ink-muted">Loading inbox…</p>
+        </div>
+      ) : visible.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
           <p className="text-[15px] font-semibold text-ink">No threads in this view</p>
           <p className="mt-2 text-[13px] text-ink-muted">
-            Try another filter, or open <strong className="text-ink">Inquiries</strong> for new leads.
+            Try another filter, or open <strong className="text-ink">Unfiled</strong> for stray threads.
           </p>
           <button
             type="button"
             className="mt-4 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover"
-            onClick={() => setActiveFilter("inquiries")}
+            onClick={() => setActiveFilter("unfiled")}
           >
-            Show inquiries
+            Show unfiled
           </button>
         </div>
       ) : (
@@ -275,38 +307,71 @@ export function InboxPage() {
                   </div>
                   <p className="mt-2 text-[15px] font-semibold text-ink">{row.subject}</p>
                   <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">{row.snippet}</p>
-                  {row.confidence ? (
+
+                  {row.suggestedCoupleName ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-canvas px-3 py-2 text-[12px] text-ink-muted">
-                      <span className="font-semibold text-ink">{row.confidence.pct}% match</span>
-                      <span>· {row.confidence.label}</span>
-                      <button type="button" className="font-semibold text-accent hover:text-accent-hover">
-                        Confirm
-                      </button>
-                      <button type="button" className="font-semibold text-ink-muted hover:text-ink">
-                        Choose wedding
-                      </button>
+                      <span className="font-semibold text-ink">{row.confidencePct}% match</span>
+                      <span>· AI Suggests: {row.suggestedCoupleName}</span>
+                      {row.suggestedReasoning ? (
+                        <span className="text-ink-faint">— {row.suggestedReasoning}</span>
+                      ) : null}
                     </div>
                   ) : null}
-                </div>
-                <div className="flex flex-col items-end gap-3">
-                  <span className="text-[12px] text-ink-faint">{row.time}</span>
-                  {row.weddingId ? (
-                    <Link
-                      to={`/wedding/${row.weddingId}`}
-                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:text-accent-hover"
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <select
+                      className="rounded-lg border border-border bg-canvas px-2 py-1.5 text-[12px] text-ink"
+                      value={getDefaultSelection(row)}
+                      onChange={(e) =>
+                        setLinkSelections((prev) => ({ ...prev, [row.id]: e.target.value }))
+                      }
                     >
-                      Open wedding
-                      <ArrowUpRight className="h-4 w-4" />
-                    </Link>
-                  ) : (
+                      <option value="">Choose wedding…</option>
+                      {activeWeddings.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.couple_names}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:text-accent-hover"
+                      disabled={!getDefaultSelection(row)}
+                      onClick={() => handleLinkThread(row.id, row.suggestedWeddingId)}
+                      className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Link thread
-                      <ArrowUpRight className="h-4 w-4" />
+                      Link Thread
                     </button>
-                  )}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                  <span className="text-[12px] text-ink-faint">{row.time}</span>
+                  <div className="relative" ref={menuOpenId === row.id ? menuRef : undefined}>
+                    <button
+                      type="button"
+                      aria-label="Thread options"
+                      className="rounded-lg p-1.5 text-ink-faint transition hover:bg-canvas hover:text-ink"
+                      onClick={() => setMenuOpenId(menuOpenId === row.id ? null : row.id)}
+                    >
+                      <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                    {menuOpenId === row.id && (
+                      <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-border bg-surface py-1 shadow-[0_8px_24px_rgba(26,28,30,0.12)]">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] font-medium text-red-600 transition hover:bg-canvas"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            if (window.confirm("Are you sure you want to delete this thread? All messages will be permanently removed.")) {
+                              deleteThread(row.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Delete thread
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

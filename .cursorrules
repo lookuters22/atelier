@@ -31,3 +31,9 @@ You are a Staff-Level AI Architect and Senior Full-Stack Developer. You are buil
 ## 6. COMPOSER 2 WORKFLOW INSTRUCTIONS
 - Before writing cross-file logic, silently review `@ARCHITECTURE.md` and `@DATABASE_SCHEMA.md` to ensure context alignment.
 - When generating responses, output ONLY the required code and a brief explanation of the architecture decisions. Do not output conversational filler.
+
+## 7. LANDING PAGE & MARKETING SITE CONTEXT
+- **Primary Document:** When working inside `src/pages/LandingPage/`, completely ignore `@ARCHITECTURE.md` and `@DATABASE_SCHEMA.md`. You must strictly follow `@LANDING_PAGE.md`.
+- **Animation Stack:** Use `framer-motion` for all complex animations, scroll reveals, and 3D parallax effects. Do not write custom CSS keyframes.
+- **Dumb Components:** The landing page is static marketing content. Do not attempt to wire these components to Supabase, Inngest, or Agno unless explicitly instructed.
+- **Visual Precision:** Prioritize exact translation of the design tokens provided in the prompts.

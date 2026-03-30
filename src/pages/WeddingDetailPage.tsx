@@ -1,5 +1,4 @@
 import { Link, useParams } from "react-router-dom";
-import { resolveWeddingEntry } from "../data/weddingRegistry";
 import { WEDDING_THREAD_DRAFT_DEFAULT } from "../data/weddingThreads";
 import { getTravelForWedding } from "../data/weddingTravel";
 import { InlineReplyFooter } from "../components/wedding-detail/InlineReplyFooter";
@@ -14,32 +13,79 @@ import { WeddingOverviewCard } from "../components/wedding-detail/WeddingOvervie
 import { WeddingPeopleCard } from "../components/wedding-detail/WeddingPeopleCard";
 import { WeddingTabs } from "../components/wedding-detail/WeddingTabs";
 import { useTimedToast } from "../hooks/useTimedToast";
+import { useSendMessage } from "../hooks/useSendMessage";
+import { useWeddingProject, type ThreadWithDrafts, type ProjectTask } from "../hooks/useWeddingProject";
 import { useWeddingComposer } from "../hooks/useWeddingComposer";
 import { useWeddingDetailState } from "../hooks/useWeddingDetailState";
 import { useWeddingTabState } from "../hooks/useWeddingTabState";
 import { useWeddingThreads } from "../hooks/useWeddingThreads";
+import type { WeddingEntry } from "../data/weddingCatalog";
+import type { Tables } from "../types/database.types";
+
+function mapRowToEntry(row: Tables<"weddings">): WeddingEntry {
+  const d = new Date(row.wedding_date);
+  const when = d.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  const fmt = (v: number | null) =>
+    v == null
+      ? "\u2014"
+      : new Intl.NumberFormat("en-GB", {
+          style: "currency",
+          currency: "EUR",
+          maximumFractionDigits: 0,
+        }).format(v);
+
+  const stage = row.stage.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return {
+    couple: row.couple_names,
+    when,
+    where: row.location,
+    stage,
+    package: row.package_name ?? "\u2014",
+    value: fmt(row.contract_value),
+    balance: fmt(row.balance_due),
+    story: row.story_notes ?? "",
+  };
+}
 
 const DRAFT_DEFAULT = WEDDING_THREAD_DRAFT_DEFAULT;
 
 function WeddingDetailInner({
   weddingId,
   entry,
+  photographerId,
+  clients,
+  liveThreads,
+  liveTasks,
 }: {
   weddingId: string;
-  entry: NonNullable<ReturnType<typeof resolveWeddingEntry>>;
+  entry: WeddingEntry;
+  photographerId: string;
+  clients: Tables<"clients">[];
+  liveThreads: ThreadWithDrafts[];
+  liveTasks: ProjectTask[];
 }) {
 
   const { toast, showToast } = useTimedToast();
+  const { sendMessage } = useSendMessage();
   const travelPlan = getTravelForWedding(weddingId);
   const { tab, setTabAndUrl } = useWeddingTabState();
-  const detailState = useWeddingDetailState({ weddingId, entry, showToast });
-  const threadState = useWeddingThreads({ weddingId, showToast });
+  const detailState = useWeddingDetailState({ weddingId, entry, liveClients: clients, showToast });
+  const threadState = useWeddingThreads({ weddingId, photographerId, liveThreads, showToast });
   const composerState = useWeddingComposer({
     activeThread: threadState.activeThread,
     people: detailState.people,
     draftPendingByThread: threadState.draftPendingByThread,
-    draftDefault: DRAFT_DEFAULT,
+    draftDefault: threadState.draftDefault ?? DRAFT_DEFAULT,
     selectedThreadId: threadState.selectedThreadId,
+    photographerId,
+    sendMessage,
     showToast,
   });
 
@@ -91,8 +137,9 @@ function WeddingDetailInner({
               draftExpanded={threadState.draftExpanded}
               toggleDraftExpanded={threadState.toggleDraftExpanded}
               approveDraft={threadState.approveDraft}
+              isApprovingDraft={threadState.approvingDraftId !== null}
               editDraftInComposer={composerState.editDraftInComposer}
-              draftDefault={DRAFT_DEFAULT}
+              draftDefault={threadState.draftDefault ?? DRAFT_DEFAULT}
             />
           ) : null}
 
@@ -105,6 +152,7 @@ function WeddingDetailInner({
               showToast={showToast}
               weddingId={weddingId}
               travelPlan={travelPlan}
+              tasks={liveTasks}
             />
           ) : null}
         </div>
@@ -117,7 +165,8 @@ function WeddingDetailInner({
           replyBody={composerState.replyBody}
           setReplyBody={composerState.setReplyBody}
           submitInlineForApproval={composerState.submitInlineForApproval}
-          openInternalComposer={() => composerState.openComposer("internal")}
+          isInternalNote={composerState.isInternalNote}
+          toggleInternalNote={composerState.toggleInternalNote}
           generateInlineResponse={composerState.generateInlineResponse}
           showToast={showToast}
         />
@@ -161,19 +210,32 @@ function WeddingDetailInner({
 
 export function WeddingDetailPage() {
   const { weddingId } = useParams();
-  const entry = weddingId ? resolveWeddingEntry(weddingId) : null;
+  const { project, timeline, tasks, isLoading, error } = useWeddingProject(weddingId);
 
-  if (!weddingId || !entry) {
+  if (isLoading) {
+    return <div className="p-8 text-gray-500">Loading wedding\u2026</div>;
+  }
+
+  if (!weddingId || error || !project) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 px-4">
         <p className="text-[15px] font-semibold text-ink">Wedding not found</p>
-        <p className="max-w-md text-center text-[13px] text-ink-muted">This project doesnâ€™t exist or was removed.</p>
+        <p className="max-w-md text-center text-[13px] text-ink-muted">This project doesn\u2019t exist or was removed.</p>
         <Link to="/weddings" className="text-[13px] font-semibold text-accent hover:text-accent-hover">
-          â† Back to Weddings
+          \u2190 Back to Weddings
         </Link>
       </div>
     );
   }
 
-  return <WeddingDetailInner weddingId={weddingId} entry={entry} />;
+  return (
+    <WeddingDetailInner
+      weddingId={weddingId}
+      entry={mapRowToEntry(project)}
+      photographerId={project.photographer_id}
+      clients={project.clients}
+      liveThreads={timeline}
+      liveTasks={tasks}
+    />
+  );
 }

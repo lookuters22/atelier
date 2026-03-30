@@ -3,7 +3,18 @@ import type { WeddingTravelPlan } from "../../data/weddingTravel";
 import { getMessagesForThread, type WeddingThread } from "../../data/weddingThreads";
 import { TravelTabPanel } from "../TravelTabPanel";
 import { WeddingFinancialsPanel } from "../WeddingFinancialsPanel";
+import type { ProjectTask } from "../../hooks/useWeddingProject";
 import type { TabId } from "./types";
+
+function formatTaskDue(iso: string): string {
+  const due = new Date(iso);
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  if (dueDay.getTime() === todayStart.getTime()) return "Today";
+  if (dueDay.getTime() < todayStart.getTime()) return "Overdue";
+  return due.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+}
 
 export function WeddingDetailTabContent({
   tab,
@@ -13,6 +24,7 @@ export function WeddingDetailTabContent({
   showToast,
   weddingId,
   travelPlan,
+  tasks = [],
 }: {
   tab: TabId;
   threads: WeddingThread[];
@@ -21,6 +33,7 @@ export function WeddingDetailTabContent({
   showToast: (msg: string) => void;
   weddingId: string;
   travelPlan: WeddingTravelPlan | null;
+  tasks?: ProjectTask[];
 }) {
   return (
     <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
@@ -55,18 +68,21 @@ export function WeddingDetailTabContent({
 
       {tab === "tasks" ? (
         <ul className="space-y-2 text-[13px]">
-          <li className="flex items-center gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
-            <input type="checkbox" defaultChecked className="h-4 w-4 accent-accent" />
-            <span>Send 6-week questionnaire</span>
-          </li>
-          <li className="flex items-center gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent" />
-            <span>Confirm final floor plan PDF from planner</span>
-          </li>
-          <li className="flex items-center gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
-            <input type="checkbox" className="h-4 w-4 accent-accent" />
-            <span>Upload COI to venue portal</span>
-          </li>
+          {tasks.length > 0 ? (
+            tasks.map((t) => (
+              <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" className="h-4 w-4 accent-accent" />
+                  <span>{t.title}</span>
+                </div>
+                <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-ink-faint">{formatTaskDue(t.due_date)}</span>
+              </li>
+            ))
+          ) : (
+            <li className="rounded-xl border border-dashed border-border bg-canvas/40 px-3 py-4 text-center text-ink-muted">
+              No open tasks for this wedding.
+            </li>
+          )}
         </ul>
       ) : null}
 

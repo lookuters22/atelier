@@ -2,6 +2,8 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { ManagerLayout } from "./layouts/ManagerLayout";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { LoginPage } from "./pages/LoginPage";
 import { TodayPage } from "./pages/TodayPage";
 import { InboxPage } from "./pages/InboxPage";
 import { WeddingDetailPage } from "./pages/WeddingDetailPage";
@@ -40,6 +42,11 @@ const InvoiceSetupPage = lazy(() =>
   import("./pages/settings/InvoiceSetupPage").then((m) => ({ default: m.InvoiceSetupPage })),
 );
 
+/** Marketing landing (framer-motion); keep out of main dashboard bundle. */
+const LandingPage = lazy(() =>
+  import("./pages/LandingPage/LandingPage").then((m) => ({ default: m.LandingPage })),
+);
+
 function SettingsRouteFallback() {
   return (
     <div className="flex min-h-[30vh] items-center justify-center px-4 text-[13px] text-ink-muted">
@@ -51,7 +58,23 @@ function SettingsRouteFallback() {
 export default function App() {
   return (
     <Routes>
-      <Route element={<DashboardLayout />}>
+      <Route path="login" element={<LoginPage />} />
+      <Route
+        path="landing"
+        element={
+          <Suspense fallback={null}>
+            <LandingPage />
+          </Suspense>
+        }
+      />
+
+      <Route
+        element={
+          <ProtectedRoute>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<TodayPage />} />
         <Route path="weddings" element={<WeddingsPage />} />
         <Route path="weddings/new" element={<AddWeddingPage />} />
@@ -92,7 +115,15 @@ export default function App() {
           />
         </Route>
       </Route>
-      <Route path="manager" element={<ManagerLayout />}>
+
+      <Route
+        path="manager"
+        element={
+          <ProtectedRoute>
+            <ManagerLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route index element={<Navigate to="today" replace />} />
         <Route path="today" element={<ManagerTodayPage />} />
         <Route path="photographers" element={<ManagerPhotographersPage />} />
@@ -106,6 +137,7 @@ export default function App() {
         <Route path="settings" element={<ManagerSettingsPage />} />
         <Route path="wedding/:weddingId" element={<WeddingDetailPage />} />
       </Route>
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

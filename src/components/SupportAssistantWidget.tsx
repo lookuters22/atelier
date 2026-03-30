@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageCircle, Send, X } from "lucide-react";
+import { supabase } from "../lib/supabase";
 
 /** Portrait for Jelena (replace with your own asset in `/public` if you prefer) */
 const JELENA_AVATAR_SRC =
@@ -31,6 +32,7 @@ export function SupportAssistantWidget() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [jelenaTyping, setJelenaTyping] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,21 +40,36 @@ export function SupportAssistantWidget() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, jelenaTyping, open]);
 
-  function submitQuestion() {
+  async function submitQuestion() {
     const text = question.trim();
-    if (!text || jelenaTyping) return;
+    if (!text || isSubmitting) return;
 
     const userLine: ChatLine = { id: nextId(), role: "user", text };
     setMessages((m) => [...m, userLine]);
     setQuestion("");
+    setIsSubmitting(true);
     setJelenaTyping(true);
 
-    window.setTimeout(() => {
-      const reply =
-        DEMO_REPLIES[Math.floor(Math.random() * DEMO_REPLIES.length)] ?? DEMO_REPLIES[0];
-      setMessages((m) => [...m, { id: nextId(), role: "assistant", text: reply }]);
+    try {
+      const { error } = await supabase.functions.invoke("webhook-web", {
+        body: { message: text },
+      });
+
+      if (error) throw error;
+
+      setMessages((m) => [
+        ...m,
+        { id: nextId(), role: "assistant", text: "Got it — I've routed your question to the right team. You'll see an update in your inbox shortly." },
+      ]);
       setJelenaTyping(false);
-    }, 900);
+      setIsSubmitting(false);
+      setTimeout(() => setOpen(false), 1500);
+    } catch (err) {
+      setJelenaTyping(false);
+      setIsSubmitting(false);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Failed to send message: ${msg}`);
+    }
   }
 
   return (
@@ -149,17 +166,17 @@ export function SupportAssistantWidget() {
               }}
               rows={2}
               placeholder="e.g. How do approvals work?"
-              disabled={jelenaTyping}
+              disabled={isSubmitting}
               className="mt-1.5 w-full resize-none rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25 disabled:opacity-60"
             />
             <button
               type="button"
               onClick={submitQuestion}
-              disabled={jelenaTyping || !question.trim()}
+              disabled={isSubmitting || !question.trim()}
               className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-ink py-2 text-[13px] font-semibold text-canvas transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-3.5 w-3.5" strokeWidth={2} />
-              Send
+              {isSubmitting ? "Sending\u2026" : "Send"}
             </button>
           </div>
         </div>

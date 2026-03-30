@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WeddingEntry } from "../data/weddingCatalog";
 import type { WeddingPersonRow } from "../data/weddingPeopleDefaults";
+import type { Tables } from "../types/database.types";
 import {
   loadWeddingDetailPersisted,
   saveWeddingDetailPersisted,
@@ -8,23 +9,36 @@ import {
 } from "../lib/weddingDetailStorage";
 import { buildWeddingDetailDefaults } from "../lib/weddingDetailUtils";
 
+function clientsToPeople(clients: Tables<"clients">[]): WeddingPersonRow[] {
+  return clients.map((c) => ({
+    id: c.id,
+    name: c.name,
+    subtitle: [c.role, c.email].filter(Boolean).join(" \u00b7 "),
+  }));
+}
+
 export function useWeddingDetailState({
   weddingId,
   entry,
+  liveClients,
   showToast,
 }: {
   weddingId: string;
   entry: WeddingEntry;
+  liveClients: Tables<"clients">[];
   showToast: (message: string) => void;
 }) {
+  const defaults = buildWeddingDetailDefaults(weddingId, entry);
+  const initialPeople = liveClients.length > 0 ? clientsToPeople(liveClients) : defaults.people;
+
   const [weddingFields, setWeddingFields] = useState<WeddingFieldsEditable>(() =>
-    loadWeddingDetailPersisted(weddingId, buildWeddingDetailDefaults(weddingId, entry)).wedding,
+    loadWeddingDetailPersisted(weddingId, { ...defaults, people: initialPeople }).wedding,
   );
   const [people, setPeople] = useState<WeddingPersonRow[]>(() =>
-    loadWeddingDetailPersisted(weddingId, buildWeddingDetailDefaults(weddingId, entry)).people,
+    loadWeddingDetailPersisted(weddingId, { ...defaults, people: initialPeople }).people,
   );
   const [photographerNotes, setPhotographerNotes] = useState(() =>
-    loadWeddingDetailPersisted(weddingId, buildWeddingDetailDefaults(weddingId, entry)).photographerNotes,
+    loadWeddingDetailPersisted(weddingId, { ...defaults, people: initialPeople }).photographerNotes,
   );
   const [editingWedding, setEditingWedding] = useState(false);
   const [editingPeople, setEditingPeople] = useState(false);
@@ -38,13 +52,19 @@ export function useWeddingDetailState({
   peopleRef.current = people;
 
   useEffect(() => {
-    const loaded = loadWeddingDetailPersisted(weddingId, buildWeddingDetailDefaults(weddingId, entry));
+    const base = buildWeddingDetailDefaults(weddingId, entry);
+    const loaded = loadWeddingDetailPersisted(weddingId, base);
     setWeddingFields(loaded.wedding);
-    setPeople(loaded.people);
     setPhotographerNotes(loaded.photographerNotes);
     setEditingWedding(false);
     setEditingPeople(false);
   }, [entry, weddingId]);
+
+  useEffect(() => {
+    if (liveClients.length > 0) {
+      setPeople(clientsToPeople(liveClients));
+    }
+  }, [liveClients]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {

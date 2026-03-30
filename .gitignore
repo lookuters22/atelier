@@ -28,5 +28,28 @@ _tmp/
 _wd.py
 _dl.py
 
+# Reference / research files (not part of the app)
+HEROEXTRACT/
+chunks/
+csschunks/
+meetcleo*
+parallax.psd
+HARDCODED_DATA_AUDIT.md
+persona agent examples context/
+public/old_background.jpg
+public/high2.mp4
+public/paralax_images/
+
+# Original JPGs (replaced by .webp)
+public/landing/*.jpg
+
+# Unused 3D models
+public/models/custom_iphone_17_3d_model.glb
+
 # Reference PDFs (add to repo explicitly if needed)
 *.pdf
+
+# Environment Variables (Keep Secrets Safe)
+.env
+.env.*
+supabase/.env

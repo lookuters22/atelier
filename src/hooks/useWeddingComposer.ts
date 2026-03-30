@@ -3,6 +3,7 @@ import type { WeddingPersonRow } from "../data/weddingPeopleDefaults";
 import { getMessagesForThread, type WeddingThread } from "../data/weddingThreads";
 import { buildReplyMeta, firstEmailFromPeople } from "../lib/weddingDetailUtils";
 import type { ComposerKind, ReplyScope } from "../lib/weddingDetailTypes";
+import type { SendMessageParams, SendMessageResult } from "./useSendMessage";
 
 export function useWeddingComposer({
   activeThread,
@@ -10,6 +11,8 @@ export function useWeddingComposer({
   draftPendingByThread,
   draftDefault,
   selectedThreadId,
+  photographerId,
+  sendMessage,
   showToast,
 }: {
   activeThread: WeddingThread | undefined;
@@ -17,6 +20,8 @@ export function useWeddingComposer({
   draftPendingByThread: Record<string, boolean>;
   draftDefault: string;
   selectedThreadId: string;
+  photographerId: string;
+  sendMessage: (params: SendMessageParams) => Promise<SendMessageResult>;
   showToast: (message: string) => void;
 }) {
   const [composerOpen, setComposerOpen] = useState(false);
@@ -28,6 +33,8 @@ export function useWeddingComposer({
   /** Inline footer reply (chat-style); full composer can pull from this */
   const [replyBody, setReplyBody] = useState("");
   const [replyScope, setReplyScope] = useState<ReplyScope>("reply");
+  /** Studio-only note: maps to messages.direction = internal */
+  const [isInternalNote, setIsInternalNote] = useState(false);
   const replyAreaRef = useRef<HTMLTextAreaElement>(null);
   const [internalBody, setInternalBody] = useState("");
 
@@ -40,6 +47,7 @@ export function useWeddingComposer({
     setReplyBody("");
     setReplyScope("reply");
     setCc("");
+    setIsInternalNote(false);
   }, [selectedThreadId]);
 
   function applyComposerDefaultsFromThread() {
@@ -91,17 +99,39 @@ export function useWeddingComposer({
     setComposerOpen(false);
   }
 
-  function submitInlineForApproval() {
+  async function submitInlineForApproval() {
     if (!replyBody.trim()) {
       showToast("Add a message in the box, or tap Generate response.");
       return;
     }
-    if (!replyMeta.toAddr) {
+    if (!isInternalNote && !replyMeta.toAddr) {
       showToast("Add someone under People with an email.");
       return;
     }
-    showToast("Draft submitted for approval â€” check Approvals (demo).");
-    setReplyBody("");
+    if (!selectedThreadId) {
+      showToast("Select a thread first.");
+      return;
+    }
+
+    const wasInternal = isInternalNote;
+    const result = await sendMessage({
+      threadId: selectedThreadId,
+      photographerId,
+      body: replyBody,
+      isInternal: wasInternal,
+    });
+
+    if (result.success) {
+      setReplyBody("");
+      setIsInternalNote(false);
+      showToast(wasInternal ? "Internal note saved." : "Message sent.");
+    } else {
+      showToast(result.error);
+    }
+  }
+
+  function toggleInternalNote() {
+    setIsInternalNote((v) => !v);
   }
 
   function editDraftInComposer() {
@@ -158,6 +188,8 @@ export function useWeddingComposer({
     replyBody,
     setReplyBody,
     replyScope,
+    isInternalNote,
+    toggleInternalNote,
     replyAreaRef,
     internalBody,
     setInternalBody,

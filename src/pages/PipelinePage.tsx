@@ -1,71 +1,58 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
-import { getPipelineMoneyLine } from "../data/weddingFinancials";
+import { usePipelineWeddings, type PipelineWedding } from "../hooks/usePipelineWeddings";
 
 const STAGES = ["Inquiry", "Consultation", "Proposal", "Contract", "Booked", "Prep", "Delivered"] as const;
 
+const STAGE_INDEX_MAP: Record<string, number> = {
+  inquiry: 0,
+  consultation: 1,
+  proposal_sent: 2,
+  contract_out: 3,
+  booked: 4,
+  prep: 5,
+  final_balance: 5,
+  delivered: 6,
+};
+
 type WeddingRow = {
   id: string;
-  /** Route param for `/wedding/:id` */
-  weddingRouteId: string;
   couple: string;
   when: string;
   city: string;
   value: string;
-  /** Index in STAGES — current stage for this wedding (0–6) */
   currentStageIndex: number;
   waitingOn: string;
   nextAction: string;
 };
 
-/** Each row is one wedding; scan many journeys at once */
-const weddings: WeddingRow[] = [
-  {
-    id: "priya",
-    weddingRouteId: "london",
-    couple: "Priya & Daniel",
-    when: "Sep 20",
-    city: "London",
-    value: "£9.8k",
-    currentStageIndex: 0,
-    waitingOn: "Couple to confirm budget ceiling.",
-    nextAction: "Book consultation call this week.",
-  },
-  {
-    id: "amelia",
-    weddingRouteId: "santorini",
-    couple: "Amelia & James",
-    when: "Jul 5",
-    city: "Santorini",
-    value: "£14.2k",
-    currentStageIndex: 3,
-    waitingOn: "Couple to sign contract.",
-    nextAction: "Send 6-week questionnaire on April 2nd.",
-  },
-  {
-    id: "sofia",
-    weddingRouteId: "lake-como",
-    couple: "Sofia & Marco",
-    when: "Jun 14",
-    city: "Lake Como",
-    value: "€18.5k",
-    currentStageIndex: 5,
-    waitingOn: "Final floor plan PDF from planner.",
-    nextAction: "Confirm vendor meal count by May 1st.",
-  },
-  {
-    id: "nina",
-    weddingRouteId: "london",
-    couple: "Nina & Leo",
-    when: "Aug 2025",
-    city: "Provence",
-    value: "€12.4k",
-    currentStageIndex: 6,
-    waitingOn: "Nothing — gallery delivered.",
-    nextAction: "Archive project & request testimonial.",
-  },
-];
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { month: "short", day: "numeric" });
+}
+
+function formatValue(v: number | null): string {
+  if (v == null) return "\u2014";
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  }).format(v);
+}
+
+function toWeddingRow(w: PipelineWedding): WeddingRow {
+  return {
+    id: w.id,
+    couple: w.couple_names,
+    when: formatDate(w.wedding_date),
+    city: w.location,
+    value: formatValue(w.contract_value),
+    currentStageIndex: STAGE_INDEX_MAP[w.stage] ?? 0,
+    waitingOn: "\u2014",
+    nextAction: "\u2014",
+  };
+}
 
 type StageGroup = "action" | "cruise" | "delivered";
 
@@ -78,13 +65,12 @@ function stageGroup(currentStageIndex: number): StageGroup {
 function PipelineCard({ w }: { w: WeddingRow }) {
   const stageLabel = STAGES[w.currentStageIndex];
   const stageNum = w.currentStageIndex + 1;
-  const moneyLine = getPipelineMoneyLine(w.weddingRouteId);
 
   return (
     <div className="rounded-2xl border border-border bg-surface p-5 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_8px_28px_rgba(26,28,30,0.05)]">
       <div className="grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-6 md:items-start">
         <div className="min-w-0">
-          <Link to={`/wedding/${w.weddingRouteId}`} className="text-[16px] font-semibold text-ink hover:text-accent">
+          <Link to={`/wedding/${w.id}`} className="text-[16px] font-semibold text-ink hover:text-accent">
             {w.couple}
           </Link>
           <p className="mt-1 text-[13px] text-ink-muted">
@@ -98,7 +84,6 @@ function PipelineCard({ w }: { w: WeddingRow }) {
           </span>
           <div className="flex flex-col gap-1 md:items-center">
             <p className="text-[13px] font-semibold text-ink">{w.value}</p>
-            {moneyLine ? <p className="max-w-[16rem] text-[11px] leading-snug text-ink-faint md:mx-auto">{moneyLine}</p> : null}
           </div>
         </div>
 
@@ -120,30 +105,33 @@ function PipelineCard({ w }: { w: WeddingRow }) {
 type SectionKey = "action" | "cruise" | "delivered";
 
 const SECTIONS: { key: SectionKey; title: string; description: string }[] = [
-  { key: "action", title: "Action required (Inquiry–Contract)", description: "Pre-booking — unblock or advance the deal." },
-  { key: "cruise", title: "Cruising (Booked & Prep)", description: "Signed clients — execution and logistics." },
+  { key: "action", title: "Action required (Inquiry\u2013Contract)", description: "Pre-booking \u2014 unblock or advance the deal." },
+  { key: "cruise", title: "Cruising (Booked & Prep)", description: "Signed clients \u2014 execution and logistics." },
   { key: "delivered", title: "Delivered", description: "Completed journeys." },
 ];
 
 export function PipelinePage() {
+  const { weddings: liveWeddings, isLoading } = usePipelineWeddings();
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     action: true,
     cruise: false,
     delivered: false,
   });
 
+  const rows = useMemo(() => liveWeddings.map(toWeddingRow), [liveWeddings]);
+
   const grouped = useMemo(() => {
     const action: WeddingRow[] = [];
     const cruise: WeddingRow[] = [];
     const delivered: WeddingRow[] = [];
-    for (const w of weddings) {
+    for (const w of rows) {
       const g = stageGroup(w.currentStageIndex);
       if (g === "action") action.push(w);
       else if (g === "cruise") cruise.push(w);
       else delivered.push(w);
     }
     return { action, cruise, delivered };
-  }, []);
+  }, [rows]);
 
   function rowsFor(key: SectionKey): WeddingRow[] {
     return grouped[key];
@@ -151,6 +139,17 @@ export function PipelinePage() {
 
   function toggle(key: SectionKey) {
     setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">Pipeline</h1>
+          <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">Loading projects\u2026</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -164,8 +163,8 @@ export function PipelinePage() {
 
       <div className="space-y-3">
         {SECTIONS.map((section) => {
-          const rows = rowsFor(section.key);
-          if (rows.length === 0) return null;
+          const sectionRows = rowsFor(section.key);
+          if (sectionRows.length === 0) return null;
           const expanded = open[section.key];
           return (
             <div key={section.key} className="overflow-hidden rounded-2xl border border-border bg-canvas/40">
@@ -184,11 +183,11 @@ export function PipelinePage() {
                   <p className="text-[14px] font-semibold text-ink">{section.title}</p>
                   <p className="mt-0.5 text-[12px] text-ink-muted">{section.description}</p>
                 </div>
-                <span className="shrink-0 rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">{rows.length}</span>
+                <span className="shrink-0 rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">{sectionRows.length}</span>
               </button>
               {expanded ? (
                 <div className="space-y-3 border-t border-border/60 px-3 pb-3 pt-2 sm:px-4">
-                  {rows.map((w) => (
+                  {sectionRows.map((w) => (
                     <PipelineCard key={w.id} w={w} />
                   ))}
                 </div>

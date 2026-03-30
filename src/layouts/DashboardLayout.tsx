@@ -19,12 +19,16 @@ import {
   X,
 } from "lucide-react";
 import { SupportAssistantWidget } from "../components/SupportAssistantWidget";
+import { supabase } from "../lib/supabase";
+import { fireDataChanged } from "../lib/events";
+import { useTodayMetrics } from "../hooks/useTodayMetrics";
+import { useNotifications } from "../hooks/useNotifications";
 
 const nav = [
   { to: "/", label: "Today", icon: LayoutGrid, end: true },
   { to: "/weddings", label: "Weddings", icon: GalleryHorizontal },
-  { to: "/inbox", label: "Inbox", icon: Inbox, badge: 3 },
-  { to: "/approvals", label: "Approvals", icon: CheckSquare, badge: 2 },
+  { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/approvals", label: "Approvals", icon: CheckSquare },
   { to: "/pipeline", label: "Pipeline", icon: Columns3 },
   { to: "/financials", label: "Financials", icon: Wallet },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
@@ -32,20 +36,33 @@ const nav = [
   { to: "/tasks", label: "Tasks", icon: ListTodo },
 ];
 
-const notificationsSeed = [
-  { id: "1", title: "Draft awaiting approval", body: "Sofia & Marco — timeline v3 response", time: "12 min ago", href: "/approvals", unread: true },
-  { id: "2", title: "Unfiled thread", body: "Insurance certificate — Castello Brown", time: "32 min ago", href: "/inbox", unread: true },
-  { id: "3", title: "Task due today", body: "Questionnaire reminder — Villa Cetinale", time: "Today", href: "/tasks", unread: false },
-];
-
 export function DashboardLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { unfiledCount, pendingDraftsCount } = useTodayMetrics();
+  const badgeMap: Record<string, number> = {
+    "/inbox": unfiledCount,
+    "/approvals": pendingDraftsCount,
+  };
+  const { items: notifs, unreadCount, markAllRead, markRead, isUnread } = useNotifications();
   const isOfferBuilderEditorMode = pathname.startsWith("/settings/offer-builder/edit");
   const [notifOpen, setNotifOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [notifs, setNotifs] = useState(notificationsSeed);
   const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("global-db-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "drafts" }, () => fireDataChanged())
+      .on("postgres_changes", { event: "*", schema: "public", table: "threads" }, () => fireDataChanged())
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, () => fireDataChanged())
+      .on("postgres_changes", { event: "*", schema: "public", table: "weddings" }, () => fireDataChanged())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     function closeOnOutside(e: MouseEvent) {
@@ -55,10 +72,8 @@ export function DashboardLayout() {
     return () => document.removeEventListener("mousedown", closeOnOutside);
   }, [notifOpen]);
 
-  const unreadCount = notifs.filter((n) => n.unread).length;
-  const markAllRead = () => setNotifs((prev) => prev.map((n) => ({ ...n, unread: false })));
   const openNotification = (href: string, id: string) => {
-    setNotifs((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
+    markRead(id);
     setNotifOpen(false);
     navigate(href);
   };
@@ -86,7 +101,7 @@ export function DashboardLayout() {
             >
               <item.icon className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={1.75} />
               <span className="flex-1">{item.label}</span>
-              {item.badge ? <span className="rounded-full bg-[#e01e5a] px-1.5 py-0.5 text-[10px] font-semibold text-white">{item.badge}</span> : null}
+              {badgeMap[item.to] ? <span className="rounded-full bg-[#e01e5a] px-1.5 py-0.5 text-[10px] font-semibold text-white">{badgeMap[item.to]}</span> : null}
             </NavLink>
           ))}
         </nav>
@@ -129,8 +144,8 @@ export function DashboardLayout() {
                   </div>
                   <div className="max-h-80 overflow-y-auto">
                     {notifs.map((n) => (
-                      <button key={n.id} type="button" onClick={() => openNotification(n.href, n.id)} className={"flex w-full flex-col gap-0.5 border-b border-border/80 px-4 py-3 text-left last:border-0 " + (n.unread ? "bg-accent/5" : "hover:bg-canvas/80")}>
-                        <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-semibold text-ink">{n.title}</span>{n.unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}</div>
+                      <button key={n.id} type="button" onClick={() => openNotification(n.href, n.id)} className={"flex w-full flex-col gap-0.5 border-b border-border/80 px-4 py-3 text-left last:border-0 " + (isUnread(n.id) ? "bg-accent/5" : "hover:bg-canvas/80")}>
+                        <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-semibold text-ink">{n.title}</span>{isUnread(n.id) ? <span className="h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}</div>
                         <span className="text-[12px] text-ink-muted">{n.body}</span>
                         <span className="text-[11px] text-ink-faint">{n.time}</span>
                       </button>

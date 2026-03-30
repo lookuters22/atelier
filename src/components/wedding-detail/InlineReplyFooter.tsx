@@ -10,7 +10,8 @@ export function InlineReplyFooter({
   replyBody,
   setReplyBody,
   submitInlineForApproval,
-  openInternalComposer,
+  isInternalNote,
+  toggleInternalNote,
   generateInlineResponse,
   showToast,
 }: {
@@ -20,8 +21,9 @@ export function InlineReplyFooter({
   replyAreaRef: RefObject<HTMLTextAreaElement | null>;
   replyBody: string;
   setReplyBody: Dispatch<SetStateAction<string>>;
-  submitInlineForApproval: () => void;
-  openInternalComposer: () => void;
+  submitInlineForApproval: () => void | Promise<void>;
+  isInternalNote: boolean;
+  toggleInternalNote: () => void;
   generateInlineResponse: () => void;
   showToast: (msg: string) => void;
 }) {
@@ -112,9 +114,14 @@ export function InlineReplyFooter({
         </button>
         <button
           type="button"
-          className="rounded-full border border-border bg-surface px-2.5 py-1.5 text-[11px] font-semibold text-ink sm:text-[12px]"
+          className={
+            "rounded-full px-2.5 py-1.5 text-[11px] font-semibold sm:text-[12px] " +
+            (isInternalNote
+              ? "bg-ink text-canvas"
+              : "border border-border bg-surface text-ink")
+          }
           title="Studio-only note"
-          onClick={openInternalComposer}
+          onClick={toggleInternalNote}
         >
           Note
         </button>
