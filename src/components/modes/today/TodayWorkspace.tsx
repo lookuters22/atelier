@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CalendarClock, ClipboardPen, FlaskConical, Inbox, ListTodo, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "../../../lib/supabase";
+import { openSpotlight } from "../../StudioSpotlight";
 import { fireDraftsChanged } from "../../../lib/events";
 import { useAuth } from "../../../context/AuthContext";
 import { usePendingApprovals } from "../../../hooks/usePendingApprovals";
@@ -100,7 +101,10 @@ export function TodayWorkspace() {
 
   if (selection.type === "overview") {
     return (
-      <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background p-6 text-[13px] text-foreground">
+      <div
+        className="flex h-full min-h-0 flex-col overflow-y-auto bg-background p-6 text-[13px] text-foreground"
+        onDoubleClick={openSpotlight}
+      >
         <header className="mb-6">
           <p className="text-[12px] text-muted-foreground">{formatTodayHeading()}</p>
           <h1 className="mt-1 text-lg font-semibold tracking-tight">Good morning, Elena</h1>

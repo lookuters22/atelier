@@ -3,7 +3,7 @@ import { MessageCircle, Send, X } from "lucide-react";
 import { motion, AnimatePresence, useMotionValue } from "framer-motion";
 import { supabase } from "../lib/supabase";
 
-const JELENA_AVATAR_SRC =
+const ANA_AVATAR_SRC =
   "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=128&h=128&fit=crop&auto=format&q=80";
 
 type ChatRole = "user" | "assistant";
@@ -16,13 +16,19 @@ function nextId() {
 const panelShadow = "0 8px 30px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)";
 const btnShadow = "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)";
 
+const ANA_QUERY_EVENT = "ana-widget:open-with-query";
+
+export function openAnaWithQuery(query: string) {
+  window.dispatchEvent(new CustomEvent(ANA_QUERY_EVENT, { detail: { query } }));
+}
+
 type PanelDir = { v: "above" | "below"; h: "alignRight" | "alignLeft" };
 
 export function SupportAssistantWidget() {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatLine[]>([]);
-  const [jelenaTyping, setJelenaTyping] = useState(false);
+  const [anaTyping, setAnaTyping] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dir, setDir] = useState<PanelDir>({ v: "above", h: "alignRight" });
 
@@ -46,17 +52,38 @@ export function SupportAssistantWidget() {
   useEffect(() => {
     if (!open) return;
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, jelenaTyping, open]);
+  }, [messages, anaTyping, open]);
 
-  async function submitQuestion() {
-    const text = question.trim();
+  const pendingQuery = useRef<string | null>(null);
+
+  useEffect(() => {
+    function handleAnaQuery(e: Event) {
+      const query = (e as CustomEvent).detail?.query;
+      if (!query) return;
+      pendingQuery.current = query;
+      setOpen(true);
+    }
+    window.addEventListener(ANA_QUERY_EVENT, handleAnaQuery);
+    return () => window.removeEventListener(ANA_QUERY_EVENT, handleAnaQuery);
+  }, []);
+
+  useEffect(() => {
+    if (open && pendingQuery.current) {
+      const q = pendingQuery.current;
+      pendingQuery.current = null;
+      setTimeout(() => submitQuestion(q), 60);
+    }
+  }, [open]);
+
+  async function submitQuestion(overrideText?: string) {
+    const text = (overrideText ?? question).trim();
     if (!text || isSubmitting) return;
 
     const userLine: ChatLine = { id: nextId(), role: "user", text };
     setMessages((m) => [...m, userLine]);
     setQuestion("");
     setIsSubmitting(true);
-    setJelenaTyping(true);
+    setAnaTyping(true);
 
     try {
       const { error } = await supabase.functions.invoke("webhook-web", {
@@ -68,11 +95,11 @@ export function SupportAssistantWidget() {
         ...m,
         { id: nextId(), role: "assistant", text: "Got it — I've routed your question to the right team. You'll see an update in your inbox shortly." },
       ]);
-      setJelenaTyping(false);
+      setAnaTyping(false);
       setIsSubmitting(false);
       setTimeout(() => setOpen(false), 1500);
     } catch (err) {
-      setJelenaTyping(false);
+      setAnaTyping(false);
       setIsSubmitting(false);
       const msg = err instanceof Error ? err.message : "Unknown error";
       alert(`Failed to send message: ${msg}`);
@@ -119,7 +146,7 @@ export function SupportAssistantWidget() {
               className={`pointer-events-auto flex max-h-[min(70vh,380px)] flex-col rounded-xl border border-slate-200 bg-white px-3 py-3 text-slate-800 ${panelPositionClass}`}
               style={{ boxShadow: panelShadow }}
               role="dialog"
-              aria-label="Jelena support chat"
+              aria-label="Ana support chat"
               initial={{ opacity: 0, scale: 0.92 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.92 }}
@@ -133,10 +160,10 @@ export function SupportAssistantWidget() {
                 aria-live="polite"
                 aria-relevant="additions"
               >
-                {messages.length === 0 && !jelenaTyping && (
+                {messages.length === 0 && !anaTyping && (
                   <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
                     <MessageCircle className="h-5 w-5 text-slate-400" strokeWidth={1.5} />
-                    <p className="text-[12px] text-slate-400">Ask Jelena anything</p>
+                    <p className="text-[12px] text-slate-400">Ask Ana anything</p>
                   </div>
                 )}
                 {messages.map((m) => (
@@ -147,14 +174,14 @@ export function SupportAssistantWidget() {
                     transition={{ duration: 0.2 }}
                   >
                     <p className="mb-1 text-[11px] font-semibold text-slate-400">
-                      {m.role === "user" ? "You" : "Jelena"}
+                      {m.role === "user" ? "You" : "Ana"}
                     </p>
                     <p className="text-[12px] leading-[18px] text-slate-800">{m.text}</p>
                   </motion.div>
                 ))}
-                {jelenaTyping && (
+                {anaTyping && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
-                    <p className="mb-1 text-[11px] font-semibold text-slate-400">Jelena</p>
+                    <p className="mb-1 text-[11px] font-semibold text-slate-400">Ana</p>
                     <span className="inline-flex gap-1">
                       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300" />
                       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300" style={{ animationDelay: "0.15s" }} />
@@ -183,7 +210,7 @@ export function SupportAssistantWidget() {
                     className="w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-60"
                   />
                   <div className="flex items-center justify-between px-2 pb-1.5">
-                    <span className="text-[10px] text-slate-400">Support · Jelena</span>
+                    <span className="text-[10px] text-slate-400">Support · Ana</span>
                     <button
                       type="button"
                       onClick={submitQuestion}
@@ -238,7 +265,7 @@ export function SupportAssistantWidget() {
                 transition={{ duration: 0.15 }}
               >
                 <MessageCircle className="h-4 w-4 text-[#25D366]" strokeWidth={2} aria-hidden />
-                Jelena
+                Ana
               </motion.span>
             )}
           </AnimatePresence>

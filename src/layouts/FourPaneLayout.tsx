@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { IconRail } from "../components/IconRail";
 import { SupportAssistantWidget } from "../components/SupportAssistantWidget";
+import { StudioSpotlight } from "../components/StudioSpotlight";
 
 import { TodayModeProvider } from "../components/modes/today/TodayModeContext";
 import { TodayContextList } from "../components/modes/today/TodayContextList";
@@ -300,6 +301,7 @@ export function FourPaneLayout() {
         <ModeSwitch mode={mode} />
       </div>
       <SupportAssistantWidget />
+      <StudioSpotlight />
     </div>
   );
 }
