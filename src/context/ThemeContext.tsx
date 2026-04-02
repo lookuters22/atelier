@@ -18,6 +18,8 @@ function getSystemPreference(): "dark" | "light" {
 }
 
 function applyThemeToDOM(resolved: "dark" | "light", animate: boolean) {
+  if (window.location.pathname === "/" || window.location.pathname === "/landing") return;
+
   const root = document.documentElement;
 
   if (animate) {

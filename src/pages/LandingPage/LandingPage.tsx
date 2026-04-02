@@ -13,12 +13,23 @@ import SmoothScrolling from "../../components/SmoothScrolling";
 
 export function LandingPage() {
   useEffect(() => {
-    const root = document.documentElement;
-    const prevBg = root.style.background;
-    const wasLight = root.classList.contains("light");
-    root.style.background = "#020617";
-    root.classList.remove("light");
-    root.style.colorScheme = "dark";
+    const html = document.documentElement;
+    const body = document.body;
+    const rootEl = document.getElementById("root");
+
+    const prevHtmlBg = html.style.background;
+    const prevBodyBg = body.style.background;
+    const prevBodyOverflow = body.style.overflowX;
+    const prevRootBg = rootEl?.style.background ?? "";
+    const wasLight = html.classList.contains("light");
+
+    const darkBg = "#0a0a0f";
+    html.style.background = darkBg;
+    html.style.colorScheme = "dark";
+    html.classList.remove("light");
+    body.style.background = darkBg;
+    body.style.overflowX = "hidden";
+    if (rootEl) rootEl.style.background = darkBg;
 
     for (const src of FEATURE_GRID_IMAGE_SRCS) {
       const img = new Image();
@@ -26,8 +37,11 @@ export function LandingPage() {
     }
 
     return () => {
-      root.style.background = prevBg;
-      if (wasLight) root.classList.add("light");
+      html.style.background = prevHtmlBg;
+      body.style.background = prevBodyBg;
+      body.style.overflowX = prevBodyOverflow;
+      if (rootEl) rootEl.style.background = prevRootBg;
+      if (wasLight) html.classList.add("light");
     };
   }, []);
 
