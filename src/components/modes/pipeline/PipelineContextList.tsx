@@ -189,15 +189,15 @@ export function PipelineContextList() {
                             </ContextMenuTrigger>
                             <ContextMenuContent>
                               <ContextMenuItem onClick={() => selectWedding(w.id)}>
-                                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                                <ExternalLink className="mr-1.5 h-3 w-3" />
                                 Open project
                               </ContextMenuItem>
                               <ContextMenuSeparator />
                               <ContextMenuItem
-                                className="text-destructive focus:text-destructive"
+                                variant="destructive"
                                 onClick={() => handleDelete(w.id, w.couple_names)}
                               >
-                                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                <Trash2 className="mr-1.5 h-3 w-3" />
                                 Delete project
                               </ContextMenuItem>
                             </ContextMenuContent>
