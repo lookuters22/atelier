@@ -1,5 +1,8 @@
 import { Link, useParams } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
+import { WeddingDetailSkeleton } from "../components/DashboardSkeleton";
 import { WEDDING_THREAD_DRAFT_DEFAULT } from "../data/weddingThreads";
+import { MotionTabContent } from "../components/motion-primitives";
 import { getTravelForWedding } from "../data/weddingTravel";
 import { InlineReplyFooter } from "../components/wedding-detail/InlineReplyFooter";
 import { OtherWeddingsCard } from "../components/wedding-detail/OtherWeddingsCard";
@@ -22,7 +25,7 @@ import { useWeddingThreads } from "../hooks/useWeddingThreads";
 import type { WeddingEntry } from "../data/weddingCatalog";
 import type { Tables } from "../types/database.types";
 
-function mapRowToEntry(row: Tables<"weddings">): WeddingEntry {
+export function mapRowToEntry(row: Tables<"weddings">): WeddingEntry {
   const d = new Date(row.wedding_date);
   const when = d.toLocaleDateString("en-GB", {
     weekday: "long",
@@ -56,7 +59,7 @@ function mapRowToEntry(row: Tables<"weddings">): WeddingEntry {
 
 const DRAFT_DEFAULT = WEDDING_THREAD_DRAFT_DEFAULT;
 
-function WeddingDetailInner({
+export function WeddingDetailInner({
   weddingId,
   entry,
   photographerId,
@@ -92,7 +95,7 @@ function WeddingDetailInner({
   return (
     <div className="relative grid min-h-0 gap-6 xl:grid-cols-[280px_minmax(0,1fr)_300px] xl:items-start">
       {toast ? (
-        <div className="fixed bottom-6 left-1/2 z-[120] max-w-md -translate-x-1/2 rounded-full border border-border bg-surface px-5 py-2.5 text-[13px] font-medium text-ink ring-1 ring-black/[0.06]">
+        <div className="fixed bottom-6 left-1/2 z-[120] max-w-md -translate-x-1/2 rounded-full border border-border bg-surface px-5 py-2.5 type-small text-ink">
           {toast}
         </div>
       ) : null}
@@ -119,43 +122,45 @@ function WeddingDetailInner({
         <WeddingLogisticsCard onOpenTravel={() => setTabAndUrl("travel")} />
       </aside>
 
-      <section className="flex h-[min(720px,calc(100dvh-10rem))] min-h-[400px] flex-col overflow-hidden rounded-2xl border border-border bg-surface xl:h-[min(720px,calc(100dvh-11rem))]">
+      <section className="flex h-[min(720px,calc(100dvh-10rem))] min-h-[400px] flex-col overflow-hidden rounded-lg border border-border bg-surface xl:h-[min(720px,calc(100dvh-11rem))]">
         <WeddingTabs tab={tab} setTabAndUrl={setTabAndUrl} />
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <AnimatePresence mode="wait" initial={false}>
           {tab === "timeline" ? (
-            <TimelineTab
-              activeThread={threadState.activeThread}
-              threads={threadState.threads}
-              earlierMessages={threadState.earlierMessages}
-              todayMessages={threadState.todayMessages}
-              messageExpanded={threadState.messageExpanded}
-              defaultExpandedForMessage={threadState.defaultExpandedForMessage}
-              toggleMessage={threadState.toggleMessage}
-              setSelectedThreadId={threadState.setSelectedThreadId}
-              showDraft={threadState.showDraft}
-              draftExpanded={threadState.draftExpanded}
-              toggleDraftExpanded={threadState.toggleDraftExpanded}
-              approveDraft={threadState.approveDraft}
-              isApprovingDraft={threadState.approvingDraftId !== null}
-              editDraftInComposer={composerState.editDraftInComposer}
-              draftDefault={threadState.draftDefault ?? DRAFT_DEFAULT}
-            />
-          ) : null}
-
-          {tab !== "timeline" ? (
-            <WeddingDetailTabContent
-              tab={tab}
-              threads={threadState.threads}
-              setSelectedThreadId={threadState.setSelectedThreadId}
-              setTabAndUrl={setTabAndUrl}
-              showToast={showToast}
-              weddingId={weddingId}
-              travelPlan={travelPlan}
-              tasks={liveTasks}
-            />
-          ) : null}
-        </div>
+            <MotionTabContent tabKey="timeline" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <TimelineTab
+                activeThread={threadState.activeThread}
+                threads={threadState.threads}
+                earlierMessages={threadState.earlierMessages}
+                todayMessages={threadState.todayMessages}
+                messageExpanded={threadState.messageExpanded}
+                defaultExpandedForMessage={threadState.defaultExpandedForMessage}
+                toggleMessage={threadState.toggleMessage}
+                setSelectedThreadId={threadState.setSelectedThreadId}
+                showDraft={threadState.showDraft}
+                draftExpanded={threadState.draftExpanded}
+                toggleDraftExpanded={threadState.toggleDraftExpanded}
+                approveDraft={threadState.approveDraft}
+                isApprovingDraft={threadState.approvingDraftId !== null}
+                editDraftInComposer={composerState.editDraftInComposer}
+                draftDefault={threadState.draftDefault ?? DRAFT_DEFAULT}
+              />
+            </MotionTabContent>
+          ) : (
+            <MotionTabContent tabKey={tab} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <WeddingDetailTabContent
+                tab={tab}
+                threads={threadState.threads}
+                setSelectedThreadId={threadState.setSelectedThreadId}
+                setTabAndUrl={setTabAndUrl}
+                showToast={showToast}
+                weddingId={weddingId}
+                travelPlan={travelPlan}
+                tasks={liveTasks}
+              />
+            </MotionTabContent>
+          )}
+        </AnimatePresence>
 
         <InlineReplyFooter
           replyMeta={composerState.replyMeta}
@@ -213,15 +218,15 @@ export function WeddingDetailPage() {
   const { project, timeline, tasks, isLoading, error } = useWeddingProject(weddingId);
 
   if (isLoading) {
-    return <div className="p-8 text-gray-500">Loading wedding\u2026</div>;
+    return <WeddingDetailSkeleton />;
   }
 
   if (!weddingId || error || !project) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 px-4">
-        <p className="text-[15px] font-semibold text-ink">Wedding not found</p>
-        <p className="max-w-md text-center text-[13px] text-ink-muted">This project doesn\u2019t exist or was removed.</p>
-        <Link to="/weddings" className="text-[13px] font-semibold text-accent hover:text-accent-hover">
+        <p className="type-body font-semibold text-ink">Wedding not found</p>
+        <p className="max-w-md text-center type-small text-ink-muted">This project doesn\u2019t exist or was removed.</p>
+        <Link to="/weddings" className="type-small font-semibold text-link hover:text-link-hover">
           \u2190 Back to Weddings
         </Link>
       </div>

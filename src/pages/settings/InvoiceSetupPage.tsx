@@ -1,21 +1,9 @@
-import { useEffect, useState } from "react";
-import { PDFViewer } from "@react-pdf/renderer";
-import { loadJson, saveJson } from "../../lib/settingsStorage";
-import {
-  INVOICE_STORAGE_KEY,
-  defaultInvoiceSetup,
-  type InvoiceSetupState,
-} from "../../lib/invoiceSetupTypes";
-import { InvoicePdfDocument } from "./InvoicePdfDocument";
+import { useInvoiceSetup } from "../../components/modes/settings/InvoiceSetupContext";
 
 const PRESETS = ["#3b4ed0", "#0d9488", "#b45309", "#1a1c1e"];
 
 export function InvoiceSetupPage() {
-  const [setup, setSetup] = useState<InvoiceSetupState>(() => loadJson(INVOICE_STORAGE_KEY, defaultInvoiceSetup()));
-
-  useEffect(() => {
-    saveJson(INVOICE_STORAGE_KEY, setup);
-  }, [setup]);
+  const { setup, setSetup } = useInvoiceSetup();
 
   function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -32,52 +20,68 @@ export function InvoiceSetupPage() {
     reader.readAsDataURL(file);
   }
 
+  const inputCls =
+    "w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring";
+
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div className="mx-auto max-w-md px-8 py-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Invoice PDF setup</h1>
-        <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">
-          How invoices look when generated (demo preview). Settings save in this browser.
+        <h1 className="text-lg font-semibold text-foreground">Invoice PDF setup</h1>
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          How invoices look when generated. Changes update the live preview in real time.
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="space-y-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
-          <label className="block space-y-1 text-[13px]">
-            <span className="font-semibold text-ink">Legal / studio name</span>
+      <section className="mt-8">
+        <h3 className="border-b border-border pb-2 text-[15px] font-medium text-foreground">Branding</h3>
+        <div className="mt-5 space-y-4">
+          <label className="block space-y-1.5 text-[13px]">
+            <span className="font-medium text-foreground">Legal / studio name</span>
             <input
               value={setup.legalName}
               onChange={(e) => setSetup((s) => ({ ...s, legalName: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink"
+              className={inputCls}
             />
           </label>
-          <label className="block space-y-1 text-[13px]">
-            <span className="font-semibold text-ink">Invoice prefix</span>
+          <label className="block space-y-1.5 text-[13px]">
+            <span className="font-medium text-foreground">Invoice prefix</span>
             <input
               value={setup.invoicePrefix}
               onChange={(e) => setSetup((s) => ({ ...s, invoicePrefix: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink"
+              className={inputCls}
             />
           </label>
-          <label className="block space-y-1 text-[13px]">
-            <span className="font-semibold text-ink">Payment terms</span>
+        </div>
+      </section>
+
+      <section className="mt-10">
+        <h3 className="border-b border-border pb-2 text-[15px] font-medium text-foreground">Terms</h3>
+        <div className="mt-5 space-y-4">
+          <label className="block space-y-1.5 text-[13px]">
+            <span className="font-medium text-foreground">Payment terms</span>
             <input
               value={setup.paymentTerms}
               onChange={(e) => setSetup((s) => ({ ...s, paymentTerms: e.target.value }))}
-              className="w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink"
+              className={inputCls}
             />
           </label>
-          <label className="block space-y-1 text-[13px]">
-            <span className="font-semibold text-ink">Footer note</span>
+          <label className="block space-y-1.5 text-[13px]">
+            <span className="font-medium text-foreground">Footer note</span>
             <textarea
               value={setup.footerNote}
               onChange={(e) => setSetup((s) => ({ ...s, footerNote: e.target.value }))}
               rows={2}
-              className="w-full resize-y rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink"
+              className={inputCls + " resize-y"}
             />
           </label>
+        </div>
+      </section>
+
+      <section className="mt-10">
+        <h3 className="border-b border-border pb-2 text-[15px] font-medium text-foreground">Appearance</h3>
+        <div className="mt-5 space-y-5">
           <div>
-            <p className="text-[13px] font-semibold text-ink">Accent color</p>
+            <p className="text-[13px] font-medium text-foreground">Accent color</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {PRESETS.map((c) => (
                 <button
@@ -85,8 +89,8 @@ export function InvoiceSetupPage() {
                   type="button"
                   onClick={() => setSetup((s) => ({ ...s, accentColor: c }))}
                   className={
-                    "h-9 w-9 rounded-full ring-2 ring-offset-2 ring-offset-surface " +
-                    (setup.accentColor === c ? "ring-accent" : "ring-transparent")
+                    "h-9 w-9 rounded-full ring-2 ring-offset-2 ring-offset-background " +
+                    (setup.accentColor === c ? "ring-ring" : "ring-transparent")
                   }
                   style={{ backgroundColor: c }}
                   aria-label={`Color ${c}`}
@@ -97,33 +101,24 @@ export function InvoiceSetupPage() {
               type="color"
               value={setup.accentColor}
               onChange={(e) => setSetup((s) => ({ ...s, accentColor: e.target.value }))}
-              className="mt-3 h-10 w-full max-w-[120px] cursor-pointer rounded border border-border"
+              className="mt-3 h-10 w-full max-w-[120px] cursor-pointer rounded-lg border border-border"
             />
           </div>
           <div>
-            <p className="text-[13px] font-semibold text-ink">Logo</p>
-            <input type="file" accept="image/*" onChange={onLogoFile} className="mt-2 text-[13px] text-ink-muted" />
+            <p className="text-[13px] font-medium text-foreground">Logo</p>
+            <input type="file" accept="image/*" onChange={onLogoFile} className="mt-2 text-[13px] text-muted-foreground" />
             {setup.logoDataUrl ? (
               <button
                 type="button"
                 onClick={() => setSetup((s) => ({ ...s, logoDataUrl: null }))}
-                className="mt-2 text-[12px] font-semibold text-accent"
+                className="mt-2 text-[12px] font-semibold text-muted-foreground transition hover:text-foreground"
               >
                 Remove logo
               </button>
             ) : null}
           </div>
         </div>
-
-        <div className="flex min-h-[520px] flex-col rounded-2xl border border-border bg-canvas/50 p-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Live preview</p>
-          <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-white">
-            <PDFViewer width="100%" height="100%" showToolbar={false} className="h-[480px]">
-              <InvoicePdfDocument setup={setup} />
-            </PDFViewer>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
   );
 }

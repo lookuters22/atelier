@@ -9,7 +9,7 @@ const features = [
     title: "Say yes to the right clients.",
     body: "Let your agent handle the initial back-and-forth. Instantly qualify leads and send tailored pricing guides based on their venue and date.",
     cta: "Learn more",
-    image: "/landing/inquiries.png",
+    image: "/landing/inquiries.webp",
   },
   {
     id: "invoices",
@@ -18,7 +18,7 @@ const features = [
     title: "Chasing payments, automated.",
     body: "Never send a manual follow-up again. Your agent tracks retainers, sends polite nudges, and handles payment scheduling securely.",
     cta: "See how it works",
-    image: "/landing/invoicing.png",
+    image: "/landing/invoicing.webp",
   },
   {
     id: "timelines",
@@ -27,7 +27,7 @@ const features = [
     title: "Flawless day-of logistics.",
     body: "Automatically generate and distribute wedding day timelines to planners, vendors, and the couple, keeping everyone perfectly in sync.",
     cta: "Explore logistics",
-    image: "/landing/timelines.png",
+    image: "/landing/timelines.webp",
   },
 ];
 
@@ -50,6 +50,7 @@ export function FeatureCarousel() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={TEXT_TRANSITION}
+              className="transform-gpu will-change-transform"
             >
               <div className="text-mono-tiny mb-6 flex items-center gap-2 text-[#47201c]/70">
                 <span className="block h-1.5 w-1.5 bg-[#47201c]" />
@@ -82,7 +83,9 @@ export function FeatureCarousel() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={IMG_TRANSITION}
-              className="absolute inset-0 h-full w-full object-cover"
+              decoding="sync"
+              loading="eager"
+              className="absolute inset-0 h-full w-full object-cover transform-gpu will-change-transform"
             />
           </AnimatePresence>
 

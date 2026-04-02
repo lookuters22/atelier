@@ -29,7 +29,7 @@ export function ManagerApprovalsPage() {
       </div>
 
       {visible.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
+        <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
           No drafts in queue for this filter.
         </p>
       ) : (
@@ -37,7 +37,7 @@ export function ManagerApprovalsPage() {
           {visible.map((d) => (
             <div
               key={d.id}
-              className="flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)]"
+              className="flex flex-col rounded-lg border border-border bg-surface p-5"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -45,7 +45,7 @@ export function ManagerApprovalsPage() {
                   <p className="mt-1 text-[15px] font-semibold text-ink">{d.subject}</p>
                   <p className="mt-1 text-[12px] text-ink-faint">To {d.to}</p>
                 </div>
-                <Link to={`/manager/wedding/${d.weddingId}`} className="text-[12px] font-semibold text-accent hover:text-accent-hover">
+                <Link to={`/manager/wedding/${d.weddingId}`} className="text-[12px] font-semibold text-link hover:text-link-hover">
                   Open context
                 </Link>
               </div>
@@ -53,7 +53,7 @@ export function ManagerApprovalsPage() {
               <div className="mt-5 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-hover"
+                  className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-white/[0.12]"
                 >
                   <Check className="h-4 w-4" strokeWidth={1.75} />
                   Approve & send
@@ -61,7 +61,7 @@ export function ManagerApprovalsPage() {
                 <button
                   type="button"
                   onClick={() => setEditing(d)}
-                  className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-[13px] font-semibold text-ink hover:border-accent/30"
+                  className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-[13px] font-semibold text-ink hover:border-link/30"
                 >
                   <PenLine className="h-4 w-4" strokeWidth={1.75} />
                   Edit draft

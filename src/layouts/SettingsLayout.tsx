@@ -1,6 +1,14 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Calculator, FileText, LayoutTemplate, Settings2 } from "lucide-react";
 import { OfferBuilderSettingsProvider } from "../pages/settings/offerBuilderSettingsContext";
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "../components/ui/sidebar";
 
 const links = [
   { to: "/settings", label: "General", icon: Settings2, end: true },
@@ -41,26 +49,26 @@ export function SettingsLayout() {
           </OfferBuilderSettingsProvider>
         ) : (
           <nav className="flex min-h-0 min-w-0 flex-1 flex-col lg:h-full">
-            <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Settings</p>
-            <ul className="flex flex-wrap gap-1 lg:flex-col">
-              {links.map(({ to, label, icon: Icon, end }) => (
-                <li key={to}>
-                  <NavLink
-                    to={to}
-                    end={end}
-                    className={({ isActive }) =>
-                      [
-                        "flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors",
-                        isActive ? "bg-surface text-ink ring-1 ring-border shadow-sm" : "text-ink-muted hover:bg-black/[0.03] hover:text-ink",
-                      ].join(" ")
-                    }
-                  >
-                    <Icon className="h-4 w-4 shrink-0 opacity-80" strokeWidth={1.75} />
-                    {label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
+            <SidebarGroup className="p-0">
+              <SidebarGroupLabel>Settings</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {links.map(({ to, label, icon: Icon, end }) => {
+                    const active = end ? pathname === to : pathname.startsWith(to);
+                    return (
+                      <SidebarMenuItem key={to}>
+                        <SidebarMenuButton asChild isActive={active} tooltip={label}>
+                          <NavLink to={to} end={end}>
+                            <Icon />
+                            <span>{label}</span>
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
           </nav>
         )}
       </div>

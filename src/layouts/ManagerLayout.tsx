@@ -1,41 +1,139 @@
-import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useCallback, useRef, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell,
   CalendarDays,
+  Camera,
   CheckSquare,
   ChevronDown,
-  CircleUser,
   Columns3,
   GalleryHorizontal,
-  HelpCircle,
   Inbox,
   LayoutGrid,
   ListTodo,
-  Search,
-  Settings,
-  Camera,
   Users,
-  X,
 } from "lucide-react";
+import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { AppSidebar, type NavItem } from "../components/app-sidebar";
 import { ManagerProvider, useManagerContext } from "../context/ManagerContext";
 import { PHOTOGRAPHERS } from "../data/managerPhotographers";
 import { useTodayMetrics } from "../hooks/useTodayMetrics";
 import { useNotifications } from "../hooks/useNotifications";
+import { NavLink } from "react-router-dom";
 
-const nav = [
+
+const nav: NavItem[] = [
   { to: "/manager/today", label: "Today", icon: LayoutGrid, end: false },
-  { to: "/manager/weddings", label: "Weddings", icon: GalleryHorizontal },
+  {
+    to: "/manager/weddings",
+    label: "Weddings",
+    icon: GalleryHorizontal,
+    items: [
+      { to: "/manager/weddings", label: "Active Weddings" },
+      { to: "/manager/weddings/deliverables", label: "Deliverables / Albums" },
+      { to: "/manager/weddings/archived", label: "Archived" },
+    ],
+  },
   { to: "/manager/inbox", label: "Inbox", icon: Inbox },
   { to: "/manager/approvals", label: "Approvals", icon: CheckSquare },
   { to: "/manager/pipeline", label: "Pipeline", icon: Columns3 },
   { to: "/manager/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/manager/contacts", label: "Contacts", icon: Users },
+  {
+    to: "/manager/contacts",
+    label: "Contacts",
+    icon: Users,
+    items: [
+      { to: "/manager/contacts", label: "Clients" },
+      { to: "/manager/contacts/vendors", label: "Vendors" },
+    ],
+  },
   { to: "/manager/tasks", label: "Tasks", icon: ListTodo },
 ];
 
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 360;
+const SIDEBAR_DEFAULT = 256;
+
+function SidebarResizeHandle() {
+  const { open, toggleSidebar } = useSidebar();
+  const didDrag = useRef(false);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      didDrag.current = false;
+
+      if (!open) {
+        toggleSidebar();
+        return;
+      }
+
+      const wrapper = (e.target as HTMLElement).closest("[data-slot='sidebar-wrapper']") as HTMLElement | null;
+      if (!wrapper) return;
+
+      const startX = e.clientX;
+      const startWidth = parseInt(getComputedStyle(wrapper).getPropertyValue("--sidebar-width")) || SIDEBAR_DEFAULT;
+
+      wrapper.classList.add("sidebar-resizing");
+
+      const onMove = (ev: PointerEvent) => {
+        const delta = ev.clientX - startX;
+        if (Math.abs(delta) > 3) didDrag.current = true;
+        const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + delta));
+        wrapper.style.setProperty("--sidebar-width", `${newWidth}px`);
+      };
+
+      const onUp = () => {
+        wrapper.classList.remove("sidebar-resizing");
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        if (!didDrag.current) toggleSidebar();
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    },
+    [open, toggleSidebar],
+  );
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className={`relative z-20 flex shrink-0 cursor-col-resize items-center justify-center self-stretch transition-all ${open ? "w-[18px]" : "w-[4px]"}`}
+    >
+      <div className={`h-[calc(100%-24px)] rounded-full transition-all ${open ? "w-[7px] bg-white/[0.08] hover:bg-white/[0.16]" : "w-0 opacity-0"}`} />
+    </div>
+  );
+}
+
+function ManagerContent() {
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-8">
+      <Outlet />
+    </main>
+  );
+}
+
 function ManagerChrome() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { selectedId, setSelectedId } = useManagerContext();
   const { unfiledCount, pendingDraftsCount } = useTodayMetrics();
   const badgeMap: Record<string, number> = {
@@ -43,24 +141,10 @@ function ManagerChrome() {
     "/manager/approvals": pendingDraftsCount,
   };
   const { items: notifs, unreadCount, markAllRead, markRead, isUnread } = useNotifications("/manager");
-  const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const notifRef = useRef<HTMLDivElement>(null);
-  const switcherRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function closeOnOutside(e: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
-      if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) setSwitcherOpen(false);
-    }
-    if (notifOpen || switcherOpen) document.addEventListener("mousedown", closeOnOutside);
-    return () => document.removeEventListener("mousedown", closeOnOutside);
-  }, [notifOpen, switcherOpen]);
 
   const openNotification = (href: string, id: string) => {
     markRead(id);
-    setNotifOpen(false);
     navigate(href);
   };
 
@@ -69,157 +153,108 @@ function ManagerChrome() {
       ? "All photographers"
       : PHOTOGRAPHERS.find((p) => p.id === selectedId)?.displayName ?? "Photographer";
 
-  return (
-    <div className="flex min-h-screen bg-canvas">
-      <aside className="flex w-[260px] shrink-0 flex-col bg-sidebar text-white/90">
-        <div className="flex items-center gap-3 px-5 py-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-sm font-semibold tracking-tight">A</div>
-          <div>
-            <p className="text-[13px] font-semibold tracking-wide text-white">Atelier</p>
-            <p className="text-[11px] text-white/45">Studio manager</p>
-          </div>
-        </div>
-        <nav className="flex flex-1 flex-col gap-0.5 px-3 pb-4">
-          {nav.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                ["group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors", isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.06] hover:text-white"].join(" ")
-              }
-            >
-              <item.icon className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={1.75} />
-              <span className="flex-1">{item.label}</span>
-              {badgeMap[item.to] ? <span className="rounded-full bg-[#e01e5a] px-1.5 py-0.5 text-[10px] font-semibold text-white">{badgeMap[item.to]}</span> : null}
-            </NavLink>
-          ))}
-          <NavLink
-            to="/manager/photographers"
-            className={({ isActive }) =>
-              ["group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors", isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.06] hover:text-white"].join(" ")
-            }
+  const extraNavItems = [
+    { to: "/manager/photographers", label: "Photographers", icon: Camera },
+  ];
+
+  const photographerSwitcher = (
+    <div className="px-3 pb-1 group-data-[collapsible=icon]:hidden">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex w-full items-center justify-between rounded-md border border-sidebar-border bg-input px-3 py-2 text-sm text-foreground transition hover:border-sidebar-border/80">
+            <span className="truncate">{selectedLabel}</span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="sidebar-dropdown w-56">
+          <DropdownMenuItem
+            className={selectedId === "all" ? "font-semibold" : ""}
+            onClick={() => setSelectedId("all")}
           >
-            <Camera className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={1.75} />
-            <span className="flex-1">Photographers</span>
-          </NavLink>
-        </nav>
-        <div className="border-t border-white/[0.06] px-3 py-4">
-          <NavLink to="/manager/settings" className={({ isActive }) => ["flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors", isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.06] hover:text-white"].join(" ")}>
-            <Settings className="h-[18px] w-[18px]" strokeWidth={1.75} />
-            Settings
-          </NavLink>
-        </div>
-        <div className="border-t border-white/[0.06] px-4 py-3">
-          <NavLink to="/" className="block rounded-xl px-3 py-2 text-[12px] font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white">
-            Photographer view
-          </NavLink>
-        </div>
-        <div className="flex items-center gap-3 border-t border-white/[0.06] px-4 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">SM</div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium text-white">Studio manager</p>
-            <p className="truncate text-[11px] text-white/45">manager@atelier.studio</p>
-          </div>
-          <ChevronDown className="h-4 w-4 text-white/35" />
-        </div>
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-[250] flex items-center justify-between gap-6 border-b border-border bg-canvas/90 px-8 py-4 backdrop-blur-md">
-          <div className="relative max-w-xl flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
-            <input type="search" placeholder="Search weddings, people, or messages" className="w-full rounded-full border border-border bg-surface py-2.5 pl-11 pr-4 text-[13px] text-ink shadow-[0_8px_24px_rgba(26,28,30,0.06)] placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-2 focus:ring-accent/20" onKeyDown={(e) => { if (e.key === "Enter") navigate("/manager/inbox"); }} />
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <div className="relative" ref={switcherRef}>
-              <button
-                type="button"
-                aria-expanded={switcherOpen}
-                aria-haspopup="listbox"
-                className="flex max-w-[min(100vw-8rem,14rem)] items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 text-left text-[13px] font-medium text-ink shadow-sm transition hover:border-accent/30"
-                onClick={() => setSwitcherOpen((o) => !o)}
-              >
-                <span className="truncate">{selectedLabel}</span>
-                <ChevronDown className={"h-4 w-4 shrink-0 text-ink-faint transition " + (switcherOpen ? "rotate-180" : "")} />
-              </button>
-              {switcherOpen ? (
-                <div className="absolute right-0 z-[260] mt-2 w-[min(100vw-2rem,16rem)] rounded-2xl border border-border bg-surface py-2 shadow-[0_8px_32px_rgba(26,28,30,0.12)]" role="listbox">
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={selectedId === "all"}
-                    className={"flex w-full items-center gap-2 px-4 py-2.5 text-left text-[13px] font-medium " + (selectedId === "all" ? "bg-canvas text-ink" : "text-ink-muted hover:bg-canvas/80")}
-                    onClick={() => {
-                      setSelectedId("all");
-                      setSwitcherOpen(false);
-                    }}
-                  >
-                    All photographers
-                  </button>
-                  {PHOTOGRAPHERS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selectedId === p.id}
-                      className={"flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] font-medium " + (selectedId === p.id ? "bg-canvas text-ink" : "text-ink-muted hover:bg-canvas/80")}
-                      onClick={() => {
-                        setSelectedId(p.id);
-                        setSwitcherOpen(false);
-                      }}
-                    >
-                      <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ring-2 " + p.ringClass}>{p.initials}</span>
-                      <span className="truncate">{p.displayName}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <button type="button" className="rounded-full p-2.5 text-ink-muted transition hover:bg-surface hover:text-ink" aria-label="Help" onClick={() => setHelpOpen(true)}><HelpCircle className="h-5 w-5" strokeWidth={1.5} /></button>
-            <div className="relative" ref={notifRef}>
-              <button type="button" className="relative rounded-full p-2.5 text-ink-muted transition hover:bg-surface hover:text-ink" aria-label="Notifications" aria-expanded={notifOpen} onClick={() => setNotifOpen((o) => !o)}><Bell className="h-5 w-5" strokeWidth={1.5} />{unreadCount > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#e01e5a] ring-2 ring-canvas" /> : null}</button>
-              {notifOpen ? (
-                <div className="absolute right-0 z-[260] mt-2 w-[min(100vw-2rem,22rem)] rounded-2xl border border-border bg-surface py-2 shadow-[0_8px_32px_rgba(26,28,30,0.12)]">
-                  <div className="flex items-center justify-between border-b border-border px-4 py-2">
-                    <p className="text-[13px] font-semibold text-ink">Notifications</p>
-                    <button type="button" className="text-[12px] font-semibold text-accent hover:text-accent-hover" onClick={markAllRead}>Mark all read</button>
-                  </div>
-                  <div className="max-h-80 overflow-y-auto">
-                    {notifs.map((n) => (
-                      <button key={n.id} type="button" onClick={() => openNotification(n.href, n.id)} className={"flex w-full flex-col gap-0.5 border-b border-border/80 px-4 py-3 text-left last:border-0 " + (isUnread(n.id) ? "bg-accent/5" : "hover:bg-canvas/80")}>
-                        <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-semibold text-ink">{n.title}</span>{isUnread(n.id) ? <span className="h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}</div>
-                        <span className="text-[12px] text-ink-muted">{n.body}</span>
-                        <span className="text-[11px] text-ink-faint">{n.time}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="border-t border-border px-4 py-2">
-                    <button type="button" className="text-[12px] font-semibold text-accent hover:text-accent-hover" onClick={() => { setNotifOpen(false); navigate("/manager/inbox"); }}>Open inbox</button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="ml-2 flex items-center gap-2 rounded-full border border-border bg-surface px-2 py-1.5 pl-2 shadow-sm">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sidebar text-[11px] font-semibold text-white">SM</div>
-              <div className="hidden pr-2 sm:block"><p className="text-[12px] font-medium text-ink">Manager</p><p className="text-[11px] text-ink-faint">Studio</p></div>
-              <CircleUser className="hidden h-4 w-4 text-ink-faint sm:block" />
-            </div>
-          </div>
-        </header>
-        <main className="min-h-0 flex-1 px-8 py-8"><Outlet /></main>
-      </div>
-      {helpOpen ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="help-title-manager">
-          <div className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-xl">
-            <button type="button" className="absolute right-4 top-4 rounded-full p-1 text-ink-faint hover:bg-canvas hover:text-ink" aria-label="Close" onClick={() => setHelpOpen(false)}><X className="h-5 w-5" /></button>
-            <h2 id="help-title-manager" className="text-lg font-semibold text-ink">Help</h2>
-            <p className="mt-2 text-[14px] leading-relaxed text-ink-muted">Use the <strong className="text-ink">photographer switcher</strong> to filter work by lead, or choose <strong className="text-ink">All photographers</strong> for the full studio queue.</p>
-            <ul className="mt-4 list-inside list-disc space-y-2 text-[13px] text-ink-muted"><li>Today highlights attention items per photographer.</li><li>Photographers opens the team and jumps into filtered work.</li><li>Use Photographer view to return to the single-shooter shell.</li></ul>
-            <button type="button" className="mt-6 w-full rounded-full bg-ink py-2.5 text-[13px] font-semibold text-canvas" onClick={() => setHelpOpen(false)}>Got it</button>
-          </div>
-        </div>
-      ) : null}
+            All photographers
+          </DropdownMenuItem>
+          {PHOTOGRAPHERS.map((p) => (
+            <DropdownMenuItem
+              key={p.id}
+              className={selectedId === p.id ? "font-semibold" : ""}
+              onClick={() => setSelectedId(p.id)}
+            >
+              <span className={"flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ring-1 " + p.ringClass}>
+                {p.initials}
+              </span>
+              <span className="truncate">{p.displayName}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
+  );
+
+  const footerExtra = (
+    <div className="px-4 py-1 group-data-[collapsible=icon]:hidden">
+      <NavLink
+        to="/"
+        className="block rounded-md px-3 py-2 text-[12px] text-sidebar-foreground transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      >
+        Photographer view
+      </NavLink>
+    </div>
+  );
+
+  return (
+    <SidebarProvider className="font-dashboard">
+      <div className="dash-mux-bg" aria-hidden="true" />
+      <AppSidebar
+        nav={nav}
+        badgeMap={badgeMap}
+        subtitle="Studio manager"
+        userName="Studio manager"
+        userEmail="manager@atelier.studio"
+        userInitials="SM"
+        extraNavItems={extraNavItems}
+        extraNavLabel="Team"
+        footerExtra={footerExtra}
+        settingsPath="/manager/settings"
+        onHelpClick={() => setHelpOpen(true)}
+        onSearch={() => navigate("/manager/inbox")}
+        notificationProps={{
+          items: notifs,
+          unreadCount,
+          markAllRead,
+          isUnread,
+          onOpen: openNotification,
+          inboxHref: "/manager/inbox",
+        }}
+        headerExtra={photographerSwitcher}
+      />
+
+      <SidebarResizeHandle />
+
+      <SidebarInset>
+        <ManagerContent />
+      </SidebarInset>
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="max-w-md rounded-[18px]">
+          <DialogHeader>
+            <DialogTitle>Help</DialogTitle>
+            <DialogDescription>
+              Use the <strong className="text-ink">photographer switcher</strong> to filter work by
+              lead, or choose <strong className="text-ink">All photographers</strong> for the full
+              studio queue.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="mt-2 list-inside list-disc space-y-2 text-[13px] text-ink-muted">
+            <li>Today highlights attention items per photographer.</li>
+            <li>Photographers opens the team and jumps into filtered work.</li>
+            <li>Use Photographer view to return to the single-shooter shell.</li>
+          </ul>
+          <Button className="mt-4 w-full rounded-full" onClick={() => setHelpOpen(false)}>
+            Got it
+          </Button>
+        </DialogContent>
+      </Dialog>
+    </SidebarProvider>
   );
 }
 

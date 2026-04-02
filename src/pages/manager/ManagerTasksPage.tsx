@@ -21,7 +21,7 @@ export function ManagerTasksPage() {
       </div>
 
       {tasks.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
+        <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
           No tasks for this photographer in the demo.
         </p>
       ) : (
@@ -29,15 +29,15 @@ export function ManagerTasksPage() {
           {tasks.map((t) => (
             <div
               key={t.title}
-              className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-4 py-4 shadow-sm"
+              className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-4"
             >
               <div>
                 <p className="text-[14px] font-semibold text-ink">{t.title}</p>
                 <p className="mt-1 text-[13px] text-ink-muted">{t.wedding}</p>
               </div>
               <div className="flex items-center gap-4">
-                <span className="rounded-full bg-canvas px-3 py-1 text-[12px] font-semibold text-ink-muted">{t.due}</span>
-                <Link to={`/manager/wedding/${t.id}`} className="text-[13px] font-semibold text-accent hover:text-accent-hover">
+                <span className="rounded-full bg-border/50 px-3 py-1 text-[12px] font-semibold text-ink-muted">{t.due}</span>
+                <Link to={`/manager/wedding/${t.id}`} className="text-[13px] font-semibold text-link hover:text-link-hover">
                   Open
                 </Link>
               </div>

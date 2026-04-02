@@ -1,10 +1,32 @@
 import type { Data } from "@measured/puck";
-import { Plus } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Lenis from "lenis";
+import { ExternalLink, FolderOpen, Plus, Trash2 } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { getTemplateCoverThumbnailSrc } from "../../features/offer-puck/templates/registry";
-import { createOfferProject, listOfferProjects, type OfferProjectRecord } from "../../lib/offerProjectsStorage";
-import { getCachedOfferPreviewHtml, OfferHoverPreview } from "./OfferHoverPreview";
+import { createOfferProject, deleteOfferProject, listOfferProjects, type OfferProjectRecord } from "../../lib/offerProjectsStorage";
+import {
+  getCachedOfferPreviewHtml,
+  OFFER_HOVER_DESIGN_WIDTH_PX,
+  OFFER_HOVER_VIEWPORT_HEIGHT_PX,
+} from "./OfferHoverPreview";
+import TiltedCard from "../../components/TiltedCard";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+
+const PREVIEW_SCALE = 280 / OFFER_HOVER_DESIGN_WIDTH_PX;
 
 export function OfferBuilderHubPage() {
   const navigate = useNavigate();
@@ -14,119 +36,195 @@ export function OfferBuilderHubPage() {
   useEffect(() => {
     setProjects(listOfferProjects());
   }, [location.pathname]);
-  const [hoverProject, setHoverProject] = useState<OfferProjectRecord | null>(null);
-  const [mouse, setMouse] = useState({ x: 0, y: 0 });
 
   const refresh = useCallback(() => setProjects(listOfferProjects()), []);
-
-  const onTileMove = useCallback((e: React.MouseEvent) => {
-    setMouse({ x: e.clientX, y: e.clientY });
-  }, []);
 
   const createNew = useCallback(() => {
     const p = createOfferProject();
     refresh();
-    navigate(`/settings/offer-builder/edit/${p.id}`);
+    navigate(`/workspace/offer-builder/edit/${p.id}`);
   }, [navigate, refresh]);
 
   const openProject = useCallback(
     (id: string) => {
-      navigate(`/settings/offer-builder/edit/${id}`);
+      navigate(`/workspace/offer-builder/edit/${id}`);
     },
     [navigate],
   );
 
-  const hoverHtml = useMemo(
-    () => (hoverProject ? getCachedOfferPreviewHtml(hoverProject.data, `project:${hoverProject.id}`) : ""),
-    [hoverProject],
+  const removeProject = useCallback(
+    (id: string) => {
+      deleteOfferProject(id);
+      refresh();
+    },
+    [refresh],
   );
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-8">
+    <div className="w-full">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Offer builder</h1>
-        <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">
-          Create HTML magazine-style offers. Open a saved project or start fresh — the layout editor runs full screen when you open or create a project.
+        <h1 className="text-lg font-semibold text-foreground">Offer builder</h1>
+        <p className="mt-1 max-w-lg text-[13px] text-muted-foreground">
+          Create HTML magazine-style offers. The layout editor runs full screen when you open or create a project.
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={createNew}
-          className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-[13px] font-semibold text-canvas shadow-sm transition hover:bg-ink/90"
+          className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition hover:bg-foreground/90"
         >
           <Plus className="h-4 w-4" strokeWidth={2} />
           Create new project
         </button>
       </div>
 
-      <section>
-        <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Saved works</p>
-        <p className="mt-1 text-[13px] text-ink-muted">Hover a tile for a live preview; click to open.</p>
+      <section className="mt-10">
+        <h3 className="border-b border-border pb-2 text-[15px] font-medium text-foreground">Saved works</h3>
+        <p className="mt-3 text-[13px] text-muted-foreground">Right-click a card for options; click to open.</p>
 
         {projects.length === 0 ? (
-          <p className="mt-6 rounded-2xl border border-dashed border-border bg-canvas/90 px-4 py-6 text-center text-[13px] text-ink-muted">
-            No saved projects yet. Create one to get started.
-          </p>
+          <div className="mt-6">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FolderOpen className="h-6 w-6" />
+                </EmptyMedia>
+                <EmptyTitle>No saved projects</EmptyTitle>
+                <EmptyDescription>Create one to get started.</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <button
+                  type="button"
+                  onClick={createNew}
+                  className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition hover:bg-foreground/90"
+                >
+                  <Plus className="h-4 w-4" strokeWidth={2} />
+                  Create new project
+                </button>
+              </EmptyContent>
+            </Empty>
+          </div>
         ) : (
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
             {projects.map((p) => (
-              <SavedWorkTile
-                key={p.id}
-                project={p}
-                onOpen={() => openProject(p.id)}
-                onHoverStart={(e) => {
-                  setHoverProject(p);
-                  setMouse({ x: e.clientX, y: e.clientY });
-                }}
-                onHoverEnd={() => setHoverProject(null)}
-                onMouseMove={onTileMove}
-              />
+              <ContextMenu key={p.id}>
+                <ContextMenuTrigger asChild>
+                  <ProjectTiltedCard project={p} onOpen={() => openProject(p.id)} />
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => openProject(p.id)}>
+                    <ExternalLink className="mr-2 h-4 w-4" /> Open project
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem className="text-red-400" onClick={() => removeProject(p.id)}>
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             ))}
           </div>
         )}
       </section>
-
-      {hoverProject ? (
-        <OfferHoverPreview label={hoverProject.name} active mouse={mouse} html={hoverHtml} />
-      ) : null}
     </div>
   );
 }
 
-function SavedWorkTile({
-  project,
-  onOpen,
-  onHoverStart,
-  onHoverEnd,
-  onMouseMove,
-}: {
-  project: OfferProjectRecord;
-  onOpen: () => void;
-  onHoverStart: (e: React.MouseEvent) => void;
-  onHoverEnd: () => void;
-  onMouseMove: (e: React.MouseEvent) => void;
-}) {
-  const thumb = getTemplateCoverThumbnailSrc(project.data as Data);
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      onMouseEnter={onHoverStart}
-      onMouseLeave={onHoverEnd}
-      onMouseMove={onMouseMove}
-      className="group relative flex aspect-square overflow-hidden rounded-lg border border-border text-left transition hover:border-accent/40 hover:ring-1 hover:ring-accent/30"
-    >
-      {thumb ? (
-        <img src={thumb} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-      ) : (
-        <div className="absolute inset-0 bg-neutral-200" aria-hidden />
-      )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" aria-hidden />
-      <span className="absolute bottom-0 left-0 right-0 p-2 text-[10px] font-semibold uppercase leading-tight tracking-wide text-white drop-shadow-sm">
-        {project.name}
-      </span>
-    </button>
-  );
-}
+const ProjectTiltedCard = forwardRef<HTMLElement, { project: OfferProjectRecord; onOpen: () => void }>(
+  function ProjectTiltedCard({ project, onOpen, ...rest }, ref) {
+    const iframeRef = useRef<HTMLIFrameElement>(null);
+    const lenisRef = useRef<Lenis | null>(null);
+    const rafRef = useRef(0);
+    const [loaded, setLoaded] = useState(false);
+
+    useEffect(() => {
+      const iframe = iframeRef.current;
+      if (!iframe) return;
+      const html = getCachedOfferPreviewHtml(project.data as Data, `project:${project.id}`);
+      const onLoad = () => {
+        setLoaded(true);
+
+        const doc = iframe.contentWindow?.document;
+        if (!doc) return;
+
+        lenisRef.current?.destroy();
+        const lenis = new Lenis({
+          wrapper: doc.documentElement,
+          content: doc.body,
+          duration: 1.2,
+          easing: (t: number) => Math.min(1, 1.001 - 2 ** (-10 * t)),
+          smoothWheel: true,
+          wheelMultiplier: 0.8,
+        });
+        lenisRef.current = lenis;
+
+        const tick = (time: number) => {
+          lenis.raf(time);
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      iframe.addEventListener("load", onLoad);
+      iframe.srcdoc = html;
+      return () => {
+        iframe.removeEventListener("load", onLoad);
+        cancelAnimationFrame(rafRef.current);
+        lenisRef.current?.destroy();
+      };
+    }, [project.data, project.id]);
+
+    const onWheel = useCallback((e: React.WheelEvent) => {
+      e.stopPropagation();
+      const lenis = lenisRef.current;
+      if (lenis) {
+        lenis.scrollTo(lenis.scroll + e.deltaY, { immediate: false });
+      }
+    }, []);
+
+    return (
+      <TiltedCard
+        ref={ref}
+        containerHeight="auto"
+        containerWidth="100%"
+        rotateAmplitude={10}
+        scaleOnHover={1.04}
+        showTooltip
+        captionText={project.name}
+        onClick={onOpen}
+        {...rest}
+      >
+        <div
+          className="relative overflow-hidden rounded-[15px] border border-border bg-[#fafaf9]"
+          style={{ aspectRatio: "3/4" }}
+          onWheel={onWheel}
+        >
+          <div
+            className="pointer-events-none absolute left-0 top-0 origin-top-left"
+            style={{
+              width: OFFER_HOVER_DESIGN_WIDTH_PX,
+              height: OFFER_HOVER_VIEWPORT_HEIGHT_PX,
+              transform: `scale(${PREVIEW_SCALE})`,
+            }}
+          >
+            <iframe
+              ref={iframeRef}
+              title={`preview-${project.id}`}
+              sandbox="allow-same-origin"
+              className="h-full w-full border-0"
+              style={{
+                opacity: loaded ? 1 : 0,
+                transition: "opacity 0.3s",
+              }}
+            />
+          </div>
+          {!loaded && (
+            <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-muted">
+              Loading…
+            </div>
+          )}
+        </div>
+      </TiltedCard>
+    );
+  },
+);

@@ -18,14 +18,14 @@ export function WeddingOverviewCard({
   saveEditWedding: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div className="rounded-lg border border-border bg-surface p-5">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Wedding</p>
         {!editingWedding ? (
           <button
             type="button"
             onClick={startEditWedding}
-            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
+            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-link hover:bg-link/10"
           >
             <PenLine className="h-3 w-3" strokeWidth={2} />
             Edit
@@ -51,8 +51,8 @@ export function WeddingOverviewCard({
       </div>
       {!editingWedding ? (
         <>
-          <h1 className="mt-2 text-[22px] font-semibold tracking-tight text-ink">{weddingFields.couple}</h1>
-          <span className="mt-2 inline-block rounded-full bg-canvas px-3 py-1 text-[11px] font-semibold text-ink-muted">
+          <h1 className="mt-2 text-base font-semibold tracking-tight text-ink">{weddingFields.couple}</h1>
+          <span className="mt-2 inline-block rounded-full border border-border px-3 py-1 text-[11px] font-semibold text-ink-muted">
             {weddingFields.stage}
           </span>
           <div className="mt-4 space-y-3 text-[13px] text-ink-muted">

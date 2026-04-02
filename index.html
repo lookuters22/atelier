@@ -2,6 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function(){
+        var t='light';try{t=localStorage.getItem('atelier-theme')||'light'}catch(e){}
+        if(t==='system'){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}
+        var l=t==='light';
+        var bg=l?'#ffffff':'#0a0a0a';
+        var d=document.documentElement;
+        d.style.background=bg;d.style.colorScheme=t;
+        if(l)d.classList.add('light');
+        document.write('<style>html,body,#root{background:'+bg+'!important;color-scheme:'+t+'}</style>');
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Atelier Studio OS</title>
@@ -11,6 +23,15 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,700;1,400&display=swap"
       rel="stylesheet"
     />
+    <link rel="preload" href="/landing/feature-artist.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/feature-manager.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/slider1.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/slider2.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/slider3.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/slider4.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/inquiries.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/invoicing.webp" as="image" type="image/webp" />
+    <link rel="preload" href="/landing/timelines.webp" as="image" type="image/webp" />
   </head>
   <body>
     <div id="root"></div>

@@ -8,7 +8,7 @@ export function Highlight({ children }: { children: ReactNode }) {
       whileInView={{ backgroundPositionX: "0%" }}
       viewport={{ once: true, amount: 0.2 }}
       transition={{ duration: 2.5, delay: 1.0, ease: "easeInOut" }}
-      className="inline-block px-1"
+      className="inline-block px-1 transform-gpu will-change-transform"
       style={{
         backgroundImage:
           "linear-gradient(90deg, #0f172a 0%, #0f172a 35%, #ff8e3e 50%, #0f172a 65%, #0f172a 100%)",
@@ -40,7 +40,7 @@ export function SectionHeader({ title, className }: SectionHeaderProps) {
           opacity: { duration: 1.2, ease: [0.75, 0, 0.25, 1] },
           filter: { duration: 1.2, ease: [0.75, 0, 0.25, 1], delay: 0.2 },
         }}
-        className="text-heading-2 font-weak mx-auto max-w-3xl text-center text-[#47201c]"
+        className="text-heading-2 font-weak mx-auto max-w-3xl text-center text-[#47201c] transform-gpu will-change-transform"
       >
         {title}
       </motion.h2>

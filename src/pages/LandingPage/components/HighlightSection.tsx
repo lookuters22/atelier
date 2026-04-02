@@ -11,11 +11,12 @@ export function HighlightSection() {
           whileInView={{ opacity: 1 }}
           transition={{ duration: 1 }}
           viewport={{ once: true }}
-          className="absolute inset-0"
+          className="absolute inset-0 transform-gpu will-change-transform"
         >
           <img
             src={IMAGE_SRC}
             alt="Luxury wedding photography"
+            decoding="async"
             className="h-full w-full object-cover"
           />
         </motion.div>

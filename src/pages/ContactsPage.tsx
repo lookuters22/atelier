@@ -19,7 +19,7 @@ export function ContactsPage() {
         {GROUP_ORDER.map((g) => (
           <section key={g}>
             <h2 className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{groupLabel(g)}</h2>
-            <div className="mt-3 overflow-x-auto rounded-2xl border border-border bg-surface shadow-sm">
+            <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-surface">
               <div className="min-w-[640px]">
                 <div className="grid grid-cols-[1.15fr_0.85fr_1.35fr_1.05fr_0.9fr] gap-px bg-border text-[12px] font-semibold uppercase tracking-wide text-ink-faint">
                   <div className="bg-surface px-4 py-3">Name</div>
@@ -38,13 +38,13 @@ export function ContactsPage() {
                     <div className="bg-surface px-4 py-3 text-ink-muted">{p.email}</div>
                     <div className="flex flex-wrap items-center gap-1.5 bg-surface px-4 py-3">
                       {p.authority === "primary" ? (
-                        <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[11px] font-semibold text-accent">Primary contact</span>
+                        <span className="rounded-full bg-link/15 px-2.5 py-0.5 text-[11px] font-semibold text-link">Primary contact</span>
                       ) : null}
                       {p.authority === "secondary" ? (
-                        <span className="rounded-full bg-canvas px-2.5 py-0.5 text-[11px] font-semibold text-ink-muted">Secondary</span>
+                        <span className="rounded-full border border-border px-2.5 py-0.5 text-[11px] font-semibold text-ink-muted">Secondary</span>
                       ) : null}
                       {p.logisticsRole ? (
-                        <span className="rounded-full border border-border px-2.5 py-0.5 text-[11px] font-medium text-ink-muted">
+                        <span className="rounded-full border border-border px-2.5 py-0.5 text-[11px] text-ink-muted">
                           {p.logisticsRole}
                         </span>
                       ) : null}
@@ -55,7 +55,7 @@ export function ContactsPage() {
                     <div className="bg-surface px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         {p.weddings.map((id) => (
-                          <Link key={id} to={`/wedding/${id}`} className="font-semibold text-accent hover:text-accent-hover">
+                          <Link key={id} to={`/wedding/${id}`} className="font-semibold text-link hover:text-link-hover">
                             View
                           </Link>
                         ))}

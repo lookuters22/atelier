@@ -46,7 +46,7 @@ export function ApprovalDraftAiModal({ draft, open, onClose, onApply }: Props) {
       aria-modal="true"
       aria-labelledby="approval-ai-title"
     >
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-5 ring-1 ring-black/[0.08]">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-surface p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p id="approval-ai-title" className="text-[12px] font-semibold uppercase tracking-wide text-ink-faint">
@@ -73,7 +73,7 @@ export function ApprovalDraftAiModal({ draft, open, onClose, onApply }: Props) {
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
           placeholder="e.g. Make it sound a bit warmer"
-          className="mt-1 w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+          className="mt-1 w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-faint focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
         />
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -81,9 +81,9 @@ export function ApprovalDraftAiModal({ draft, open, onClose, onApply }: Props) {
             type="button"
             disabled={regenerating}
             onClick={handleRegenerate}
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-canvas px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-canvas px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-link/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Sparkles className="h-4 w-4 text-accent" strokeWidth={1.75} />
+            <Sparkles className="h-4 w-4 text-link" strokeWidth={1.75} />
             {regenerating ? "Regenerating…" : "Regenerate"}
           </button>
         </div>
@@ -96,7 +96,7 @@ export function ApprovalDraftAiModal({ draft, open, onClose, onApply }: Props) {
           value={previewBody}
           onChange={(e) => setPreviewBody(e.target.value)}
           rows={10}
-          className="mt-1 w-full resize-y rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+          className="mt-1 w-full resize-y rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
         />
 
         <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
@@ -109,7 +109,7 @@ export function ApprovalDraftAiModal({ draft, open, onClose, onApply }: Props) {
           </button>
           <button
             type="button"
-            className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover"
+            className="rounded-full border border-border bg-surface px-5 py-2 text-[13px] font-semibold text-ink hover:border-white/[0.12]"
             onClick={handleApply}
           >
             Apply to queue

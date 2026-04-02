@@ -63,7 +63,7 @@ export function TravelTabPanel({
                   <button
                     type="button"
                     onClick={() => toggleDay(day.id)}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-black/[0.02]"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-white/[0.05]"
                   >
                     <ChevronDown className={"h-4 w-4 shrink-0 text-ink-faint transition " + (open ? "" : "-rotate-90")} />
                     <span className="text-[13px] font-semibold text-ink">{day.dateLabel}</span>
@@ -77,7 +77,7 @@ export function TravelTabPanel({
                             <SegmentIcon kind={seg.kind} />
                           </span>
                           <span>
-                            <span className="font-medium">{seg.label}</span>
+                            <span className="font-semibold">{seg.label}</span>
                             <span className="text-ink-muted"> · {seg.detail}</span>
                           </span>
                         </li>
@@ -93,7 +93,7 @@ export function TravelTabPanel({
 
       <section>
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-accent" strokeWidth={1.75} />
+          <Sparkles className="h-4 w-4 text-link" strokeWidth={1.75} />
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Suggested offers</h3>
         </div>
         <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
@@ -119,7 +119,7 @@ export function TravelTabPanel({
                 );
               }
               return (
-                <li key={o.id} className="rounded-xl border border-accent/25 bg-accent/[0.04] px-3 py-3">
+                <li key={o.id} className="rounded-xl border border-link/25 bg-link/[0.04] px-3 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="text-[13px] font-semibold text-ink">{o.route}</p>
@@ -131,14 +131,14 @@ export function TravelTabPanel({
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-accent-hover"
+                        className="rounded-full bg-link px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-link-hover"
                         onClick={() => approveOffer(o.id)}
                       >
                         Approve
                       </button>
                       <button
                         type="button"
-                        className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-muted hover:border-accent/40 hover:text-ink"
+                        className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-muted hover:border-link/40 hover:text-ink"
                         onClick={() => dismissOffer(o.id)}
                       >
                         Dismiss
@@ -171,7 +171,7 @@ export function TravelTabPanel({
                   <p className="mt-0.5 text-[12px] text-ink-muted">
                     {f.depart} → {f.arrive} · {f.airline}
                   </p>
-                  <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-accent">{f.status}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-wide text-link">{f.status}</p>
                 </li>
               ))}
             </ul>

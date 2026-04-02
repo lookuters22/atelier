@@ -7,22 +7,28 @@ type HeroContentProps = {
 };
 
 export function HeroContent({ scrollYProgress }: HeroContentProps) {
-  const mountProgress = useMotionValue(0);
+  const opacityProgress = useMotionValue(0);
+  const blurProgress = useMotionValue(0);
 
   useEffect(() => {
-    const controls = animate(mountProgress, 1, {
-      duration: 0.9,
-      ease: [0.75, 0, 0.25, 1],
+    const fadeIn = animate(opacityProgress, 1, {
+      duration: 0.8,
+      delay: 0.15,
+      ease: [0.25, 0.1, 0.25, 1],
     });
-    return () => controls.stop();
-  }, [mountProgress]);
+    const deblur = animate(blurProgress, 1, {
+      duration: 2.2,
+      ease: [0.16, 1, 0.3, 1],
+    });
+    return () => { fadeIn.stop(); deblur.stop(); };
+  }, [opacityProgress, blurProgress]);
 
   const scrollOpacity = useTransform(scrollYProgress, [0, 0.09, 0.667], [1, 0, 0]);
   const scrollBlur = useTransform(scrollYProgress, [0, 0.09, 0.667], [0, 6, 6]);
-  const mountBlur = useTransform(mountProgress, (p) => (1 - p) * 6);
+  const mountBlur = useTransform(blurProgress, (p) => (1 - p) * 10);
 
   const opacity = useTransform(
-    [mountProgress, scrollOpacity],
+    [opacityProgress, scrollOpacity],
     ([m, s]) => (m as number) * (s as number),
   );
 
@@ -36,7 +42,7 @@ export function HeroContent({ scrollYProgress }: HeroContentProps) {
   return (
     <motion.div
       style={{ opacity, filter }}
-      className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center"
+      className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center transform-gpu will-change-transform"
     >
       <h1 className="text-display font-weak max-w-4xl text-white">
         Meet ANA.
@@ -48,12 +54,25 @@ export function HeroContent({ scrollYProgress }: HeroContentProps) {
         She handles your inbox, chases your leads, collects your payments, and
         delivers your galleries — so you can focus on what you love.
       </p>
-      <div className="glass-shell interactive-glass mt-10 h-[52px] cursor-pointer rounded-[999px] shadow-[0_6px_12px_rgba(0,0,0,0.1)]">
+      <div className="mt-12 flex items-center justify-center">
         <button
           type="button"
-          className="glass-inner justify-center px-10 text-body-small text-white whitespace-nowrap"
+          onClick={() => window.scrollTo({ top: window.innerHeight, behavior: 'smooth' })}
+          className="flex items-center gap-2 text-white/60 hover:text-white transition-colors duration-300 cursor-pointer"
         >
-          Get Early Access &rarr;
+          <span className="text-body-small font-weak">Scroll</span>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
         </button>
       </div>
     </motion.div>

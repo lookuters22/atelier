@@ -21,11 +21,11 @@ export function ManagerContactsPage() {
       </div>
 
       {people.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
+        <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
           No contacts for this photographer in the demo.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface">
           <div className="grid grid-cols-[1.2fr_0.8fr_1.4fr_0.9fr] gap-px bg-border text-[12px] font-semibold uppercase tracking-wide text-ink-faint">
             <div className="bg-surface px-4 py-3">Name</div>
             <div className="bg-surface px-4 py-3">Role</div>
@@ -42,7 +42,7 @@ export function ManagerContactsPage() {
               <div className="bg-surface px-4 py-3 text-ink-muted">{p.email}</div>
               <div className="bg-surface px-4 py-3">
                 {p.weddings.map((id) => (
-                  <Link key={id} to={`/manager/wedding/${id}`} className="font-semibold text-accent hover:text-accent-hover">
+                  <Link key={id} to={`/manager/wedding/${id}`} className="font-semibold text-link hover:text-link-hover">
                     View
                   </Link>
                 ))}

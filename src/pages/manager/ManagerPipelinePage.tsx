@@ -1,8 +1,11 @@
 import { Fragment, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Check } from "lucide-react";
 import { useManagerContext } from "../../context/ManagerContext";
 import { MANAGER_PIPELINE_WEDDINGS } from "../../data/managerPhotographers";
+import { handleGlowMove, handleGlowLeave } from "../../lib/glowEffect";
+import { MotionPage, MotionSection } from "../../components/motion-primitives";
 
 const STAGES = ["Inquiry", "Consultation", "Proposal", "Contract", "Booked", "Prep", "Delivered"] as const;
 
@@ -22,9 +25,9 @@ function StageTrack({ currentStageIndex }: { currentStageIndex: number }) {
                   className={
                     "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-semibold transition-colors " +
                     (done
-                      ? "border-accent bg-accent text-white"
+                      ? "border-link bg-link text-white"
                       : current
-                        ? "border-accent bg-surface text-accent shadow-[0_0_0_3px_rgba(59,78,208,0.12)]"
+                        ? "border-link bg-surface text-link shadow-[0_0_0_3px_rgba(0,112,243,0.12)]"
                         : "border-border bg-canvas/80 text-ink-faint")
                   }
                   aria-current={current ? "step" : undefined}
@@ -44,7 +47,7 @@ function StageTrack({ currentStageIndex }: { currentStageIndex: number }) {
                 <div
                   className={
                     "mb-auto mt-3.5 h-0.5 min-w-[6px] flex-1 rounded-full " +
-                    (i < currentStageIndex ? "bg-accent/70" : "bg-border")
+                    (i < currentStageIndex ? "bg-link/70" : "bg-border")
                   }
                   aria-hidden
                 />
@@ -66,30 +69,34 @@ export function ManagerPipelinePage() {
   }, [selectedId]);
 
   return (
-    <div className="space-y-6">
-      <div>
+    <MotionPage className="space-y-6">
+      <MotionSection>
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Pipeline</h1>
         <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">
           Each wedding has its own journey below—filtered by the photographer switcher when needed.
         </p>
-      </div>
+      </MotionSection>
 
       {weddings.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
+        <MotionSection className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center text-[14px] text-ink-muted">
           No pipeline rows for this photographer in the demo.
-        </p>
+        </MotionSection>
       ) : (
-        <div className="space-y-4">
+        <MotionSection className="space-y-4">
           {weddings.map((w) => (
-            <div
+            <motion.div
               key={w.id}
-              className="rounded-2xl border border-border bg-surface p-5 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_8px_28px_rgba(26,28,30,0.05)]"
+              whileTap={{ scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="glow-card rounded-lg border border-border bg-surface p-5"
+              onMouseMove={handleGlowMove}
+              onMouseLeave={handleGlowLeave}
             >
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/70 pb-4">
                 <div>
                   <Link
                     to={`/manager/wedding/${w.weddingRouteId}`}
-                    className="text-[16px] font-semibold text-ink hover:text-accent"
+                    className="text-[16px] font-semibold text-ink hover:text-link"
                   >
                     {w.couple}
                   </Link>
@@ -99,16 +106,16 @@ export function ManagerPipelinePage() {
                 </div>
                 <div className="text-right">
                   <p className="text-[13px] font-semibold text-ink">{w.value}</p>
-                  <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+                  <p className="mt-1 text-[11px] uppercase tracking-wide text-ink-faint">
                     Now: {STAGES[w.currentStageIndex]}
                   </p>
                 </div>
               </div>
               <StageTrack currentStageIndex={w.currentStageIndex} />
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </MotionSection>
       )}
-    </div>
+    </MotionPage>
   );
 }

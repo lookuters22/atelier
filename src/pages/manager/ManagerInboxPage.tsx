@@ -70,9 +70,9 @@ export function ManagerInboxPage() {
             aria-expanded={filterOpen}
             aria-haspopup="listbox"
             className={
-              "inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-[13px] font-medium shadow-sm transition " +
+              "inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-[13px] transition " +
               (activeFilter !== "all"
-                ? "border-ink/10 text-ink shadow-[0_1px_3px_rgba(26,28,30,0.06)]"
+                ? "border-ink/10 text-ink"
                 : "border-border text-ink-muted hover:border-ink/15 hover:text-ink")
             }
             onClick={() => setFilterOpen((o) => !o)}
@@ -82,7 +82,7 @@ export function ManagerInboxPage() {
               {activeFilter === "all" ? "Filters" : filterLabel(activeFilter)}
             </span>
             {activeFilter !== "all" ? (
-              <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+              <span className="rounded-full bg-border/50 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
                 Active
               </span>
             ) : null}
@@ -94,7 +94,7 @@ export function ManagerInboxPage() {
 
           {filterOpen ? (
             <div
-              className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(100vw-2rem,20rem)] rounded-2xl border border-border/90 bg-surface py-2 shadow-[0_12px_40px_rgba(26,28,30,0.1)]"
+              className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(100vw-2rem,20rem)] rounded-lg border border-border/90 bg-surface py-2"
               role="listbox"
             >
               <div className="border-b border-border/70 px-3 pb-2 pt-1">
@@ -121,7 +121,7 @@ export function ManagerInboxPage() {
                         <span
                           className={
                             "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " +
-                            (on ? "bg-surface text-accent" : "bg-canvas/90 text-ink-faint")
+                            (on ? "bg-surface text-link" : "bg-canvas/90 text-ink-faint")
                           }
                         >
                           <Icon className="h-4 w-4" strokeWidth={1.75} />
@@ -160,7 +160,7 @@ export function ManagerInboxPage() {
       </div>
 
       {visible.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
+        <div className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
           <p className="text-[15px] font-semibold text-ink">No threads in this view</p>
           <p className="mt-2 text-[13px] text-ink-muted">
             Try another filter, switch to <strong className="text-ink">All photographers</strong>, or open{" "}
@@ -168,7 +168,7 @@ export function ManagerInboxPage() {
           </p>
           <button
             type="button"
-            className="mt-4 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover"
+            className="mt-4 rounded-full border border-border bg-surface px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-white/[0.12]"
             onClick={() => setActiveFilter("inquiries")}
           >
             Show inquiries
@@ -179,7 +179,7 @@ export function ManagerInboxPage() {
           {visible.map((row) => (
             <div
               key={row.id}
-              className="rounded-2xl border border-border bg-surface p-4 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_10px_28px_rgba(26,28,30,0.05)]"
+              className="rounded-lg border border-border bg-surface p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
@@ -191,8 +191,8 @@ export function ManagerInboxPage() {
                         className={
                           "rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide " +
                           (b === "Inquiry"
-                            ? "bg-accent/15 text-accent"
-                            : "bg-canvas text-ink-muted")
+                            ? "bg-link/15 text-link"
+                            : "border border-border px-2.5 text-ink-muted")
                         }
                       >
                         {b}
@@ -205,7 +205,7 @@ export function ManagerInboxPage() {
                     <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-canvas px-3 py-2 text-[12px] text-ink-muted">
                       <span className="font-semibold text-ink">{row.confidence.pct}% match</span>
                       <span>· {row.confidence.label}</span>
-                      <button type="button" className="font-semibold text-accent hover:text-accent-hover">
+                      <button type="button" className="font-semibold text-link hover:text-link-hover">
                         Confirm
                       </button>
                       <button type="button" className="font-semibold text-ink-muted hover:text-ink">
@@ -219,7 +219,7 @@ export function ManagerInboxPage() {
                   {row.weddingId ? (
                     <Link
                       to={`/manager/wedding/${row.weddingId}`}
-                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:text-accent-hover"
+                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-link hover:text-link-hover"
                     >
                       Open wedding
                       <ArrowUpRight className="h-4 w-4" />
@@ -227,7 +227,7 @@ export function ManagerInboxPage() {
                   ) : (
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:text-accent-hover"
+                      className="inline-flex items-center gap-1 text-[13px] font-semibold text-link hover:text-link-hover"
                     >
                       Link thread
                       <ArrowUpRight className="h-4 w-4" />

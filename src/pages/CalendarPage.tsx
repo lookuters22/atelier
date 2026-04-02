@@ -266,7 +266,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
             onChange={onMonthInputChange}
             aria-hidden
           />
-          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-1 text-[12px] font-semibold text-ink-muted shadow-sm">
+          <div className="inline-flex items-center gap-1 rounded-full border border-border bg-surface px-1 py-1 text-[12px] font-semibold text-ink-muted">
             <button
               type="button"
               className="rounded-full p-2 text-ink-muted transition hover:bg-canvas hover:text-ink"
@@ -296,7 +296,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-2xl border border-border bg-surface p-4 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)]">
+        <div className="rounded-lg border border-border bg-surface p-4">
           <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
               <div key={d}>{d}</div>
@@ -319,7 +319,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                     "flex min-h-[5.5rem] flex-col gap-1 rounded-xl border p-2 text-left transition " +
                     (inMonth
                       ? hasEvents || isToday
-                        ? "border-accent/40 bg-accent/10"
+                        ? "border-link/40 bg-link/10"
                         : "border-transparent bg-canvas/30 hover:border-border"
                       : "border-transparent bg-canvas/15 opacity-50")
                   }
@@ -341,7 +341,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                       <button
                         key={ev.id}
                         type="button"
-                        className="truncate rounded-md bg-surface px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight text-ink shadow-sm ring-1 ring-border/80 hover:ring-accent/40"
+                        className="truncate rounded-md border border-border/80 bg-surface px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight text-ink transition hover:border-link/40"
                         title={ev.title}
                         onDoubleClick={(e) => {
                           e.stopPropagation();
@@ -352,7 +352,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                       </button>
                     ))}
                     {more > 0 ? (
-                      <span className="text-[10px] font-medium text-ink-muted">+{more} more</span>
+                      <span className="text-[10px] text-ink-muted">+{more} more</span>
                     ) : null}
                   </div>
                 </div>
@@ -366,7 +366,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
           <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Agenda</p>
           <div className="space-y-3">
             {agendaEvents.length === 0 ? (
-              <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
+              <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
                 No events this month. Switch month or add one from the grid.
               </p>
             ) : (
@@ -379,14 +379,14 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                 return (
                   <div
                     key={e.id}
-                    className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                    className="flex items-center gap-4 rounded-lg border border-border bg-surface p-4 transition hover:border-white/[0.12]"
                     onDoubleClick={() => openEdit(e)}
                   >
-                    <div className="flex h-14 w-14 flex-col items-center justify-center rounded-2xl bg-canvas text-center">
+                    <div className="flex h-14 w-14 flex-col items-center justify-center rounded-lg bg-canvas text-center">
                       <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
                         {monthShort}
                       </span>
-                      <span className="text-[18px] font-semibold text-ink">{dd}</span>
+                      <span className="text-base font-semibold text-ink">{dd}</span>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-[14px] font-semibold text-ink">{e.title}</p>
@@ -394,7 +394,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                       {e.weddingId ? (
                         <Link
                           to={`${weddingLinkBase}/${e.weddingId}`}
-                          className="mt-2 inline-flex text-[12px] font-semibold text-accent hover:text-accent-hover"
+                          className="mt-2 inline-flex text-[12px] font-semibold text-link hover:text-link-hover"
                           onClick={(ev) => ev.stopPropagation()}
                           onMouseDown={(ev) => ev.stopPropagation()}
                         >
@@ -420,7 +420,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-[16px] font-semibold text-ink">
                 {modal.mode === "add" ? "New event" : "Edit event"}
@@ -499,7 +499,7 @@ export function CalendarPage(props: CalendarPageProps = {}) {
                 </button>
                 <button
                   type="button"
-                  className="rounded-full bg-accent px-5 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover disabled:opacity-40"
+                  className="rounded-md border border-border bg-surface px-5 py-2 text-[13px] font-semibold text-ink transition hover:border-white/[0.12] disabled:opacity-40"
                   disabled={!modal.title.trim()}
                   onClick={saveModal}
                 >

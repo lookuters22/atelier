@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { ListPageSkeleton } from "../components/DashboardSkeleton";
 import { useUnfiledInbox, type UnfiledThread } from "../hooks/useUnfiledInbox";
 
 type FilterId =
@@ -162,8 +163,8 @@ export function InboxPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">Inbox</h1>
-          <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">
+          <h1 className="type-display-m text-ink">Inbox</h1>
+          <p className="mt-2 max-w-2xl type-small text-ink-muted">
             Triage across every wedding. Link stray threads once—Atelier keeps the timeline unified.
           </p>
         </div>
@@ -173,9 +174,9 @@ export function InboxPage() {
             aria-expanded={filterOpen}
             aria-haspopup="listbox"
             className={
-              "inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 text-[13px] font-medium shadow-sm transition " +
+              "inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-2 type-small transition " +
               (activeFilter !== "all"
-                ? "border-ink/10 text-ink shadow-[0_1px_3px_rgba(26,28,30,0.06)]"
+                ? "border-ink/10 text-ink"
                 : "border-border text-ink-muted hover:border-ink/15 hover:text-ink")
             }
             onClick={() => setFilterOpen((o) => !o)}
@@ -185,7 +186,7 @@ export function InboxPage() {
               {activeFilter === "all" ? "Filters" : filterLabel(activeFilter)}
             </span>
             {activeFilter !== "all" ? (
-              <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+              <span className="rounded-full bg-border/50 px-2 py-0.5 text-[12px] font-semibold text-ink-muted">
                 Active
               </span>
             ) : null}
@@ -197,7 +198,7 @@ export function InboxPage() {
 
           {filterOpen ? (
             <div
-              className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(100vw-2rem,20rem)] rounded-2xl border border-border/90 bg-surface py-2 shadow-[0_12px_40px_rgba(26,28,30,0.1)]"
+              className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(100vw-2rem,20rem)] rounded-lg border border-border/90 bg-surface py-2"
               role="listbox"
             >
               <div className="border-b border-border/70 px-3 pb-2 pt-1">
@@ -214,7 +215,7 @@ export function InboxPage() {
                         role="option"
                         aria-selected={on}
                         className={
-                          "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-semibold transition " +
+                          "flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left type-small font-semibold transition " +
                           (on
                             ? "bg-canvas text-ink ring-1 ring-ink/10"
                             : "text-ink-muted hover:bg-canvas/80 hover:text-ink")
@@ -224,7 +225,7 @@ export function InboxPage() {
                         <span
                           className={
                             "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " +
-                            (on ? "bg-surface text-accent" : "bg-canvas/90 text-ink-faint")
+                            (on ? "bg-surface text-link" : "bg-canvas/90 text-ink-faint")
                           }
                         >
                           <Icon className="h-4 w-4" strokeWidth={1.75} />
@@ -246,7 +247,7 @@ export function InboxPage() {
                     role="option"
                     aria-selected={activeFilter === o.id}
                     className={
-                      "flex w-full rounded-lg px-2 py-2 text-left text-[13px] transition " +
+                      "flex w-full rounded-lg px-2 py-2 text-left type-small transition " +
                       (activeFilter === o.id
                         ? "bg-canvas font-semibold text-ink ring-1 ring-ink/8"
                         : "text-ink-muted hover:bg-canvas/70 hover:text-ink")
@@ -263,18 +264,16 @@ export function InboxPage() {
       </div>
 
       {isLoading ? (
-        <div className="rounded-2xl border border-border bg-surface px-6 py-12 text-center">
-          <p className="text-[14px] text-ink-muted">Loading inbox…</p>
-        </div>
+        <ListPageSkeleton />
       ) : visible.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
-          <p className="text-[15px] font-semibold text-ink">No threads in this view</p>
-          <p className="mt-2 text-[13px] text-ink-muted">
+        <div className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
+          <p className="type-body font-semibold text-ink">No threads in this view</p>
+          <p className="mt-2 type-small text-ink-muted">
             Try another filter, or open <strong className="text-ink">Unfiled</strong> for stray threads.
           </p>
           <button
             type="button"
-            className="mt-4 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover"
+            className="mt-4 rounded-md border border-border bg-surface px-4 py-2 type-small font-semibold text-ink transition hover:border-white/[0.12]"
             onClick={() => setActiveFilter("unfiled")}
           >
             Show unfiled
@@ -285,31 +284,31 @@ export function InboxPage() {
           {visible.map((row) => (
             <div
               key={row.id}
-              className="rounded-2xl border border-border bg-surface p-4 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_10px_28px_rgba(26,28,30,0.05)]"
+              className="rounded-lg border border-border bg-surface p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-[13px] font-semibold text-ink">{row.wedding}</p>
+                    <p className="type-small font-semibold text-ink">{row.wedding}</p>
                     {row.badges.map((b) => (
                       <span
                         key={b}
                         className={
-                          "rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide " +
+                          "rounded-full px-2 py-0.5 text-[12px] font-semibold uppercase tracking-wide " +
                           (b === "Inquiry"
-                            ? "bg-accent/15 text-accent"
-                            : "bg-canvas text-ink-muted")
+                            ? "bg-link/15 text-link"
+                            : "bg-border/50 text-ink-muted")
                         }
                       >
                         {b}
                       </span>
                     ))}
                   </div>
-                  <p className="mt-2 text-[15px] font-semibold text-ink">{row.subject}</p>
-                  <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">{row.snippet}</p>
+                  <p className="mt-2 type-body font-semibold text-ink">{row.subject}</p>
+                  <p className="mt-1 type-small text-ink-muted">{row.snippet}</p>
 
                   {row.suggestedCoupleName ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-canvas px-3 py-2 text-[12px] text-ink-muted">
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-canvas px-3 py-2 type-small text-ink-muted">
                       <span className="font-semibold text-ink">{row.confidencePct}% match</span>
                       <span>· AI Suggests: {row.suggestedCoupleName}</span>
                       {row.suggestedReasoning ? (
@@ -320,7 +319,7 @@ export function InboxPage() {
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <select
-                      className="rounded-lg border border-border bg-canvas px-2 py-1.5 text-[12px] text-ink"
+                      className="rounded-lg border border-border bg-canvas px-2 py-1.5 type-small text-ink"
                       value={getDefaultSelection(row)}
                       onChange={(e) =>
                         setLinkSelections((prev) => ({ ...prev, [row.id]: e.target.value }))
@@ -337,14 +336,14 @@ export function InboxPage() {
                       type="button"
                       disabled={!getDefaultSelection(row)}
                       onClick={() => handleLinkThread(row.id, row.suggestedWeddingId)}
-                      className="rounded-full bg-accent px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-md border border-border bg-surface px-3 py-1.5 type-small font-semibold text-ink transition hover:border-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Link Thread
                     </button>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <span className="text-[12px] text-ink-faint">{row.time}</span>
+                  <span className="type-small text-ink-faint">{row.time}</span>
                   <div className="relative" ref={menuOpenId === row.id ? menuRef : undefined}>
                     <button
                       type="button"
@@ -358,7 +357,7 @@ export function InboxPage() {
                       <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-border bg-surface py-1 shadow-[0_8px_24px_rgba(26,28,30,0.12)]">
                         <button
                           type="button"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-[13px] font-medium text-red-600 transition hover:bg-canvas"
+                          className="flex w-full items-center gap-2 px-3 py-2 type-small text-red-400 transition hover:bg-canvas"
                           onClick={() => {
                             setMenuOpenId(null);
                             if (window.confirm("Are you sure you want to delete this thread? All messages will be permanently removed.")) {

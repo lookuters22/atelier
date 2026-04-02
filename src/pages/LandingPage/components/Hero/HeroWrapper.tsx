@@ -11,7 +11,7 @@ export function HeroWrapper() {
 
   return (
     <div ref={ref} className="relative h-[450vh]">
-      <HeroScene scrollYProgress={scrollYProgress} />
+      <HeroScene scrollYProgress={scrollYProgress} wrapperRef={ref} />
     </div>
   );
 }

@@ -82,7 +82,7 @@ export function AddWeddingPage() {
       <div>
         <Link
           to="/weddings"
-          className="inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:text-accent-hover"
+          className="inline-flex items-center gap-1 text-[13px] font-semibold text-link hover:text-link-hover"
         >
           <ArrowLeft className="h-4 w-4" strokeWidth={2} />
           Weddings
@@ -93,15 +93,15 @@ export function AddWeddingPage() {
         </p>
       </div>
 
-      <form onSubmit={submit} className="space-y-4 rounded-2xl border border-border bg-surface p-5 shadow-sm">
+      <form onSubmit={submit} className="space-y-4 rounded-lg border border-border bg-surface p-5">
         <label className="block text-[12px] font-semibold text-ink-muted">
-          Couple / project name <span className="text-accent">*</span>
+          Couple / project name <span className="text-link">*</span>
           <input
             required
             value={couple}
             onChange={(e) => setCouple(e.target.value)}
             placeholder="e.g. Alex & Jordan"
-            className="mt-1 w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+            className="mt-1 w-full rounded-xl border border-border bg-canvas px-3 py-2 text-[14px] text-ink placeholder:text-ink-faint focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
           />
         </label>
 
@@ -112,7 +112,7 @@ export function AddWeddingPage() {
               type="date"
               value={weddingDate}
               onChange={(e) => setWeddingDate(e.target.value)}
-              className="mt-1 w-full min-h-[42px] cursor-pointer rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25 [color-scheme:light]"
+              className="mt-1 w-full min-h-[42px] cursor-pointer rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25 [color-scheme:light]"
             />
             <span className="mt-1 block text-[11px] font-normal text-ink-faint">Opens your browser calendar</span>
           </label>
@@ -121,7 +121,7 @@ export function AddWeddingPage() {
             <select
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
-              className="mt-1 w-full min-h-[42px] cursor-pointer appearance-none rounded-xl border border-border bg-canvas bg-[length:1rem] bg-[right_0.75rem_center] bg-no-repeat px-3 py-2 pr-9 text-[13px] text-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+              className="mt-1 w-full min-h-[42px] cursor-pointer appearance-none rounded-xl border border-border bg-canvas bg-[length:1rem] bg-[right_0.75rem_center] bg-no-repeat px-3 py-2 pr-9 text-[13px] text-ink focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
               style={{
                 backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
               }}
@@ -149,7 +149,7 @@ export function AddWeddingPage() {
           <select
             value={stage}
             onChange={(e) => setStage(e.target.value)}
-            className="mt-1 w-full min-h-[42px] cursor-pointer appearance-none rounded-xl border border-border bg-canvas bg-[length:1rem] bg-[right_0.75rem_center] bg-no-repeat px-3 py-2 pr-9 text-[13px] text-ink focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+            className="mt-1 w-full min-h-[42px] cursor-pointer appearance-none rounded-xl border border-border bg-canvas bg-[length:1rem] bg-[right_0.75rem_center] bg-no-repeat px-3 py-2 pr-9 text-[13px] text-ink focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
             style={{
               backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
             }}
@@ -209,7 +209,7 @@ export function AddWeddingPage() {
           </Link>
           <button
             type="submit"
-            className="rounded-full bg-ink px-5 py-2 text-[13px] font-semibold text-canvas hover:bg-ink/90"
+            className="rounded-md border border-border bg-surface px-5 py-2 text-[13px] font-semibold text-ink transition hover:border-white/[0.12]"
           >
             Create & open
           </button>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export function useTimedToast(durationMs = 4200) {
   const [toast, setToast] = useState<string | null>(null);
@@ -9,9 +9,9 @@ export function useTimedToast(durationMs = 4200) {
     return () => window.clearTimeout(timeoutId);
   }, [durationMs, toast]);
 
-  function showToast(message: string) {
+  const showToast = useCallback((message: string) => {
     setToast(message);
-  }
+  }, []);
 
   return { toast, showToast };
 }

@@ -66,7 +66,7 @@ export type ManagerAttentionItem = {
   hint: string;
   to: string;
   Icon: LucideIcon;
-  iconWell: string;
+  iconGradient: string;
 };
 
 export const MANAGER_ATTENTION: ManagerAttentionItem[] = [
@@ -77,7 +77,7 @@ export const MANAGER_ATTENTION: ManagerAttentionItem[] = [
     hint: "Link threads to the right wedding to keep timelines clean.",
     to: "/manager/inbox?filter=unfiled",
     Icon: Inbox,
-    iconWell: "bg-[#e01e5a]/[0.09] text-[#b01238]",
+    iconGradient: "linear-gradient(135deg, #ff6259 0%, #d63340 100%)",
   },
   {
     photographerId: "ph-marco",
@@ -86,7 +86,7 @@ export const MANAGER_ATTENTION: ManagerAttentionItem[] = [
     hint: "Review tone before anything reaches a planner or couple.",
     to: "/manager/approvals",
     Icon: ClipboardPen,
-    iconWell: "bg-accent/12 text-accent",
+    iconGradient: "linear-gradient(135deg, #38bdf8 0%, #0169cc 100%)",
   },
   {
     photographerId: "ph-elena",
@@ -95,7 +95,7 @@ export const MANAGER_ATTENTION: ManagerAttentionItem[] = [
     hint: "Questionnaire reminder for Villa Cetinale.",
     to: "/manager/tasks",
     Icon: ListTodo,
-    iconWell: "bg-[#5c6b2e]/10 text-[#4a5a24]",
+    iconGradient: "linear-gradient(135deg, #34d399 0%, #059669 100%)",
   },
 ];
 

@@ -7,10 +7,10 @@ type Filter = "all" | "proposal" | "contract" | "invoice";
 
 function statusPill(status: string): string {
   const s = status.toLowerCase();
-  if (s === "sent" || s === "draft") return "bg-amber-500/15 text-amber-800";
-  if (s === "accepted" || s === "signed" || s === "paid") return "bg-emerald-500/15 text-emerald-800";
-  if (s === "partial") return "bg-sky-500/15 text-sky-800";
-  if (s === "overdue" || s === "expired" || s === "void") return "bg-rose-500/15 text-rose-800";
+  if (s === "sent" || s === "draft") return "bg-amber-500/15 text-amber-400";
+  if (s === "accepted" || s === "signed" || s === "paid") return "bg-emerald-500/15 text-emerald-400";
+  if (s === "partial") return "bg-sky-500/15 text-sky-400";
+  if (s === "overdue" || s === "expired" || s === "void") return "bg-rose-500/15 text-rose-400";
   return "bg-ink/5 text-ink-muted";
 }
 
@@ -37,7 +37,7 @@ export function FinancialsPage() {
             <Wallet className="h-5 w-5" strokeWidth={1.75} />
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">Studio</span>
           </div>
-          <h1 className="mt-1 text-[22px] font-semibold tracking-tight text-ink">Financials</h1>
+          <h1 className="mt-1 text-base font-semibold tracking-tight text-ink">Financials</h1>
           <p className="mt-1 max-w-xl text-[13px] text-ink-muted">
             Proposals, contracts, and invoices across weddings (demo data). Open a wedding to see the full Money & docs tab.
           </p>
@@ -59,7 +59,7 @@ export function FinancialsPage() {
             onClick={() => setFilter(id)}
             className={
               "rounded-full px-3 py-1.5 text-[12px] font-semibold transition " +
-              (filter === id ? "bg-ink text-canvas" : "bg-canvas text-ink-muted ring-1 ring-border hover:bg-black/[0.03]")
+              (filter === id ? "bg-ink text-canvas" : "bg-canvas text-ink-muted ring-1 ring-border hover:bg-white/[0.05]")
             }
           >
             {label}
@@ -67,7 +67,7 @@ export function FinancialsPage() {
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-surface">
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
         <table className="w-full text-left text-[13px]">
           <thead className="border-b border-border bg-canvas/50 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
             <tr>
@@ -90,7 +90,7 @@ export function FinancialsPage() {
             ) : (
               rows.map((r) => (
                 <tr key={`${r.kind}-${r.id}`} className="border-b border-border/60 last:border-0">
-                  <td className="px-4 py-3 font-medium text-ink">{kindLabel(r.kind)}</td>
+                  <td className="px-4 py-3 font-semibold text-ink">{kindLabel(r.kind)}</td>
                   <td className="px-4 py-3 text-ink">{r.couple}</td>
                   <td className="max-w-[200px] truncate px-4 py-3 text-ink-muted" title={r.title}>
                     {r.title}
@@ -107,7 +107,7 @@ export function FinancialsPage() {
                   <td className="px-4 py-3 text-right">
                     <Link
                       to={`/wedding/${r.weddingId}?tab=financials`}
-                      className="text-[12px] font-semibold text-accent hover:text-accent-hover"
+                      className="text-[12px] font-semibold text-link hover:text-link-hover"
                     >
                       Open wedding
                     </Link>

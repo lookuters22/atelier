@@ -26,14 +26,14 @@ export function ManagerPhotographersPage() {
                 setSelectedId(p.id);
                 navigate("/manager/weddings");
               }}
-              className="flex flex-col rounded-2xl border border-border bg-surface p-5 text-left shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)] transition hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-md"
+              className="flex flex-col rounded-lg border border-border bg-surface p-5 text-left transition hover:-translate-y-0.5 hover:border-link/30"
             >
               <div className={"mx-auto flex h-16 w-16 items-center justify-center rounded-full text-lg font-semibold ring-2 " + p.ringClass}>{p.initials}</div>
               <p className="mt-4 text-center text-[16px] font-semibold text-ink">{p.displayName}</p>
               <p className="mt-2 text-center text-[13px] text-ink-muted">
                 {n === 1 ? "1 active wedding" : `${n} active weddings`}
               </p>
-              <span className="mt-4 text-center text-[12px] font-semibold text-accent">View work →</span>
+              <span className="mt-4 text-center text-[12px] font-semibold text-link">View work →</span>
             </button>
           );
         })}

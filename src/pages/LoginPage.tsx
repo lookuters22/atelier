@@ -17,7 +17,7 @@ export function LoginPage() {
       setIsLoading(true);
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: window.location.origin },
+        options: { redirectTo: `${window.location.origin}/today` },
       });
       if (error) throw error;
     } catch (err: unknown) {
@@ -112,7 +112,7 @@ export function LoginPage() {
         </div>
 
         {/* Title */}
-        <h1 className="mt-5 text-center text-[22px] font-semibold tracking-tight text-white">
+        <h1 className="mt-5 text-center text-base font-semibold tracking-tight text-white">
           Atelier Studio OS
         </h1>
         <p className="mt-1.5 text-center text-[13px] text-white/40">

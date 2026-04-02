@@ -21,7 +21,7 @@ export function WeddingPeopleCard({
   updatePerson: (id: string, patch: Partial<WeddingPersonRow>) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div className="rounded-lg border border-border bg-surface p-5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-ink-faint" strokeWidth={1.5} />
@@ -31,7 +31,7 @@ export function WeddingPeopleCard({
           <button
             type="button"
             onClick={startEditPeople}
-            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
+            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-link hover:bg-link/10"
           >
             <PenLine className="h-3 w-3" strokeWidth={2} />
             Edit
@@ -86,7 +86,7 @@ export function WeddingPeopleCard({
                 <button
                   type="button"
                   onClick={() => removePersonRow(p.id)}
-                  className="shrink-0 rounded-md p-1.5 text-ink-faint hover:bg-black/[0.06] hover:text-ink"
+                  className="shrink-0 rounded-md p-1.5 text-ink-faint hover:bg-white/[0.05] hover:text-ink"
                   aria-label="Remove"
                 >
                   <Trash2 className="h-4 w-4" strokeWidth={1.75} />
@@ -98,7 +98,7 @@ export function WeddingPeopleCard({
             <button
               type="button"
               onClick={addPersonRow}
-              className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border py-2 text-[12px] font-semibold text-accent hover:border-accent/50"
+              className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border py-2 text-[12px] font-semibold text-link hover:border-link/50"
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={2} />
               Add person

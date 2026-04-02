@@ -14,12 +14,12 @@ export function ValueProposition() {
   return (
     <section className="relative overflow-hidden bg-[#F5F5F0] px-6 py-40">
       <div className="pointer-events-none absolute inset-0 -z-10 flex items-center justify-center">
-        <div className="h-[340px] w-[540px] rounded-full bg-white/50 blur-[100px]" />
+        <div className="h-[280px] w-[440px] rounded-full bg-white/40 blur-[48px]" />
       </div>
 
       <motion.div
-        initial={{ opacity: 0, y: 40, filter: "blur(4px)" }}
-        whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+        initial={{ opacity: 0, y: 40 }}
+        whileInView={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, ease: EDITORIAL_EASE }}
         viewport={{ once: true, margin: "-100px" }}
         className="relative mx-auto flex max-w-4xl flex-col items-center"

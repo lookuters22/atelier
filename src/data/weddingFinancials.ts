@@ -27,6 +27,12 @@ export type FinancialContract = {
 
 export type InvoiceStatus = "draft" | "sent" | "partial" | "paid" | "overdue";
 
+export type InvoiceLineItem = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+};
+
 export type FinancialInvoice = {
   id: string;
   weddingId: string;
@@ -35,6 +41,20 @@ export type FinancialInvoice = {
   currency: string;
   dueDate: string;
   status: InvoiceStatus;
+  issuedDate: string;
+  lineItems: InvoiceLineItem[];
+};
+
+export type FinancialTransaction = {
+  id: string;
+  invoiceId: string;
+  weddingId: string;
+  couple: string;
+  amount: number;
+  currency: string;
+  method: "stripe" | "bank_transfer" | "cash" | "check";
+  date: string;
+  note: string;
 };
 
 export type WeddingFinancialsBundle = {
@@ -75,7 +95,12 @@ export const WEDDING_FINANCIALS: Record<WeddingId, WeddingFinancialsBundle> = {
         amount: 7400,
         currency: "EUR",
         dueDate: "2025-11-20",
+        issuedDate: "2025-11-01",
         status: "paid",
+        lineItems: [
+          { description: "Wedding day coverage (12 hrs)", quantity: 1, unitPrice: 5800 },
+          { description: "Rehearsal dinner coverage", quantity: 1, unitPrice: 1600 },
+        ],
       },
       {
         id: "i-lc-2",
@@ -84,7 +109,13 @@ export const WEDDING_FINANCIALS: Record<WeddingId, WeddingFinancialsBundle> = {
         amount: 4200,
         currency: "EUR",
         dueDate: "2026-06-29",
+        issuedDate: "2026-06-15",
         status: "sent",
+        lineItems: [
+          { description: "Album design & printing", quantity: 1, unitPrice: 2400 },
+          { description: "Gallery hosting (12 months)", quantity: 1, unitPrice: 180 },
+          { description: "Sunday brunch coverage (3 hrs)", quantity: 1, unitPrice: 1620 },
+        ],
       },
     ],
   },
@@ -118,7 +149,12 @@ export const WEDDING_FINANCIALS: Record<WeddingId, WeddingFinancialsBundle> = {
         amount: 7100,
         currency: "GBP",
         dueDate: "2026-03-01",
+        issuedDate: "2026-02-15",
         status: "partial",
+        lineItems: [
+          { description: "Two-day ceremony & reception", quantity: 1, unitPrice: 5600 },
+          { description: "Pre-wedding sunset session", quantity: 1, unitPrice: 1500 },
+        ],
       },
     ],
   },
@@ -209,6 +245,52 @@ export function getPipelineMoneyLine(weddingRouteId: string): string | null {
     return "Retainer paid";
   }
   return null;
+}
+
+export const TRANSACTIONS: FinancialTransaction[] = [
+  {
+    id: "tx-1",
+    invoiceId: "i-lc-1",
+    weddingId: "lake-como",
+    couple: "Sofia & Marco",
+    amount: 7400,
+    currency: "EUR",
+    method: "stripe",
+    date: "2025-11-18",
+    note: "Deposit — Stripe charge",
+  },
+  {
+    id: "tx-2",
+    invoiceId: "i-s-1",
+    weddingId: "santorini",
+    couple: "Amelia & James",
+    amount: 3550,
+    currency: "GBP",
+    method: "bank_transfer",
+    date: "2026-02-28",
+    note: "Partial payment — bank transfer",
+  },
+];
+
+export function listAllTransactions(): FinancialTransaction[] {
+  return TRANSACTIONS;
+}
+
+export function getStudioFinancialStats() {
+  const allInvoices: FinancialInvoice[] = [];
+  for (const id of WEDDING_IDS) {
+    allInvoices.push(...WEDDING_FINANCIALS[id].invoices);
+  }
+  const totalRevenue = allInvoices
+    .filter((i) => i.status === "paid")
+    .reduce((sum, i) => sum + i.amount, 0);
+  const outstanding = allInvoices
+    .filter((i) => i.status === "sent" || i.status === "partial")
+    .reduce((sum, i) => sum + i.amount, 0);
+  const overdue = allInvoices
+    .filter((i) => i.status === "overdue")
+    .reduce((sum, i) => sum + i.amount, 0);
+  return { totalRevenue, outstanding, overdue, totalInvoices: allInvoices.length };
 }
 
 /** Studio-wide rows for the Financials hub (demo; built-in weddings only). */

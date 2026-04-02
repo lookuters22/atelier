@@ -1,7 +1,8 @@
+import { useEffect } from "react";
 import { Header } from "./components/Header";
 import { HeroWrapper } from "./components/Hero/HeroWrapper";
 import { ValueProposition } from "./components/ValueProposition";
-import { FeatureGrid } from "./components/FeatureGrid";
+import { FeatureGrid, FEATURE_GRID_IMAGE_SRCS } from "./components/FeatureGrid";
 import { SectionHeader, Highlight } from "./components/SectionHeader";
 import { HighlightSection } from "./components/HighlightSection";
 import { FeatureCarousel } from "./components/FeatureCarousel";
@@ -11,6 +12,13 @@ import { Footer } from "./components/Footer";
 import SmoothScrolling from "../../components/SmoothScrolling";
 
 export function LandingPage() {
+  useEffect(() => {
+    for (const src of FEATURE_GRID_IMAGE_SRCS) {
+      const img = new Image();
+      img.src = src;
+    }
+  }, []);
+
   return (
     <SmoothScrolling>
     <div className="min-h-screen bg-slate-950 text-white">

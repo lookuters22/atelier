@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Check, PenLine } from "lucide-react";
+import { ListPageSkeleton } from "../components/DashboardSkeleton";
 import { ApprovalDraftAiModal } from "../components/ApprovalDraftAiModal";
 import type { ApprovalDraft } from "../data/approvalDrafts";
 import { supabase } from "../lib/supabase";
@@ -82,14 +83,7 @@ export function ApprovalsPage() {
     });
 
   if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">Approvals</h1>
-          <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">Loading drafts…</p>
-        </div>
-      </div>
-    );
+    return <ListPageSkeleton />;
   }
 
   return (
@@ -107,7 +101,7 @@ export function ApprovalsPage() {
           return (
             <div
               key={d.id}
-              className="flex flex-col rounded-2xl border border-border bg-surface p-5 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)]"
+              className="flex flex-col rounded-lg border border-border bg-surface p-5"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -115,7 +109,7 @@ export function ApprovalsPage() {
                   <p className="mt-1 text-[15px] font-semibold text-ink">{d.subject}</p>
                   {d.to && <p className="mt-1 text-[12px] text-ink-faint">To {d.to}</p>}
                 </div>
-                <Link to={`/wedding/${d.weddingId}`} className="text-[12px] font-semibold text-accent hover:text-accent-hover">
+                <Link to={`/wedding/${d.weddingId}`} className="text-[12px] font-semibold text-link hover:text-link-hover">
                   Open context
                 </Link>
               </div>
@@ -125,7 +119,7 @@ export function ApprovalsPage() {
                   type="button"
                   disabled={busy}
                   onClick={() => handleApprove(d)}
-                  className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-[13px] font-semibold text-ink transition hover:border-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Check className="h-4 w-4" strokeWidth={1.75} />
                   {busy ? "Sending…" : "Approve & send"}
@@ -134,7 +128,7 @@ export function ApprovalsPage() {
                   type="button"
                   disabled={busy}
                   onClick={() => setEditing(d)}
-                  className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-[13px] font-semibold text-ink hover:border-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-[13px] text-ink transition hover:border-white/[0.12] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <PenLine className="h-4 w-4" strokeWidth={1.75} />
                   Edit

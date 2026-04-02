@@ -51,7 +51,7 @@ export function WeddingDetailTabContent({
                   </p>
                   <button
                     type="button"
-                    className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-accent transition hover:border-accent/40 hover:text-accent-hover"
+                    className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-link transition hover:border-link/40 hover:text-link-hover"
                     onClick={() => {
                       setSelectedThreadId(t.id);
                       setTabAndUrl("timeline");
@@ -72,7 +72,7 @@ export function WeddingDetailTabContent({
             tasks.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
                 <div className="flex items-center gap-3">
-                  <input type="checkbox" className="h-4 w-4 accent-accent" />
+                  <input type="checkbox" className="h-4 w-4 accent-link" />
                   <span>{t.title}</span>
                 </div>
                 <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold text-ink-faint">{formatTaskDue(t.due_date)}</span>
@@ -97,7 +97,7 @@ export function WeddingDetailTabContent({
           </div>
           <button
             type="button"
-            className="text-[12px] font-semibold text-accent hover:text-accent-hover"
+            className="text-[12px] font-semibold text-link hover:text-link-hover"
             onClick={() => showToast("Upload dialog would open here (demo).")}
           >
             + Add file

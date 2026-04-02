@@ -1,8 +1,13 @@
 import { Link } from "react-router-dom";
 import { useMemo } from "react";
+import { motion } from "framer-motion";
 import { ArrowUpRight, CalendarClock, Inbox, Sparkles } from "lucide-react";
 import { useManagerContext } from "../../context/ManagerContext";
 import { getPhotographerById, MANAGER_ATTENTION, MANAGER_UPCOMING } from "../../data/managerPhotographers";
+import { handleGlowMove, handleGlowLeave } from "../../lib/glowEffect";
+import { MotionPage, MotionSection } from "../../components/motion-primitives";
+
+const MotionLink = motion.create(Link);
 
 export function ManagerTodayPage() {
   const { selectedId } = useManagerContext();
@@ -18,11 +23,11 @@ export function ManagerTodayPage() {
   }, [selectedId]);
 
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <MotionPage className="space-y-10">
+      <MotionSection className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-[13px] font-medium text-ink-muted">Wednesday, 25 March</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-ink md:text-[28px]">
+          <p className="text-[13px] text-ink-muted">Wednesday, 25 March</p>
+          <h1 className="shiny-heading mt-1 type-display-m">
             Studio overview
           </h1>
           <p className="mt-2 max-w-xl text-[14px] leading-relaxed text-ink-muted">
@@ -30,31 +35,35 @@ export function ManagerTodayPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link
+          <MotionLink
             to="/manager/wedding/lake-como"
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-[13px] font-medium text-ink shadow-sm transition hover:border-accent/30 hover:shadow-md"
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-[13px] text-ink transition hover:border-white/[0.12]"
           >
-            <Sparkles className="h-4 w-4 text-accent" strokeWidth={1.75} />
+            <Sparkles className="h-4 w-4 text-link" strokeWidth={1.75} />
             Open featured wedding
-          </Link>
-          <Link
+          </MotionLink>
+          <MotionLink
             to="/manager/inbox"
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-[13px] font-medium text-white shadow-sm transition hover:bg-accent-hover"
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-2 text-[13px] text-ink transition hover:border-white/[0.12]"
           >
             <Inbox className="h-4 w-4" strokeWidth={1.75} />
             Review inbox
-          </Link>
+          </MotionLink>
         </div>
-      </div>
+      </MotionSection>
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <MotionSection className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-[15px] font-semibold text-ink">Needs attention</h2>
             <span className="text-[12px] text-ink-faint">Prioritized for today</span>
           </div>
           {attention.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
+            <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
               Nothing flagged for this photographer right now.
             </p>
           ) : (
@@ -62,10 +71,14 @@ export function ManagerTodayPage() {
               {attention.map((item) => {
                 const ph = getPhotographerById(item.photographerId);
                 return (
-                  <Link
+                  <MotionLink
                     key={item.title + item.photographerId}
                     to={item.to}
-                    className="group flex items-start gap-4 rounded-2xl border border-border bg-surface p-4 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_2px_8px_rgba(26,28,30,0.06)]"
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                    className="glow-card card-lift group flex items-start gap-4 rounded-lg border border-border bg-surface p-5 transition"
+                    onMouseMove={handleGlowMove}
+                    onMouseLeave={handleGlowLeave}
                   >
                     <div className="mt-0.5 flex shrink-0 items-center gap-2">
                       {ph ? (
@@ -73,8 +86,11 @@ export function ManagerTodayPage() {
                           {ph.initials}
                         </div>
                       ) : null}
-                      <div className={"flex h-10 w-10 items-center justify-center rounded-xl " + item.iconWell}>
-                        <item.Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                      <div
+                        className="icon-glare flex h-10 w-10 items-center justify-center rounded-[10px] shadow-md"
+                        style={{ background: item.iconGradient }}
+                      >
+                        <item.Icon className="h-[18px] w-[18px] text-white" strokeWidth={1.75} />
                       </div>
                     </div>
                     <div className="min-w-0 flex-1">
@@ -83,14 +99,14 @@ export function ManagerTodayPage() {
                           <span className="text-[12px] font-semibold text-ink-muted">{ph.displayName}</span>
                         ) : null}
                         <p className="text-[14px] font-semibold text-ink">{item.title}</p>
-                        <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+                        <span className="rounded-full bg-border/50 px-2 py-0.5 text-[11px] text-ink-muted">
                           {item.count}
                         </span>
                       </div>
                       <p className="mt-1 text-[13px] leading-relaxed text-ink-muted">{item.hint}</p>
                     </div>
                     <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-ink-faint transition group-hover:text-ink" />
-                  </Link>
+                  </MotionLink>
                 );
               })}
             </div>
@@ -100,16 +116,16 @@ export function ManagerTodayPage() {
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-[15px] font-semibold text-ink">Upcoming weddings</h2>
-            <Link to="/manager/calendar" className="text-[12px] font-medium text-accent hover:text-accent-hover">
+            <Link to="/manager/calendar" className="text-[12px] text-link hover:text-link-hover">
               View calendar
             </Link>
           </div>
           {upcoming.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
+            <p className="rounded-lg border border-dashed border-border bg-canvas/40 px-4 py-8 text-center text-[13px] text-ink-muted">
               No upcoming weddings for this filter.
             </p>
           ) : (
-            <div className="rounded-2xl border border-border bg-surface p-1 shadow-[0_1px_2px_rgba(26,28,30,0.04),0_12px_32px_rgba(26,28,30,0.06)]">
+            <div className="glow-card card-lift rounded-lg border border-border bg-surface p-1.5" onMouseMove={handleGlowMove} onMouseLeave={handleGlowLeave}>
               {upcoming.map((w, i) => {
                 const ph = getPhotographerById(w.photographerId);
                 return (
@@ -117,7 +133,7 @@ export function ManagerTodayPage() {
                     key={w.id}
                     to={`/manager/wedding/${w.id}`}
                     className={
-                      "flex items-center justify-between gap-4 px-4 py-4 transition hover:bg-canvas/80 " +
+                      "flex items-center justify-between gap-4 rounded-lg px-4 py-4 transition " +
                       (i < upcoming.length - 1 ? "border-b border-border/80" : "")
                     }
                   >
@@ -136,7 +152,7 @@ export function ManagerTodayPage() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <span className="inline-flex rounded-full bg-canvas px-2.5 py-1 text-[11px] font-semibold text-ink-muted">
+                      <span className="inline-flex rounded-full border border-border px-2.5 py-1 text-[11px] text-ink-muted">
                         {w.stage}
                       </span>
                       <p className="mt-2 text-[12px] text-ink-faint">{w.balance}</p>
@@ -147,7 +163,7 @@ export function ManagerTodayPage() {
             </div>
           )}
         </section>
-      </div>
-    </div>
+      </MotionSection>
+    </MotionPage>
   );
 }

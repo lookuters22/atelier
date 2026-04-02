@@ -1,39 +1,47 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageCircle, Send, X } from "lucide-react";
+import { motion, AnimatePresence, useMotionValue } from "framer-motion";
 import { supabase } from "../lib/supabase";
 
-/** Portrait for Jelena (replace with your own asset in `/public` if you prefer) */
 const JELENA_AVATAR_SRC =
   "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=128&h=128&fit=crop&auto=format&q=80";
 
 type ChatRole = "user" | "assistant";
-
-type ChatLine = {
-  id: string;
-  role: ChatRole;
-  text: string;
-};
-
-const DEMO_REPLIES = [
-  "Thanks — I’m here. What’s the main thing you need help with?",
-  "Got it. Which wedding is this about, or is it a general product question?",
-  "On it. If you can share a bit more detail, I can be more specific.",
-];
+type ChatLine = { id: string; role: ChatRole; text: string };
 
 function nextId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-/**
- * Persistent launcher + panel: photographers can ask quick questions from the web app (demo: no backend).
- */
+const panelShadow = "0 8px 30px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)";
+const btnShadow = "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)";
+
+type PanelDir = { v: "above" | "below"; h: "alignRight" | "alignLeft" };
+
 export function SupportAssistantWidget() {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [jelenaTyping, setJelenaTyping] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dir, setDir] = useState<PanelDir>({ v: "above", h: "alignRight" });
+
   const listRef = useRef<HTMLDivElement>(null);
+  const constraintsRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const dragX = useMotionValue(0);
+  const dragY = useMotionValue(0);
+  const isDragging = useRef(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+
+  function computeDir() {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const v = r.top > 350 ? "above" : "below";
+    const h = r.left > 340 ? "alignRight" : "alignLeft";
+    setDir({ v: v as PanelDir["v"], h: h as PanelDir["h"] });
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +62,6 @@ export function SupportAssistantWidget() {
       const { error } = await supabase.functions.invoke("webhook-web", {
         body: { message: text },
       });
-
       if (error) throw error;
 
       setMessages((m) => [
@@ -72,135 +79,171 @@ export function SupportAssistantWidget() {
     }
   }
 
-  return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-[80] flex max-w-[calc(100vw-3rem)] flex-col items-end gap-3">
-      {open ? (
-        <div
-          id="support-assistant-panel"
-          className="pointer-events-auto flex max-h-[min(70vh,28rem)] w-[min(100vw-2rem,20rem)] flex-col rounded-2xl border border-border bg-surface p-4 ring-1 ring-black/[0.06]"
-          role="dialog"
-          aria-label="Jelena support chat"
-        >
-          <div className="flex shrink-0 items-start gap-3">
-            <img
-              src={JELENA_AVATAR_SRC}
-              alt="Jelena"
-              width={48}
-              height={48}
-              className="h-12 w-12 shrink-0 rounded-full object-cover ring-2 ring-border/70"
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Support</p>
-              <p className="mt-0.5 text-[15px] font-semibold text-ink">Jelena</p>
-            </div>
-            <button
-              type="button"
-              className="shrink-0 rounded-full p-1.5 text-ink-faint transition hover:bg-canvas hover:text-ink"
-              aria-label="Close support"
-              onClick={() => setOpen(false)}
-            >
-              <X className="h-4 w-4" strokeWidth={2} />
-            </button>
-          </div>
+  const panelPositionClass = [
+    "absolute w-[320px]",
+    dir.v === "above" ? "bottom-full mb-2" : "top-full mt-2",
+    dir.h === "alignRight" ? "right-0" : "left-0",
+  ].join(" ");
 
-          <div
-            ref={listRef}
-            className="mt-3 min-h-[6rem] flex-1 space-y-2 overflow-y-auto overscroll-contain pr-0.5"
-            role="log"
-            aria-live="polite"
-            aria-relevant="additions"
-          >
-            {messages.map((m) =>
-              m.role === "user" ? (
-                <div key={m.id} className="flex justify-end">
-                  <p className="max-w-[92%] rounded-2xl rounded-br-md bg-ink px-3 py-2 text-[13px] leading-snug text-canvas">
-                    {m.text}
-                  </p>
-                </div>
-              ) : (
-                <div key={m.id} className="flex gap-2">
-                  <img
-                    src={JELENA_AVATAR_SRC}
-                    alt=""
-                    width={28}
-                    height={28}
-                    className="mt-0.5 h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-border/60"
+  return (
+    <>
+      <div ref={constraintsRef} className="pointer-events-none fixed inset-0 z-[79]" />
+
+      <motion.div
+        drag
+        dragMomentum={false}
+        dragElastic={0.1}
+        dragConstraints={constraintsRef}
+        onDragStart={() => {
+          isDragging.current = true;
+          dragStartPos.current = { x: dragX.get(), y: dragY.get() };
+        }}
+        onDragEnd={() => {
+          const dx = Math.abs(dragX.get() - dragStartPos.current.x);
+          const dy = Math.abs(dragY.get() - dragStartPos.current.y);
+          if (dx > 3 || dy > 3) {
+            setTimeout(() => { isDragging.current = false; }, 0);
+          } else {
+            isDragging.current = false;
+          }
+          if (open) computeDir();
+        }}
+        className="pointer-events-auto fixed bottom-6 right-6 z-[80]"
+        style={{ touchAction: "none", x: dragX, y: dragY, overflow: "visible" }}
+      >
+        {/* Panel -- inside drag container, absolute positioned */}
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              id="support-assistant-panel"
+              className={`pointer-events-auto flex max-h-[min(70vh,380px)] flex-col rounded-xl border border-slate-200 bg-white px-3 py-3 text-slate-800 ${panelPositionClass}`}
+              style={{ boxShadow: panelShadow }}
+              role="dialog"
+              aria-label="Jelena support chat"
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.92 }}
+              transition={{ type: "spring", stiffness: 400, damping: 28, mass: 0.8 }}
+            >
+              {/* Thread area */}
+              <div
+                ref={listRef}
+                className="flex-1 space-y-4 overflow-y-auto overscroll-contain"
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+              >
+                {messages.length === 0 && !jelenaTyping && (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
+                    <MessageCircle className="h-5 w-5 text-slate-400" strokeWidth={1.5} />
+                    <p className="text-[12px] text-slate-400">Ask Jelena anything</p>
+                  </div>
+                )}
+                {messages.map((m) => (
+                  <motion.div
+                    key={m.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <p className="mb-1 text-[11px] font-semibold text-slate-400">
+                      {m.role === "user" ? "You" : "Jelena"}
+                    </p>
+                    <p className="text-[12px] leading-[18px] text-slate-800">{m.text}</p>
+                  </motion.div>
+                ))}
+                {jelenaTyping && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
+                    <p className="mb-1 text-[11px] font-semibold text-slate-400">Jelena</p>
+                    <span className="inline-flex gap-1">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300" />
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300" style={{ animationDelay: "0.15s" }} />
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-slate-300" style={{ animationDelay: "0.3s" }} />
+                    </span>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Input area */}
+              <div className="mt-3 shrink-0">
+                <div className="rounded-[10px] border border-slate-100 bg-slate-50 focus-within:border-slate-300">
+                  <textarea
+                    id="support-question"
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        submitQuestion();
+                      }
+                    }}
+                    rows={1}
+                    placeholder="Ask for follow-up changes"
+                    disabled={isSubmitting}
+                    className="w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-[12px] text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-60"
                   />
-                  <p className="max-w-[calc(100%-2.25rem)] rounded-2xl rounded-bl-md border border-border bg-canvas px-3 py-2 text-[13px] leading-snug text-ink">
-                    {m.text}
-                  </p>
-                </div>
-              ),
-            )}
-            {jelenaTyping ? (
-              <div className="flex gap-2">
-                <img
-                  src={JELENA_AVATAR_SRC}
-                  alt=""
-                  width={28}
-                  height={28}
-                  className="mt-0.5 h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-border/60"
-                />
-                <div className="rounded-2xl rounded-bl-md border border-border bg-canvas px-3 py-2 text-[12px] italic text-ink-faint">
-                  Jelena is typing…
+                  <div className="flex items-center justify-between px-2 pb-1.5">
+                    <span className="text-[10px] text-slate-400">Support · Jelena</span>
+                    <button
+                      type="button"
+                      onClick={submitQuestion}
+                      disabled={isSubmitting || !question.trim()}
+                      className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-600 transition hover:bg-slate-300 disabled:opacity-30"
+                    >
+                      <Send className="h-3 w-3" strokeWidth={2} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            ) : null}
-          </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          <div className="mt-3 shrink-0 border-t border-border/80 pt-3">
-            <label htmlFor="support-question" className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-              Quick question (web)
-            </label>
-            <textarea
-              id="support-question"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitQuestion();
-                }
-              }}
-              rows={2}
-              placeholder="e.g. How do approvals work?"
-              disabled={isSubmitting}
-              className="mt-1.5 w-full resize-none rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] text-ink placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25 disabled:opacity-60"
-            />
-            <button
-              type="button"
-              onClick={submitQuestion}
-              disabled={isSubmitting || !question.trim()}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-ink py-2 text-[13px] font-semibold text-canvas transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Send className="h-3.5 w-3.5" strokeWidth={2} />
-              {isSubmitting ? "Sending\u2026" : "Send"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="pointer-events-auto flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-[13px] font-semibold text-ink ring-1 ring-black/[0.06] transition hover:border-accent/30 hover:text-accent"
-        aria-expanded={open}
-        aria-controls="support-assistant-panel"
-      >
-        {open ? (
-          <>
-            <X className="h-4 w-4" strokeWidth={2} aria-hidden />
-            Close
-          </>
-        ) : (
-          <>
-            <MessageCircle className="h-4 w-4 text-[#25D366]" strokeWidth={2} aria-hidden />
-            Jelena
-          </>
-        )}
-      </button>
-    </div>
+        {/* Trigger button */}
+        <motion.button
+          type="button"
+          ref={btnRef}
+          onClick={() => {
+            if (isDragging.current) return;
+            if (!open) computeDir();
+            setOpen((o) => !o);
+          }}
+          className="relative flex min-w-[100px] cursor-grab items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-[12px] font-semibold text-slate-700 transition active:cursor-grabbing hover:bg-slate-50"
+          style={{ boxShadow: btnShadow }}
+          aria-expanded={open}
+          aria-controls="support-assistant-panel"
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.97 }}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            {open ? (
+              <motion.span
+                key="close"
+                className="flex items-center gap-2"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <X className="h-4 w-4" strokeWidth={2} aria-hidden />
+                Close
+              </motion.span>
+            ) : (
+              <motion.span
+                key="open"
+                className="flex items-center gap-2"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                transition={{ duration: 0.15 }}
+              >
+                <MessageCircle className="h-4 w-4 text-[#25D366]" strokeWidth={2} aria-hidden />
+                Jelena
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
+      </motion.div>
+    </>
   );
 }

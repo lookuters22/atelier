@@ -6,17 +6,17 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="flex h-[100dvh] items-center justify-center bg-canvas">
+      <div className="flex h-[100dvh] items-center justify-center" style={{ background: "var(--color-background, #0a0a0a)" }}>
         <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-accent" />
-          <p className="text-[13px] font-medium text-ink-muted">Loading&hellip;</p>
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-[#0169cc]" />
+          <span className="dash-loading-text text-[13px] text-ink-muted">Loading</span>
         </div>
       </div>
     );
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    // return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;

@@ -25,10 +25,13 @@ export function Header() {
 
   return (
     <motion.header
-      initial={{ opacity: 0, filter: "blur(6px)" }}
+      initial={{ opacity: 0, filter: "blur(10px)" }}
       animate={{ opacity: 1, filter: "blur(0px)" }}
-      transition={{ duration: 1.2, delay: 0.2, ease: EASE }}
-      className="pointer-events-none fixed left-0 right-0 top-0 z-50 flex items-center justify-between px-6 py-6"
+      transition={{
+        opacity: { duration: 0.8, delay: 0.15, ease: [0.25, 0.1, 0.25, 1] },
+        filter: { duration: 2.2, delay: 0, ease: [0.16, 1, 0.3, 1] },
+      }}
+      className="pointer-events-none fixed left-0 right-0 top-0 z-50 flex items-center justify-between px-6 py-6 transform-gpu will-change-transform"
     >
       {/* LEFT: Asymmetric Logo Pill */}
       <div className="glass-shell interactive-glass pointer-events-auto h-[47px] min-w-[120px] cursor-pointer rounded-[32px_32px_32px_0] shadow-[0_6px_12px_rgba(0,0,0,0.1)]">
@@ -50,7 +53,7 @@ export function Header() {
             opacity: hidden && !isHovered ? 0 : 1,
           }}
           transition={{ duration: 0.6, ease: EASE }}
-          className="glass-shell relative z-10 h-[52px] rounded-[28px] shadow-[0_6px_12px_rgba(0,0,0,0.1)]"
+          className="glass-shell relative z-10 h-[52px] rounded-[28px] shadow-[0_6px_12px_rgba(0,0,0,0.1)] transform-gpu will-change-transform"
         >
           <div className="glass-inner gap-1 px-1">
             {NAV_ITEMS.map((item) => (
@@ -68,7 +71,7 @@ export function Header() {
           type="button"
           className="glass-inner justify-center px-10 text-body-small text-white whitespace-nowrap"
         >
-          Book Demo
+          Early Access
         </button>
       </div>
     </motion.header>

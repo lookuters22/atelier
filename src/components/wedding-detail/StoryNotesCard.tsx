@@ -14,13 +14,13 @@ export function StoryNotesCard({
   setPhotographerNotes: Dispatch<SetStateAction<string>>;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div className="rounded-lg border border-border bg-surface p-5">
       <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-ink-faint">Story so far</p>
       <p className="mt-3 text-[14px] leading-relaxed text-ink-muted">{story}</p>
       <button
         type="button"
         disabled={summaryBusy}
-        className="mt-4 text-[12px] font-semibold text-accent hover:text-accent-hover disabled:opacity-50"
+        className="mt-4 text-[12px] font-semibold text-link hover:text-link-hover disabled:opacity-50"
         onClick={regenerateSummary}
       >
         {summaryBusy ? "Regeneratingâ€¦" : "Regenerate summary"}
@@ -35,7 +35,7 @@ export function StoryNotesCard({
           onChange={(e) => setPhotographerNotes(e.target.value)}
           rows={5}
           placeholder="Private notes for your studio â€” not shared with clients."
-          className="mt-2 w-full resize-y rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+          className="mt-2 w-full resize-y rounded-xl border border-border bg-canvas px-3 py-2 text-[13px] leading-relaxed text-ink placeholder:text-ink-faint focus:border-[#0169cc] focus:outline-none focus:ring-1 focus:ring-link/25"
         />
         <p className="mt-1.5 text-[11px] text-ink-faint">Saved automatically in this browser.</p>
       </div>

@@ -1,40 +1,128 @@
-import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell,
   CalendarDays,
   CheckSquare,
-  ChevronDown,
-  CircleUser,
   Columns3,
   GalleryHorizontal,
-  HelpCircle,
   Inbox,
   LayoutGrid,
   ListTodo,
-  Wallet,
-  Search,
-  Settings,
   Users,
-  X,
+  Wallet,
 } from "lucide-react";
+import { SidebarProvider, SidebarInset, useSidebar } from "@/components/ui/sidebar";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { AppSidebar, type NavItem } from "../components/app-sidebar";
 import { SupportAssistantWidget } from "../components/SupportAssistantWidget";
 import { supabase } from "../lib/supabase";
 import { fireDataChanged } from "../lib/events";
 import { useTodayMetrics } from "../hooks/useTodayMetrics";
 import { useNotifications } from "../hooks/useNotifications";
 
-const nav = [
+const nav: NavItem[] = [
   { to: "/", label: "Today", icon: LayoutGrid, end: true },
-  { to: "/weddings", label: "Weddings", icon: GalleryHorizontal },
+  {
+    to: "/weddings",
+    label: "Weddings",
+    icon: GalleryHorizontal,
+    items: [
+      { to: "/weddings", label: "Active Weddings" },
+      { to: "/weddings/deliverables", label: "Deliverables / Albums" },
+      { to: "/weddings/archived", label: "Archived" },
+    ],
+  },
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/approvals", label: "Approvals", icon: CheckSquare },
   { to: "/pipeline", label: "Pipeline", icon: Columns3 },
   { to: "/financials", label: "Financials", icon: Wallet },
   { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/contacts", label: "Contacts", icon: Users },
+  {
+    to: "/contacts",
+    label: "Contacts",
+    icon: Users,
+    items: [
+      { to: "/contacts", label: "Clients" },
+      { to: "/contacts/vendors", label: "Vendors" },
+    ],
+  },
   { to: "/tasks", label: "Tasks", icon: ListTodo },
 ];
+
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 360;
+const SIDEBAR_DEFAULT = 256;
+
+function SidebarResizeHandle() {
+  const { open, toggleSidebar } = useSidebar();
+  const didDrag = useRef(false);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      didDrag.current = false;
+
+      if (!open) {
+        toggleSidebar();
+        return;
+      }
+
+      const wrapper = (e.target as HTMLElement).closest("[data-slot='sidebar-wrapper']") as HTMLElement | null;
+      if (!wrapper) return;
+
+      const startX = e.clientX;
+      const startWidth = parseInt(getComputedStyle(wrapper).getPropertyValue("--sidebar-width")) || SIDEBAR_DEFAULT;
+
+      wrapper.classList.add("sidebar-resizing");
+
+      const onMove = (ev: PointerEvent) => {
+        const delta = ev.clientX - startX;
+        if (Math.abs(delta) > 3) didDrag.current = true;
+        const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + delta));
+        wrapper.style.setProperty("--sidebar-width", `${newWidth}px`);
+      };
+
+      const onUp = () => {
+        wrapper.classList.remove("sidebar-resizing");
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        if (!didDrag.current) toggleSidebar();
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    },
+    [open, toggleSidebar],
+  );
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      className={`relative z-20 flex shrink-0 cursor-col-resize items-center justify-center self-stretch transition-all ${open ? "w-[18px]" : "w-[4px]"}`}
+    >
+      <div className={`h-[calc(100%-24px)] rounded-full transition-all ${open ? "w-[7px] bg-white/[0.08] hover:bg-white/[0.16]" : "w-0 opacity-0"}`} />
+    </div>
+  );
+}
+
+function DashboardContent() {
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-8">
+      <Outlet />
+    </main>
+  );
+}
 
 export function DashboardLayout() {
   const navigate = useNavigate();
@@ -46,9 +134,7 @@ export function DashboardLayout() {
   };
   const { items: notifs, unreadCount, markAllRead, markRead, isUnread } = useNotifications();
   const isOfferBuilderEditorMode = pathname.startsWith("/settings/offer-builder/edit");
-  const [notifOpen, setNotifOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const channel = supabase
@@ -64,129 +150,70 @@ export function DashboardLayout() {
     };
   }, []);
 
-  useEffect(() => {
-    function closeOnOutside(e: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
-    }
-    if (notifOpen) document.addEventListener("mousedown", closeOnOutside);
-    return () => document.removeEventListener("mousedown", closeOnOutside);
-  }, [notifOpen]);
-
   const openNotification = (href: string, id: string) => {
     markRead(id);
-    setNotifOpen(false);
     navigate(href);
   };
 
-  return (
-    <div className="flex h-[100dvh] max-h-[100dvh] overflow-hidden bg-canvas">
-      {!isOfferBuilderEditorMode ? (
-      <aside className="flex h-full min-h-0 w-[260px] shrink-0 flex-col overflow-hidden bg-sidebar text-white/90">
-        <div className="flex shrink-0 items-center gap-3 px-5 py-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-sm font-semibold tracking-tight">A</div>
-          <div>
-            <p className="text-[13px] font-semibold tracking-wide text-white">Atelier</p>
-            <p className="text-[11px] text-white/45">Studio OS</p>
-          </div>
+  if (isOfferBuilderEditorMode) {
+    return (
+      <div className="flex h-[100dvh] max-h-[100dvh] overflow-hidden bg-canvas">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0">
+            <Outlet />
+          </main>
         </div>
-        <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-4">
-          {nav.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                ["group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors", isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.06] hover:text-white"].join(" ")
-              }
-            >
-              <item.icon className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={1.75} />
-              <span className="flex-1">{item.label}</span>
-              {badgeMap[item.to] ? <span className="rounded-full bg-[#e01e5a] px-1.5 py-0.5 text-[10px] font-semibold text-white">{badgeMap[item.to]}</span> : null}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="shrink-0 space-y-1 border-t border-white/[0.06] px-3 py-4">
-          <NavLink
-            to="/settings"
-            end={false}
-            className={({ isActive }) => ["flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-colors", isActive ? "bg-white/10 text-white" : "text-white/55 hover:bg-white/[0.06] hover:text-white"].join(" ")}
-          >
-            <Settings className="h-[18px] w-[18px]" strokeWidth={1.75} />
-            Settings
-          </NavLink>
-        </div>
-        <div className="flex shrink-0 items-center gap-3 border-t border-white/[0.06] px-4 py-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">ED</div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium text-white">Elena Duarte</p>
-            <p className="truncate text-[11px] text-white/45">elena@atelier.studio</p>
-          </div>
-          <ChevronDown className="h-4 w-4 text-white/35" />
-        </div>
-      </aside>
-      ) : null}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {!isOfferBuilderEditorMode ? (
-        <header className="relative z-[250] flex shrink-0 items-center justify-between gap-6 border-b border-border bg-canvas/90 px-8 py-4 backdrop-blur-md">
-          <div className="relative max-w-xl flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
-            <input type="search" placeholder="Search weddings, people, or messages" className="w-full rounded-full border border-border bg-surface py-2.5 pl-11 pr-4 text-[13px] text-ink shadow-[0_8px_24px_rgba(26,28,30,0.06)] placeholder:text-ink-faint focus:border-accent/40 focus:outline-none focus:ring-2 focus:ring-accent/20" onKeyDown={(e) => { if (e.key === "Enter") navigate("/inbox"); }} />
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="rounded-full p-2.5 text-ink-muted transition hover:bg-surface hover:text-ink" aria-label="Help" onClick={() => setHelpOpen(true)}><HelpCircle className="h-5 w-5" strokeWidth={1.5} /></button>
-            <div className="relative" ref={notifRef}>
-              <button type="button" className="relative rounded-full p-2.5 text-ink-muted transition hover:bg-surface hover:text-ink" aria-label="Notifications" aria-expanded={notifOpen} onClick={() => setNotifOpen((o) => !o)}><Bell className="h-5 w-5" strokeWidth={1.5} />{unreadCount > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#e01e5a] ring-2 ring-canvas" /> : null}</button>
-              {notifOpen ? (
-                <div className="absolute right-0 z-[260] mt-2 w-[min(100vw-2rem,22rem)] rounded-2xl border border-border bg-surface py-2 shadow-[0_8px_32px_rgba(26,28,30,0.12)]">
-                  <div className="flex items-center justify-between border-b border-border px-4 py-2">
-                    <p className="text-[13px] font-semibold text-ink">Notifications</p>
-                    <button type="button" className="text-[12px] font-semibold text-accent hover:text-accent-hover" onClick={markAllRead}>Mark all read</button>
-                  </div>
-                  <div className="max-h-80 overflow-y-auto">
-                    {notifs.map((n) => (
-                      <button key={n.id} type="button" onClick={() => openNotification(n.href, n.id)} className={"flex w-full flex-col gap-0.5 border-b border-border/80 px-4 py-3 text-left last:border-0 " + (isUnread(n.id) ? "bg-accent/5" : "hover:bg-canvas/80")}>
-                        <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-semibold text-ink">{n.title}</span>{isUnread(n.id) ? <span className="h-2 w-2 shrink-0 rounded-full bg-accent" /> : null}</div>
-                        <span className="text-[12px] text-ink-muted">{n.body}</span>
-                        <span className="text-[11px] text-ink-faint">{n.time}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="border-t border-border px-4 py-2">
-                    <button type="button" className="text-[12px] font-semibold text-accent hover:text-accent-hover" onClick={() => { setNotifOpen(false); navigate("/inbox"); }}>Open inbox</button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="ml-2 flex items-center gap-2 rounded-full border border-border bg-surface px-2 py-1.5 pl-2 shadow-sm">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sidebar text-[11px] font-semibold text-white">ED</div>
-              <div className="hidden pr-2 sm:block"><p className="text-[12px] font-medium text-ink">Elena Duarte</p><p className="text-[11px] text-ink-faint">Owner</p></div>
-              <CircleUser className="hidden h-4 w-4 text-ink-faint sm:block" />
-            </div>
-          </div>
-        </header>
-        ) : null}
-        <main
-          className={
-            isOfferBuilderEditorMode
-              ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0"
-              : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-8"
-          }
-        >
-          <Outlet />
-        </main>
+        <SupportAssistantWidget />
       </div>
+    );
+  }
+
+  return (
+    <SidebarProvider className="font-dashboard">
+      <div className="dash-mux-bg" aria-hidden="true" />
+      <AppSidebar
+        nav={nav}
+        badgeMap={badgeMap}
+        onHelpClick={() => setHelpOpen(true)}
+        onSearch={() => navigate("/inbox")}
+        notificationProps={{
+          items: notifs,
+          unreadCount,
+          markAllRead,
+          isUnread,
+          onOpen: openNotification,
+          inboxHref: "/inbox",
+        }}
+      />
+
+      <SidebarResizeHandle />
+
+      <SidebarInset>
+        <DashboardContent />
+      </SidebarInset>
+
       <SupportAssistantWidget />
-      {helpOpen ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/40 px-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="help-title">
-          <div className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-xl">
-            <button type="button" className="absolute right-4 top-4 rounded-full p-1 text-ink-faint hover:bg-canvas hover:text-ink" aria-label="Close" onClick={() => setHelpOpen(false)}><X className="h-5 w-5" /></button>
-            <h2 id="help-title" className="text-lg font-semibold text-ink">Help</h2>
-            <p className="mt-2 text-[14px] leading-relaxed text-ink-muted">Use <strong className="text-ink">Today</strong> for priorities, <strong className="text-ink">Inbox</strong> to triage threads, and <strong className="text-ink">Approvals</strong> before anything is sent to clients.</p>
-            <ul className="mt-4 list-inside list-disc space-y-2 text-[13px] text-ink-muted"><li>Notifications surface drafts and unfiled mail.</li><li>Search + Enter jumps to Inbox (demo).</li><li>WhatsApp mirrors the same queue when connected.</li></ul>
-            <button type="button" className="mt-6 w-full rounded-full bg-ink py-2.5 text-[13px] font-semibold text-canvas" onClick={() => setHelpOpen(false)}>Got it</button>
-          </div>
-        </div>
-      ) : null}
-    </div>
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="max-w-md rounded-[18px]">
+          <DialogHeader>
+            <DialogTitle>Help</DialogTitle>
+            <DialogDescription>
+              Use <strong className="text-ink">Today</strong> for priorities,{" "}
+              <strong className="text-ink">Inbox</strong> to triage threads, and{" "}
+              <strong className="text-ink">Approvals</strong> before anything is sent to clients.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="mt-2 list-inside list-disc space-y-2 text-[13px] text-ink-muted">
+            <li>Notifications surface drafts and unfiled mail.</li>
+            <li>Search + Enter jumps to Inbox (demo).</li>
+            <li>WhatsApp mirrors the same queue when connected.</li>
+          </ul>
+          <Button className="mt-4 w-full rounded-full" onClick={() => setHelpOpen(false)}>
+            Got it
+          </Button>
+        </DialogContent>
+      </Dialog>
+    </SidebarProvider>
   );
 }
