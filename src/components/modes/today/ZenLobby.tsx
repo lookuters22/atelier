@@ -7,6 +7,7 @@ import { usePendingApprovals } from "../../../hooks/usePendingApprovals";
 import { useUnfiledInbox } from "../../../hooks/useUnfiledInbox";
 import { useTasks } from "../../../hooks/useTasks";
 import { TiltCard } from "../../ui/TiltCard";
+import { CinematicAuraText } from "../../ui/CinematicAuraText";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 
@@ -670,16 +671,10 @@ export function ZenLobby() {
                 <span className="block text-[56px] font-normal leading-[1.05] tracking-tight text-white drop-shadow-sm">
                   {formatGreeting()},
                 </span>
-                <span
+                <CinematicAuraText
+                  text="Elena"
                   className="block text-[64px] font-semibold italic leading-[1.05] tracking-tight drop-shadow-sm"
-                  style={{
-                    backgroundImage: "linear-gradient(135deg, #ffffff 0%, #6b7280 45%, #9ca3af 55%, #ffffff 100%)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                  }}
-                >
-                  Elena
-                </span>
+                />
               </h1>
               <StudioPulse />
             </motion.div>
