@@ -1,9 +1,35 @@
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
+import { buildPersonaAntiBrochureConstraintsSection } from "../prompts/personaAntiBrochureConstraints.ts";
+import {
+  buildConsultationFirstInquiryUserHintBlock,
+  PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER,
+} from "../prompts/personaConsultationFirstRealization.ts";
+import {
+  buildWeakAvailabilityInquiryUserHintBlock,
+  PERSONA_WEAK_AVAILABILITY_REALIZATION_SECTION_MARKER,
+} from "../prompts/personaWeakAvailabilityRealization.ts";
+import { BUDGET_STATEMENT_PLACEHOLDER } from "../orchestrator/budgetStatementInjection.ts";
+import {
+  INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER,
+  INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER,
+  INQUIRY_REPLY_STRATEGY_SECTION_TITLE,
+  INQUIRY_REPLY_WEAK_AVAILABILITY_ONLY_MARKER,
+} from "../orchestrator/deriveInquiryReplyPlan.ts";
+import { buildPersonaStyleExamplesPromptSection } from "../prompts/personaStudioVoiceExamples.ts";
 import { PERSONA_STRICT_STUDIO_BUSINESS_RULES } from "../prompts/personaStudioRules.ts";
 import {
   anthropicMessagesHeadersWithPromptCaching,
   cachedEphemeralSystemBlocks,
 } from "./anthropicPromptCache.ts";
+import { logModelInvocation } from "../telemetry/modelInvocationLog.ts";
+import { truncatePersonaOrchestratorFactsForModel } from "./personaAgentA5Budget.ts";
+
+/**
+ * Reinforces first-pass compliance when **BUDGET STATEMENT SLOT** is active (same token as injector contract).
+ * Exported for prompt-building tests.
+ */
+export const PERSONA_BUDGET_CRITICAL_FORMATTING_USER_HINT_LINE =
+  `[CRITICAL FORMATTING]: You MUST output the exact token ${BUDGET_STATEMENT_PLACEHOLDER} immediately following your opening hospitality sentence. Do not write any transition words before it.`;
 
 /**
  * execute_v3 Phase 6.5 Step 6.5C — writer/persona **input boundary** (what may reach the model).
@@ -91,7 +117,11 @@ function extractAssistantText(response: AnthropicMessagesResponse): string {
     .trim();
 }
 
-function buildPersonaSystemPrompt(boundary: PersonaWriterInputBoundary): string {
+/**
+ * Full system prompt for persona Messages calls (orchestrator + legacy paths).
+ * Includes Ana style examples (non-factual) plus anti-brochure constraints; exported for tests to verify wiring.
+ */
+export function buildPersonaSystemPrompt(boundary: PersonaWriterInputBoundary): string {
   const { narrowPersonalization: np, limitedContinuityMemoryHeaders } = boundary;
 
   const memoryLines = limitedContinuityMemoryHeaders.map((m) => `- ${m.title}: ${m.summary}`);
@@ -110,14 +140,22 @@ function buildPersonaSystemPrompt(boundary: PersonaWriterInputBoundary): string 
   return [
     PERSONA_STRICT_STUDIO_BUSINESS_RULES,
     "",
-    "You are the voice of a luxury wedding photography studio manager.",
-    "Write with warmth, polish, and restraint—premium, never salesy or robotic.",
+    "You are Ana, the client manager for the wedding photography studio—warm, clear, and professional. Factual and policy constraints below always govern what you may claim.",
+    "Use the **style examples in the next section** as the primary reference for cadence, paragraph structure, sign-offs, and boundary-setting tone. Those lines are style anchors only—not a competing generic \"luxury\" voice.",
+    "",
+    buildPersonaStyleExamplesPromptSection().trimEnd(),
+    "",
+    buildPersonaAntiBrochureConstraintsSection().trimEnd(),
+    "",
+    `Consultation-first inquiry: when the approved user message contains ${PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER} (appended for consultation_first + call strategy), that realization block tightens prose for that turn—prefer a human client-manager invitation over stacked funnel boilerplate; do not quote the [INQUIRY_ONBOARDING] example verbatim.`,
+    "",
+    `Weak availability inquiry: when the approved user message contains ${PERSONA_WEAK_AVAILABILITY_REALIZATION_SECTION_MARKER} (weak playbook support for booking detail), that block is mandatory—availability confirmation only, no retainer/deposit/contract/%/calendar funnel; keep committed_terms empty/null as instructed.`,
     "",
     "The user message is orchestrator-approved. When it includes **=== Authoritative CRM (verified tenant record) ===**, treat couple_names, wedding_date, location, stage, and contract_value there as verified CRM facts.",
     "Those CRM fields take priority over conflicting implications in the **Client inbound** section (for example: do not invent or substitute a different calendar month, day, or region than wedding_date/location in Authoritative CRM).",
     "Continuity sections are for thread context only—they do not override Authoritative CRM or playbook policy.",
-    "Follow **Verified policy: playbook_rules** in the user message for fees, retainers, insurance, and legal commitments. Do not invent percentages or coverage.",
-    "If the user message includes **NUMERIC_COMMERCIAL_POLICY_NO_PLAYBOOK_SNAPSHOT** or **UNKNOWN_POLICY_DEPOSIT_RETAINER_PERCENT** under Explicit unknown / do-not-assert signals, you must not output any specific retainer/deposit/booking percentage—use deferral or contract-verification language with **no percentage digits**.",
+    "Deposit/retainer/payment percentages for all outbound drafts are governed by the **GLOBAL FINANCIAL GROUNDING** block in the anti-brochure constraints above (verified CRM/playbook digits only).",
+    "If the user message includes **NUMERIC_COMMERCIAL_POLICY_NO_PLAYBOOK_SNAPSHOT** or **UNKNOWN_POLICY_DEPOSIT_RETAINER_PERCENT** under Explicit unknown / do-not-assert signals, you must not output any specific retainer/deposit/booking percentage—use deferral or contract-verification language with **no percentage digits** (reinforces the same rule when those flags are present).",
     "Never treat a distance (miles/km) as a percent: if **UNKNOWN_POLICY_TRAVEL_RADIUS** or the no-playbook snapshot applies, do not invent mileage figures or confuse them with percentages.",
     "**Package & product guardrail:** Do not invent, confirm, or restate collection/package/product names as real studio offerings unless they appear in **Authoritative CRM** (e.g. package_name) or **Verified policy: playbook_rules** in the user message. If the client names an unverified product (e.g. a tier or \"Elite collection\"), do not mirror that label as fact—use neutral phrasing (\"the option you're considering\") and describe only verified offerings; avoid reinforcing the client's name as an official SKU.",
     "NEVER invent pricing, availability, or policy details missing from the user message. If something is not in CRM or playbook, hedge or defer.",
@@ -218,8 +256,14 @@ async function runPersonaAnthropicMessages(
   userText: string,
   maxTokens: number,
 ): Promise<AnthropicMessagesResponse> {
+  logModelInvocation({
+    source: "client_orchestrator_persona",
+    model: "claude-haiku-4-5",
+    phase: "anthropic_messages",
+  });
+
   const body = {
-    model: "claude-sonnet-4-5-20250929",
+    model: "claude-haiku-4-5",
     max_tokens: maxTokens,
     temperature: 0.7,
     system: cachedEphemeralSystemBlocks(system),
@@ -263,7 +307,38 @@ export async function draftPersonaStructuredResponse(
 
   const writerBoundary = extractPersonaWriterBoundary(agentContext);
   const system = buildPersonaSystemPrompt(writerBoundary);
-  const userText = buildPersonaUserMessage(orchestratorFacts) + STRUCTURED_OUTPUT_SUFFIX;
+  const budgetSlotHint = orchestratorFacts.includes("BUDGET STATEMENT SLOT")
+    ? [
+        "",
+        `If the approved facts above include **BUDGET STATEMENT SLOT**, email_draft MUST contain the literal token ${BUDGET_STATEMENT_PLACEHOLDER} exactly once. Omitting it fails automated verification.`,
+        PERSONA_BUDGET_CRITICAL_FORMATTING_USER_HINT_LINE,
+      ].join("\n")
+    : "";
+  const inquiryStrategyHint = orchestratorFacts.includes(INQUIRY_REPLY_STRATEGY_SECTION_TITLE)
+    ? [
+        "",
+        "When the approved facts include **Approved inquiry reply strategy (authoritative)**, follow that motion and CTA as authoritative strategy (not for factual claims—facts remain only in verified CRM/playbook sections).",
+      ].join("\n")
+    : "";
+  const availabilityBookingRestrictionHint = orchestratorFacts.includes(INQUIRY_REPLY_WEAK_AVAILABILITY_ONLY_MARKER)
+    ? buildWeakAvailabilityInquiryUserHintBlock()
+    : orchestratorFacts.includes(INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER)
+      ? [
+          "",
+          "This turn is **availability-only** per strategy: **booking_process_words: forbidden** — do not write retainer/deposit/contract-sequence/%/payment-milestone language or a heavy consultation-plus-booking funnel; confirm availability in plain language and use at most one light generic next step.",
+        ].join("\n")
+      : "";
+  const consultationFirstVoiceHint = orchestratorFacts.includes(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER)
+    ? buildConsultationFirstInquiryUserHintBlock()
+    : "";
+  const factsForModel = truncatePersonaOrchestratorFactsForModel(orchestratorFacts);
+  const userText =
+    buildPersonaUserMessage(factsForModel) +
+    budgetSlotHint +
+    inquiryStrategyHint +
+    availabilityBookingRestrictionHint +
+    consultationFirstVoiceHint +
+    STRUCTURED_OUTPUT_SUFFIX;
 
   const data = await runPersonaAnthropicMessages(apiKey, system, userText, 2048);
   const text = extractAssistantText(data);
@@ -285,7 +360,8 @@ export async function draftPersonaResponse(
 
   const writerBoundary = extractPersonaWriterBoundary(agentContext);
   const system = buildPersonaSystemPrompt(writerBoundary);
-  const userText = buildPersonaUserMessage(orchestratorFacts);
+  const factsForModel = truncatePersonaOrchestratorFactsForModel(orchestratorFacts);
+  const userText = buildPersonaUserMessage(factsForModel);
 
   const data = await runPersonaAnthropicMessages(apiKey, system, userText, 1024);
   const text = extractAssistantText(data);

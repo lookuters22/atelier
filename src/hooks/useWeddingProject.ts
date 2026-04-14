@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { onDraftsChanged } from "../lib/events";
+import { onDataChanged } from "../lib/events";
 import type { Tables } from "../types/database.types";
 
 export type ThreadWithDrafts = Tables<"threads"> & {
@@ -29,7 +29,13 @@ export function useWeddingProject(weddingId: string | undefined) {
 
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  useEffect(() => onDraftsChanged(refetch), [refetch]);
+  useEffect(
+    () =>
+      onDataChanged(refetch, {
+        scopes: ["weddings", "inbox", "drafts", "tasks", "all"],
+      }),
+    [refetch],
+  );
 
   useEffect(() => {
     if (!weddingId) {
@@ -50,9 +56,10 @@ export function useWeddingProject(weddingId: string | undefined) {
       .eq("id", weddingId)
       .single();
 
+    /** A1: thread + drafts only — messages load per selected thread in `useWeddingThreads` (avoids N× full history). */
     const q2 = supabase
       .from("threads")
-      .select("*, messages(*), drafts(*)")
+      .select("*, drafts(*)")
       .eq("wedding_id", weddingId)
       .order("last_activity_at", { ascending: false });
 
@@ -78,9 +85,7 @@ export function useWeddingProject(weddingId: string | undefined) {
       setTimeline(
         ((r2.data ?? []) as unknown as ThreadWithDrafts[]).map((t) => ({
           ...t,
-          messages: [...(t.messages ?? [])].sort(
-            (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime(),
-          ),
+          messages: [],
           drafts: t.drafts ?? [],
         })),
       );
@@ -102,5 +107,5 @@ export function useWeddingProject(weddingId: string | undefined) {
     };
   }, [weddingId, fetchKey]);
 
-  return { project, timeline, tasks, isLoading, error, refetch };
+  return { project, timeline, tasks, isLoading, error, refetch, timelineFetchEpoch: fetchKey };
 }

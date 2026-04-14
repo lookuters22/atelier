@@ -5,9 +5,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { HandHeart, Lock, PauseCircle, SlidersHorizontal } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import {
+  type ThreadAutomationMode,
+  updateAutomationModeForAllWeddingThreads,
+} from "../../lib/threadAutomationModeClient";
 import { cn } from "@/lib/utils";
-
-type AutomationMode = "auto" | "draft_only" | "human_only";
 
 export function WeddingManualControlsCard({
   weddingId,
@@ -19,7 +21,7 @@ export function WeddingManualControlsCard({
   const [compassionPause, setCompassionPause] = useState(false);
   const [strategicPause, setStrategicPause] = useState(false);
   const [agencyCcLock, setAgencyCcLock] = useState(false);
-  const [automationMode, setAutomationMode] = useState<AutomationMode>("auto");
+  const [automationMode, setAutomationMode] = useState<ThreadAutomationMode>("auto");
   const [threadsMixed, setThreadsMixed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -90,14 +92,14 @@ export function WeddingManualControlsCard({
     }
   }
 
-  async function applyAutomationAllThreads(mode: AutomationMode) {
+  async function applyAutomationAllThreads(mode: ThreadAutomationMode) {
     setSaving("threads");
     setError(null);
-    const { error: err } = await supabase
-      .from("threads")
-      .update({ automation_mode: mode })
-      .eq("wedding_id", weddingId)
-      .eq("photographer_id", photographerId);
+    const { error: err } = await updateAutomationModeForAllWeddingThreads(
+      weddingId,
+      photographerId,
+      mode,
+    );
     setSaving(null);
     if (err) {
       setError(err.message);
@@ -179,7 +181,7 @@ export function WeddingManualControlsCard({
           <select
             value={automationMode}
             disabled={saving !== null}
-            onChange={(e) => void applyAutomationAllThreads(e.target.value as AutomationMode)}
+            onChange={(e) => void applyAutomationAllThreads(e.target.value as ThreadAutomationMode)}
             className="mt-1 w-full rounded-md border border-border bg-background px-2 py-2 text-[13px] text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
           >
             <option value="auto">Auto</option>

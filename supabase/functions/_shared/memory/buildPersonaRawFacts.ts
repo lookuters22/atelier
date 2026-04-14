@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  fetchMessageIdsWithStructuredAttachments,
+  redactMessageBodyForModelContext,
+} from "./attachmentSafetyForModelContext.ts";
 import { fetchThreadSummary } from "./fetchThreadSummary.ts";
+import { sanitizeInboundTextForModelContext } from "./sanitizeInboundTextForModelContext.ts";
 
 /**
  * Tier 2: rolling summary + Tier 3: last N messages only (no full transcript).
@@ -18,7 +23,12 @@ export async function buildPersonaRawFactsFromThread(
 ): Promise<string> {
   const [threadSummary, recentLines] = await Promise.all([
     fetchThreadSummary(supabase, photographerId, threadId),
-    loadRecentMessageLines(supabase, threadId, PERSONA_CONTEXT_RECENT_MESSAGE_LIMIT),
+    loadRecentMessageLines(
+      supabase,
+      photographerId,
+      threadId,
+      PERSONA_CONTEXT_RECENT_MESSAGE_LIMIT,
+    ),
   ]);
 
   return formatPersonaRawFactsString(threadSummary, recentLines);
@@ -26,13 +36,29 @@ export async function buildPersonaRawFactsFromThread(
 
 async function loadRecentMessageLines(
   supabase: SupabaseClient,
+  photographerId: string,
   threadId: string,
   limit: number,
 ): Promise<string[]> {
+  const { data: threadRow, error: threadErr } = await supabase
+    .from("threads")
+    .select("id")
+    .eq("id", threadId)
+    .eq("photographer_id", photographerId)
+    .maybeSingle();
+
+  if (threadErr) {
+    throw new Error(`buildPersonaRawFacts thread check: ${threadErr.message}`);
+  }
+  if (!threadRow) {
+    return [];
+  }
+
   const { data: rows, error } = await supabase
     .from("messages")
-    .select("direction, body, sent_at")
+    .select("id, direction, body, sent_at")
     .eq("thread_id", threadId)
+    .eq("photographer_id", photographerId)
     .order("sent_at", { ascending: false })
     .limit(limit);
 
@@ -41,10 +67,22 @@ async function loadRecentMessageLines(
   }
 
   const chronological = [...(rows ?? [])].reverse();
+  const ids = chronological.map((r) => r.id as string).filter(Boolean);
+  const withAttachments = await fetchMessageIdsWithStructuredAttachments(
+    supabase,
+    photographerId,
+    ids,
+  );
+
   return chronological.map((r) => {
     const d = r.direction as string;
     const who = d === "in" ? "Client" : "Studio";
-    return `${who}: ${(r.body as string).trim()}`;
+    const id = r.id as string;
+    const layered = redactMessageBodyForModelContext(String(r.body ?? ""), {
+      hasStructuredAttachments: withAttachments.has(id),
+    });
+    const body = sanitizeInboundTextForModelContext(layered);
+    return `${who}: ${body.trim()}`;
   });
 }
 
@@ -52,8 +90,10 @@ export function formatPersonaRawFactsString(
   threadSummary: string | null,
   recentLines: string[],
 ): string {
-  const summaryBlock = threadSummary?.trim()
-    ? `## Thread summary (rolling memory)\n${threadSummary.trim()}`
+  const summaryText =
+    threadSummary?.trim() ? sanitizeInboundTextForModelContext(threadSummary).trim() : "";
+  const summaryBlock = summaryText
+    ? `## Thread summary (rolling memory)\n${summaryText}`
     : "## Thread summary (rolling memory)\n(none yet)";
 
   const recentBlock =
@@ -91,9 +131,13 @@ export function formatCompactContinuityForPersonaWriter(
   threadSummary: string | null,
   recentMessages: Array<Record<string, unknown>>,
 ): string | null {
-  const summaryPart =
+  const summarySanitized =
     threadSummary && threadSummary.trim().length > 0
-      ? `Thread summary (rolling):\n${truncateForPersonaWriter(threadSummary, PERSONA_WRITER_THREAD_SUMMARY_MAX_CHARS)}`
+      ? sanitizeInboundTextForModelContext(threadSummary)
+      : null;
+  const summaryPart =
+    summarySanitized && summarySanitized.trim().length > 0
+      ? `Thread summary (rolling):\n${truncateForPersonaWriter(summarySanitized, PERSONA_WRITER_THREAD_SUMMARY_MAX_CHARS)}`
       : null;
 
   const chrono = [...recentMessages];
@@ -102,7 +146,7 @@ export function formatCompactContinuityForPersonaWriter(
   for (const m of lastN) {
     const dir = String(m.direction ?? "");
     const who = dir === "in" ? "Client" : "Studio";
-    const rawBody = String(m.body ?? "").trim();
+    const rawBody = sanitizeInboundTextForModelContext(String(m.body ?? "")).trim();
     if (!rawBody) continue;
     excerptLines.push(
       `${who}: ${truncateForPersonaWriter(rawBody, PERSONA_WRITER_TRANSCRIPT_BODY_MAX_CHARS)}`,

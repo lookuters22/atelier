@@ -5,6 +5,7 @@
  * Set ANTHROPIC_API_KEY in Supabase Edge Function secrets.
  */
 import Anthropic from "npm:@anthropic-ai/sdk";
+import { boundPersonaRewriteContext, truncatePersonaRewriteFactualBullet } from "./personaA5Budget.ts";
 
 const SYSTEM_PROMPT = `You are the Persona Agent for a luxury wedding photographer.
 Translate the provided factual bullets into a warm, high-end, reassuring email reply.
@@ -28,15 +29,18 @@ export async function runPersonaAgent(
 
   const anthropic = new Anthropic({ apiKey });
 
+  const ctx = boundPersonaRewriteContext(contextData);
+  const bulletsForModel = factualBullets.map((b) => truncatePersonaRewriteFactualBullet(String(b)));
+
   const userContent = [
     "## Context",
-    `Couple: ${contextData.couple_names}`,
-    contextData.wedding_date ? `Date: ${contextData.wedding_date}` : "Date: not yet confirmed",
-    contextData.location ? `Location: ${contextData.location}` : "Location: not yet confirmed",
-    contextData.budget ? `Budget note: ${contextData.budget}` : "",
+    `Couple: ${ctx.couple_names}`,
+    ctx.wedding_date ? `Date: ${ctx.wedding_date}` : "Date: not yet confirmed",
+    ctx.location ? `Location: ${ctx.location}` : "Location: not yet confirmed",
+    ctx.budget ? `Budget note: ${ctx.budget}` : "",
     "",
     "## Factual bullets to cover",
-    ...factualBullets.map((b, i) => `${i + 1}. ${b}`),
+    ...bulletsForModel.map((b, i) => `${i + 1}. ${b}`),
   ]
     .filter(Boolean)
     .join("\n");

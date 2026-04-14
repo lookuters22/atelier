@@ -4,6 +4,12 @@
  *
  * Set OPENAI_API_KEY in Supabase Edge Function secrets.
  */
+
+import {
+  truncateMatchmakerInboundMessage,
+  truncateMatchmakerRosterJson,
+} from "../matchmakerA5Budget.ts";
+
 export type MatchmakerResult = {
   suggested_wedding_id: string | null;
   confidence_score: number;
@@ -30,6 +36,15 @@ export async function runMatchmakerAgent(
   rawMessage: string,
   activeWeddings: Record<string, unknown>[],
 ): Promise<MatchmakerResult> {
+  const inboundTrim = String(rawMessage ?? "").trim();
+  if (!inboundTrim || activeWeddings.length === 0) {
+    return {
+      suggested_wedding_id: null,
+      confidence_score: 0,
+      reasoning: "",
+    };
+  }
+
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
 
@@ -43,12 +58,15 @@ export async function runMatchmakerAgent(
     })),
   );
 
+  const rosterForModel = truncateMatchmakerRosterJson(rosterBlock);
+  const inboundForModel = truncateMatchmakerInboundMessage(String(rawMessage ?? ""));
+
   const userContent = [
     "## Active Weddings Roster",
-    rosterBlock,
+    rosterForModel,
     "",
     "## Inbound Message",
-    rawMessage,
+    inboundForModel,
   ].join("\n");
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {

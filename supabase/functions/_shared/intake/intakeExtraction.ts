@@ -7,6 +7,11 @@ import {
   type CalendarToolParams,
 } from "../tools/calendar.ts";
 import type { IntakeStructuredExtraction } from "./intakeBootstrapTypes.ts";
+import {
+  truncateIntakeExtractionAssistantContent,
+  truncateIntakeExtractionToolOutput,
+  truncateIntakeExtractionUserMessage,
+} from "./intakeExtractionA5Budget.ts";
 
 const SYSTEM_PROMPT = `You are the Intake Agent. A new inquiry has arrived.
 
@@ -94,9 +99,23 @@ const MAX_TOOL_ROUNDS = 4;
 export async function runIntakeExtractionAndResearch(
   rawMessage: string,
 ): Promise<IntakeStructuredExtraction> {
+  const inboundTrim = String(rawMessage ?? "").trim();
+  if (!inboundTrim) {
+    return {
+      couple_names: "Unknown",
+      wedding_date: null,
+      location: null,
+      budget: null,
+      story_notes: "",
+      raw_facts: "",
+    };
+  }
+
+  const userForModel = truncateIntakeExtractionUserMessage(String(rawMessage ?? ""));
+
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: rawMessage },
+    { role: "user", content: userForModel },
   ];
 
   let finalContent = "";
@@ -108,12 +127,16 @@ export async function runIntakeExtractionAndResearch(
 
     messages.push({
       role: "assistant",
-      content: assistantMsg.content,
+      content: truncateIntakeExtractionAssistantContent(assistantMsg.content ?? null),
       tool_calls: assistantMsg.tool_calls,
     });
 
     if (choice.finish_reason === "stop" || !assistantMsg.tool_calls?.length) {
-      finalContent = (assistantMsg.content ?? "{}").trim();
+      const fc =
+        typeof assistantMsg.content === "string"
+          ? truncateIntakeExtractionAssistantContent(assistantMsg.content) ?? "{}"
+          : "{}";
+      finalContent = fc.trim();
       break;
     }
 
@@ -127,14 +150,16 @@ export async function runIntakeExtractionAndResearch(
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
-        content: result,
+        content: truncateIntakeExtractionToolOutput(result),
       });
     }
   }
 
   if (!finalContent) {
     const fallback = await callOpenAI(messages);
-    finalContent = (fallback.choices[0].message.content ?? "{}").trim();
+    const fb = fallback.choices[0].message.content;
+    finalContent =
+      (typeof fb === "string" ? truncateIntakeExtractionAssistantContent(fb) ?? "{}" : "{}").trim();
   }
 
   const cleaned = finalContent

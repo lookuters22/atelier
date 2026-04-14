@@ -9,6 +9,12 @@
  * 4. Hands off raw_facts to the Persona Agent for brand-voice drafting.
  */
 import { inngest } from "../../_shared/inngest.ts";
+import {
+  truncateLogisticsAssistantContent,
+  truncateLogisticsClientMessage,
+  truncateLogisticsLocation,
+  truncateLogisticsToolOutput,
+} from "../../_shared/logisticsA5Budget.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import {
   estimateTravelCosts,
@@ -122,15 +128,23 @@ export const logisticsFunction = inngest.createFunction(
 
     // ── Agentic travel cost research ─────────────────────────────
     const rawFacts = await step.run("research-travel-costs", async () => {
+      const inboundTrim = String(raw_message ?? "").trim();
+      if (!inboundTrim) {
+        return "";
+      }
+
+      const locationForModel = truncateLogisticsLocation(String(context.location ?? ""));
+      const clientMessageForModel = truncateLogisticsClientMessage(String(raw_message ?? ""));
+
       const systemPrompt =
-        `You are the Logistics Agent. A client is inquiring about a wedding in ${context.location}. ` +
+        `You are the Logistics Agent. A client is inquiring about a wedding in ${locationForModel}. ` +
         `Use your estimate_travel_costs tool to get the estimated travel costs. ` +
         `Output ONLY a dry, factual summary string (e.g., "Client wants to book in Lake Como. ` +
         `Travel costs are estimated at $1,500. Add this to the base package.").`;
 
       const messages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: raw_message },
+        { role: "user", content: clientMessageForModel },
       ];
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -140,12 +154,16 @@ export const logisticsFunction = inngest.createFunction(
 
         messages.push({
           role: "assistant",
-          content: assistantMsg.content,
+          content: truncateLogisticsAssistantContent(assistantMsg.content ?? null),
           tool_calls: assistantMsg.tool_calls,
         });
 
         if (choice.finish_reason === "stop" || !assistantMsg.tool_calls?.length) {
-          return (assistantMsg.content ?? "").trim();
+          const final =
+            typeof assistantMsg.content === "string"
+              ? truncateLogisticsAssistantContent(assistantMsg.content) ?? ""
+              : "";
+          return final.trim();
         }
 
         for (const toolCall of assistantMsg.tool_calls) {
@@ -158,13 +176,15 @@ export const logisticsFunction = inngest.createFunction(
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
-            content: result,
+            content: truncateLogisticsToolOutput(result),
           });
         }
       }
 
       const fallback = await callOpenAI(messages);
-      return (fallback.choices[0].message.content ?? "").trim();
+      const fb = fallback.choices[0].message.content;
+      const finalFb = typeof fb === "string" ? truncateLogisticsAssistantContent(fb) ?? "" : "";
+      return finalFb.trim();
     });
 
     // ── Handoff to Persona Agent ─────────────────────────────────

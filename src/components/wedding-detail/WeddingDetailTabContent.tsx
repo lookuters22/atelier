@@ -70,7 +70,11 @@ export function WeddingDetailTabContent({
         <ul className="space-y-2 text-[13px]">
           {tasks.length > 0 ? (
             tasks.map((t) => (
-              <li key={t.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-canvas px-3 py-2">
+              <li
+                key={t.id}
+                id={`wedding-task-${t.id}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-border bg-canvas px-3 py-2"
+              >
                 <div className="flex items-center gap-3">
                   <input type="checkbox" className="h-4 w-4 accent-link" />
                   <span>{t.title}</span>

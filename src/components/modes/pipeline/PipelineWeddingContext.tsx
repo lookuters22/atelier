@@ -15,6 +15,7 @@ import { StoryNotesCard } from "../../../components/wedding-detail/StoryNotesCar
 import { WeddingAttachmentsCard } from "../../../components/wedding-detail/WeddingAttachmentsCard";
 import { OtherWeddingsCard } from "../../../components/wedding-detail/OtherWeddingsCard";
 import { WeddingManualControlsCard } from "../../../components/wedding-detail/WeddingManualControlsCard";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../../context/AuthContext";
 import { useTimedToast } from "../../../hooks/useTimedToast";
 import { useSendMessage } from "../../../hooks/useSendMessage";
@@ -25,7 +26,9 @@ import { useWeddingThreads } from "../../../hooks/useWeddingThreads";
 import { mapRowToEntry } from "../../../pages/WeddingDetailPage";
 import type { WeddingEntry } from "../../../data/weddingCatalog";
 import type { Tables } from "../../../types/database.types";
+import { EscalationResolutionPanel } from "../../escalations/EscalationResolutionPanel";
 import { usePipelineMode } from "./PipelineModeContext";
+import { PipelineUrlHydrator } from "./PipelineUrlHydrator";
 
 const DRAFT_DEFAULT = WEDDING_THREAD_DRAFT_DEFAULT;
 
@@ -51,11 +54,13 @@ export function usePipelineWedding() {
 
 export function PipelineWeddingProvider({ children }: { children: ReactNode }) {
   const { weddingId } = usePipelineMode();
+  const [searchParams] = useSearchParams();
+  const preferredTimelineThreadId = weddingId ? searchParams.get("threadId") : null;
 
   if (!weddingId) return <>{children}</>;
 
   return (
-    <PipelineWeddingLoader weddingId={weddingId}>
+    <PipelineWeddingLoader weddingId={weddingId} preferredTimelineThreadId={preferredTimelineThreadId}>
       {children}
     </PipelineWeddingLoader>
   );
@@ -64,17 +69,32 @@ export function PipelineWeddingProvider({ children }: { children: ReactNode }) {
 /** Same loader + context as pipeline, keyed by an explicit wedding id (Inbox project selection). */
 export function PipelineWeddingProviderByWeddingId({
   weddingId,
+  preferredTimelineThreadId = null,
   children,
 }: {
   weddingId: string | null;
+  /** Inbox `?threadId=` for `review_draft` — honored over blind first-thread selection in `useWeddingThreads`. */
+  preferredTimelineThreadId?: string | null;
   children: ReactNode;
 }) {
   if (!weddingId) return <>{children}</>;
-  return <PipelineWeddingLoader weddingId={weddingId}>{children}</PipelineWeddingLoader>;
+  return (
+    <PipelineWeddingLoader weddingId={weddingId} preferredTimelineThreadId={preferredTimelineThreadId}>
+      {children}
+    </PipelineWeddingLoader>
+  );
 }
 
-function PipelineWeddingLoader({ weddingId, children }: { weddingId: string; children: ReactNode }) {
-  const { project, timeline, tasks, isLoading, error } = useWeddingProject(weddingId);
+function PipelineWeddingLoader({
+  weddingId,
+  preferredTimelineThreadId = null,
+  children,
+}: {
+  weddingId: string;
+  preferredTimelineThreadId?: string | null;
+  children: ReactNode;
+}) {
+  const { project, timeline, tasks, isLoading, error, timelineFetchEpoch } = useWeddingProject(weddingId);
   const { toast, showToast } = useTimedToast();
   const { sendMessage } = useSendMessage();
   const [tab, setTab] = useState("timeline");
@@ -107,6 +127,8 @@ function PipelineWeddingLoader({ weddingId, children }: { weddingId: string; chi
       sendMessage={sendMessage}
       tab={tab}
       setTabAndUrl={setTabAndUrl}
+      preferredTimelineThreadId={preferredTimelineThreadId}
+      timelineFetchEpoch={timelineFetchEpoch}
     >
       {children}
     </PipelineWeddingInner>
@@ -123,6 +145,8 @@ function PipelineWeddingInner({
   sendMessage,
   tab,
   setTabAndUrl,
+  preferredTimelineThreadId = null,
+  timelineFetchEpoch,
   children,
 }: {
   weddingId: string;
@@ -134,12 +158,21 @@ function PipelineWeddingInner({
   sendMessage: ReturnType<typeof useSendMessage>["sendMessage"];
   tab: string;
   setTabAndUrl: (t: string) => void;
+  preferredTimelineThreadId?: string | null;
+  timelineFetchEpoch: number;
   children: ReactNode;
 }) {
   const entry = useMemo(() => mapRowToEntry(project), [project]);
   const travelPlan = useMemo(() => getTravelForWedding(weddingId), [weddingId]);
   const detailState = useWeddingDetailState({ weddingId, entry, liveClients: project.clients, showToast });
-  const threadState = useWeddingThreads({ weddingId, photographerId: project.photographer_id, liveThreads: timeline, showToast });
+  const threadState = useWeddingThreads({
+    weddingId,
+    photographerId: project.photographer_id,
+    liveThreads: timeline,
+    showToast,
+    preferredTimelineThreadId,
+    timelineFetchEpoch,
+  });
   const composerState = useWeddingComposer({
     activeThread: threadState.activeThread,
     people: detailState.people,
@@ -149,6 +182,7 @@ function PipelineWeddingInner({
     photographerId: project.photographer_id,
     sendMessage,
     showToast,
+    onAfterMessageSent: threadState.refreshActiveThreadMessages,
   });
 
   return (
@@ -165,6 +199,7 @@ function PipelineWeddingInner({
       composerState,
       travelPlan,
     }}>
+      <PipelineUrlHydrator />
       {children}
     </Ctx.Provider>
   );
@@ -173,6 +208,8 @@ function PipelineWeddingInner({
 /** Renders the center pane: tabs + timeline + composer */
 export function PipelineTimelinePane() {
   const state = usePipelineWedding();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const escalationId = searchParams.get("escalationId");
   if (!state) return null;
 
   const { weddingId, liveTasks, toast, showToast, tab, setTabAndUrl, threadState, composerState, travelPlan, detailState } = state;
@@ -186,6 +223,24 @@ export function PipelineTimelinePane() {
       ) : null}
 
       <WeddingTabs tab={tab as any} setTabAndUrl={setTabAndUrl as any} />
+
+      {escalationId ? (
+        <div className="shrink-0 border-b border-border bg-muted/30 px-4 py-3">
+          <EscalationResolutionPanel
+            escalationId={escalationId}
+            onResolved={() => {
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("escalationId");
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+          />
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <AnimatePresence mode="wait" initial={false}>

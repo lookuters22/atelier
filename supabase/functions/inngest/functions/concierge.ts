@@ -11,6 +11,11 @@
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import {
+  truncateConciergeAssistantContent,
+  truncateConciergeClientQuestion,
+  truncateConciergeToolOutput,
+} from "../../_shared/conciergeA5Budget.ts";
+import {
   searchPastCommunications,
   type RagToolParams,
 } from "../../_shared/tools/rag.ts";
@@ -129,11 +134,17 @@ export const conciergeFunction = inngest.createFunction(
 
     // ── Agentic RAG loop — research the factual answer ───────────
     const rawFacts = await step.run("research-facts", async () => {
+      const inboundTrim = String(raw_message ?? "").trim();
+      if (!inboundTrim) {
+        return "Fact not found";
+      }
+
+      const questionForModel = truncateConciergeClientQuestion(String(raw_message ?? ""));
       const messages: ChatMessage[] = [
-        { role: "system", content: SYSTEM_PROMPT_TEMPLATE(raw_message) },
+        { role: "system", content: SYSTEM_PROMPT_TEMPLATE(questionForModel) },
         {
           role: "user",
-          content: `photographer_id: ${context.photographerId}\n\nClient question: ${raw_message}`,
+          content: `photographer_id: ${context.photographerId}\n\nClient question: ${questionForModel}`,
         },
       ];
 
@@ -144,12 +155,16 @@ export const conciergeFunction = inngest.createFunction(
 
         messages.push({
           role: "assistant",
-          content: assistantMsg.content,
+          content: truncateConciergeAssistantContent(assistantMsg.content ?? null),
           tool_calls: assistantMsg.tool_calls,
         });
 
         if (choice.finish_reason === "stop" || !assistantMsg.tool_calls?.length) {
-          return (assistantMsg.content ?? "Fact not found").trim();
+          const final =
+            typeof assistantMsg.content === "string"
+              ? truncateConciergeAssistantContent(assistantMsg.content) ?? ""
+              : "";
+          return (final || "Fact not found").trim();
         }
 
         for (const toolCall of assistantMsg.tool_calls) {
@@ -164,13 +179,15 @@ export const conciergeFunction = inngest.createFunction(
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
-            content: result,
+            content: truncateConciergeToolOutput(result),
           });
         }
       }
 
       const fallback = await callOpenAI(messages);
-      return (fallback.choices[0].message.content ?? "Fact not found").trim();
+      const fb = fallback.choices[0].message.content;
+      const finalFb = typeof fb === "string" ? truncateConciergeAssistantContent(fb) ?? "" : "";
+      return (finalFb || "Fact not found").trim();
     });
 
     // ── Handoff to Persona Agent ─────────────────────────────────

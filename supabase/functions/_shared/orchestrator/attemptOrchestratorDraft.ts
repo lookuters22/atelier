@@ -7,14 +7,25 @@
  * This is not a misconfiguration: A2 never called an LLM. For live client-facing prose, the Inngest worker runs
  * {@link maybeRewriteOrchestratorDraftWithPersona} after insert when `ANTHROPIC_API_KEY` is set (override with
  * `ORCHESTRATOR_CLIENT_V1_PERSONA_DRAFT_BODY=0` to keep the stub for parity harnesses).
+ *
+ * **V3 RBAC:** When `audience.clientVisibleForPrivateCommercialRedaction` is passed as true, the stub body is
+ * line-redacted so planner-private commercial phrasing does not persist in drafts for client-visible runs
+ * (no-persona path, persona-skipped path, stub restore).
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
+  DecisionAudienceSnapshot,
   OrchestratorDraftAttemptResult,
   OrchestratorProposalCandidate,
   PlaybookRuleContextRow,
 } from "../../../../src/types/decisionContext.types.ts";
+import { redactPlannerPrivateCommercialMultilineText } from "../context/applyAudiencePrivateCommercialRedaction.ts";
 import { ORCHESTRATOR_CLIENT_V1_SCHEMA_VERSION } from "../inngest.ts";
+
+export type OrchestratorStubDraftAudienceOptions = Pick<
+  DecisionAudienceSnapshot,
+  "clientVisibleForPrivateCommercialRedaction"
+>;
 
 type OrchestratorRuntimeOutcome = "auto" | "draft" | "ask" | "block";
 
@@ -46,9 +57,14 @@ export function buildOrchestratorStubDraftBody(
   rawMessage: string,
   replyChannel: "email" | "web",
   playbookRules: PlaybookRuleContextRow[],
+  audience?: OrchestratorStubDraftAudienceOptions | null,
 ): string {
   const excerpts = playbookExcerptsFromRules(playbookRules, 3);
-  return buildDraftBody(candidate, rawMessage, replyChannel, excerpts);
+  const raw = buildDraftBody(candidate, rawMessage, replyChannel, excerpts);
+  if (audience?.clientVisibleForPrivateCommercialRedaction) {
+    return redactPlannerPrivateCommercialMultilineText(raw);
+  }
+  return raw;
 }
 
 function buildDraftBody(
@@ -92,6 +108,8 @@ export type AttemptOrchestratorDraftParams = {
   rawMessage: string;
   replyChannel: "email" | "web";
   playbookRules: PlaybookRuleContextRow[];
+  /** When set from `buildDecisionContext`, client-visible runs get stub redaction at insert time. */
+  audience?: OrchestratorStubDraftAudienceOptions | null;
 };
 
 /**
@@ -167,7 +185,7 @@ export async function attemptOrchestratorDraft(
     };
   }
 
-  const body = buildOrchestratorStubDraftBody(chosen, rawMessage, replyChannel, playbookRules);
+  const body = buildOrchestratorStubDraftBody(chosen, rawMessage, replyChannel, playbookRules, params.audience);
 
   const { data, error } = await supabase
     .from("drafts")

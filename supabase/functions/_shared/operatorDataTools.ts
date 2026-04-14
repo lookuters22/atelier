@@ -5,6 +5,7 @@
  * Step 8E: `record_operator_escalation` sets `operator_delivery` and emits `operator/escalation.pending_delivery.v1`.
  * Step 10D: `create_awaiting_reply_task` — deduped `tasks` row with explicit `due_date` (no invented timers).
  */
+import { prepareComplianceAssetOperatorDownload } from "./orchestrator/complianceAssetOperatorAccess.ts";
 import { formatOperatorEscalationQuestion } from "./formatOperatorEscalation.ts";
 import {
   inngest,
@@ -250,6 +251,33 @@ export async function handleOperatorDataToolCall(
         return `Follow-up task already open for this action (deduped). task_id=${result.taskId}`;
       }
       return `Follow-up task created (awaiting reply). task_id=${result.taskId}`;
+    }
+
+    case "get_compliance_library_download_link": {
+      const library_key = typeof args.library_key === "string" ? args.library_key.trim() : "";
+      if (library_key !== "public_liability_coi" && library_key !== "venue_security_compliance_packet") {
+        return "Error: library_key must be public_liability_coi or venue_security_compliance_packet.";
+      }
+      const result = await prepareComplianceAssetOperatorDownload(supabaseAdmin, photographerId, library_key);
+      if (!result.ok) {
+        if (result.reason === "not_found") {
+          return JSON.stringify({
+            error: "not_in_library",
+            hint: "File not in storage yet — use WhatsApp collect flow or upload first.",
+            library_key,
+          });
+        }
+        return JSON.stringify({ error: "signed_url_failed", detail: result.error });
+      }
+      /** Ephemeral tool output for the chat turn — not persisted on orchestrator proposals. */
+      return JSON.stringify({
+        filename: result.filename,
+        mime_guess: result.mime_guess,
+        signed_url: result.signed_url,
+        expires_in_seconds: result.expires_in_seconds,
+        expires_at: result.expires_at,
+        library_key: result.library_key,
+      });
     }
 
     case "capture_operator_context": {

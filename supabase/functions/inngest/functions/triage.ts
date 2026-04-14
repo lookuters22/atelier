@@ -276,6 +276,16 @@ function extractSenderAndBody(payload: Record<string, unknown>): {
 }
 
 /**
+ * Pass verified email-shaped sender into `ai/orchestrator.client.v1` for IE2 B2B domain signals.
+ * Omits web/phone-only senders (no `@`).
+ */
+function orchestratorInboundSenderFields(sender: string): { inboundSenderEmail?: string } {
+  const t = sender.trim();
+  if (!t.includes("@")) return {};
+  return { inboundSenderEmail: t };
+}
+
+/**
  * Legacy specialist events for **email + dashboard-web** main path when env-gated orchestrator live paths are off.
  * `ai/intent.persona` is **not** emitted by triage (intake/specialists chain into persona). Near-match escalation
  * skips this map. Retirement sequencing: `docs/v3/LEGACY_EMAIL_WEB_INTENT_RETIREMENT_SEQUENCE.md`.
@@ -1008,6 +1018,7 @@ export const triageFunction = inngest.createFunction(
               threadId: threadInfo.threadId,
               replyChannel: replyChannel === "web" ? "web" : "email",
               rawMessage: body,
+              ...orchestratorInboundSenderFields(sender),
               requestedExecutionMode: "draft_only",
               cut4LiveCorrelationId,
               cut4LiveFanoutSource: "triage_main_concierge_live" as const,
@@ -1036,6 +1047,7 @@ export const triageFunction = inngest.createFunction(
               threadId: threadInfo.threadId,
               replyChannel: replyChannel === "web" ? "web" : "email",
               rawMessage: body,
+              ...orchestratorInboundSenderFields(sender),
               requestedExecutionMode: "draft_only",
               cut5LiveCorrelationId,
               cut5LiveFanoutSource: "triage_main_project_management_live" as const,
@@ -1064,6 +1076,7 @@ export const triageFunction = inngest.createFunction(
               threadId: threadInfo.threadId,
               replyChannel: replyChannel === "web" ? "web" : "email",
               rawMessage: body,
+              ...orchestratorInboundSenderFields(sender),
               requestedExecutionMode: "draft_only",
               cut6LiveCorrelationId,
               cut6LiveFanoutSource: "triage_main_logistics_live" as const,
@@ -1092,6 +1105,7 @@ export const triageFunction = inngest.createFunction(
               threadId: threadInfo.threadId,
               replyChannel: replyChannel === "web" ? "web" : "email",
               rawMessage: body,
+              ...orchestratorInboundSenderFields(sender),
               requestedExecutionMode: "draft_only",
               cut7LiveCorrelationId,
               cut7LiveFanoutSource: "triage_main_commercial_live" as const,
@@ -1120,6 +1134,7 @@ export const triageFunction = inngest.createFunction(
               threadId: threadInfo.threadId,
               replyChannel: replyChannel === "web" ? "web" : "email",
               rawMessage: body,
+              ...orchestratorInboundSenderFields(sender),
               requestedExecutionMode: "draft_only",
               cut8LiveCorrelationId,
               cut8LiveFanoutSource: "triage_main_studio_live" as const,
@@ -1605,6 +1620,7 @@ export const triageFunction = inngest.createFunction(
             threadId: threadInfo.threadId,
             replyChannel: replyChannel === "web" ? "web" : "email",
             rawMessage: body,
+            ...orchestratorInboundSenderFields(sender),
             requestedExecutionMode: "auto",
             shadowCorrelationId: crypto.randomUUID(),
             legacyTriageIntent: dispatchIntent,

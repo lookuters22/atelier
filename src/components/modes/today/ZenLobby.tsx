@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { EscalationResolutionPanel } from "../../escalations/EscalationResolutionPanel";
 import { motion, AnimatePresence } from "framer-motion";
-import { ClipboardPen, Inbox, ListTodo } from "lucide-react";
+import { AlertTriangle, Check, ClipboardPen, Inbox, ListTodo } from "lucide-react";
 import { openSpotlight } from "../../StudioSpotlight";
-import { usePendingApprovals } from "../../../hooks/usePendingApprovals";
-import { useUnfiledInbox } from "../../../hooks/useUnfiledInbox";
-import { useTasks } from "../../../hooks/useTasks";
+import { useTodayActions } from "../../../hooks/useTodayActions";
 import { TiltCard } from "../../ui/TiltCard";
 import { CinematicAuraText } from "../../ui/CinematicAuraText";
 import { cn } from "@/lib/utils";
 import { OBSIDIAN_GLASS } from "@/lib/obsidianGlass";
+import { enqueueDraftsApprovedForOutboundBatch } from "@/lib/draftApprovalClient";
+import { fireDraftsChanged } from "@/lib/events";
+import { scrollPipelineWeddingRowIntoView } from "@/lib/pipelineWeddingListNavigation";
+import { isEditableKeyboardTarget } from "@/lib/timelineThreadNavigation";
+import {
+  ZEN_LOBBY_ESCALATION_ROW_BADGE,
+  zenLobbyPriorityKindFromAction,
+} from "@/lib/zenLobbyPriorityFeed";
 import type { LucideIcon } from "lucide-react";
 
 const SERIF = "'Playfair Display', Georgia, serif";
@@ -58,14 +65,15 @@ const NOISE_SVG = `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='h
 
 type ActionItem = {
   id: string;
-  kind: "message" | "draft" | "task";
+  kind: "message" | "draft" | "task" | "escalation";
   label: string;
   detail: string;
   status: string;
-  threadId?: string;
-  weddingId?: string | null;
-  taskId?: string;
   createdAt?: string;
+  /** Exact-resolution destination from `TodayAction.route_to` */
+  routeTo: string;
+  /** Set for `draft_approval` rows — `webhook-approval` draft id (A7 batch). */
+  draftSourceId?: string;
 };
 
 function formatGreeting(): string {
@@ -477,68 +485,191 @@ function MagneticRow({ children, className }: { children: React.ReactNode; class
 
 export function ZenLobby() {
   const navigate = useNavigate();
-  const { drafts } = usePendingApprovals();
-  const { unfiledThreads } = useUnfiledInbox();
-  const { tasks } = useTasks();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlEscalationId = searchParams.get("escalationId");
+  const { allActions, counts } = useTodayActions();
   const { dateLine, timeHHMM, now } = useLiveClock();
   const isIdle = useIdle(IDLE_TIMEOUT_MS);
 
   const actionItems = useMemo<ActionItem[]>(() => {
-    const items: ActionItem[] = [];
+    return allActions.map((a) => ({
+      id: a.id,
+      kind: zenLobbyPriorityKindFromAction(a),
+      label: a.title,
+      detail: a.subtitle,
+      status: a.status_label,
+      createdAt: a.created_at,
+      routeTo: a.route_to,
+      draftSourceId: a.action_type === "draft_approval" ? a.source_id : undefined,
+    }));
+  }, [allActions]);
 
-    for (const t of unfiledThreads) {
-      items.push({
-        id: `msg-${t.id}`,
-        kind: "message",
-        label: t.title,
-        detail: t.sender || "Unknown sender",
-        status: "Unfiled",
-        threadId: t.id,
-        createdAt: (t as Record<string, unknown>).created_at as string | undefined,
+  const draftRowCount = useMemo(
+    () => allActions.filter((a) => a.action_type === "draft_approval").length,
+    [allActions],
+  );
+
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(() => new Set());
+  const [draftBatchBusy, setDraftBatchBusy] = useState(false);
+  const [draftBatchProgress, setDraftBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [draftBatchError, setDraftBatchError] = useState<string | null>(null);
+
+  /** A7: roving keyboard focus — Arrow/j/k; Enter uses native button (same as click → navigate). */
+  const [priorityRovingIndex, setPriorityRovingIndex] = useState<number | null>(null);
+  const priorityRowActionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const priorityListRef = useRef<HTMLDivElement>(null);
+
+  const selectedDraftIdList = useMemo(() => {
+    return allActions
+      .filter((a) => a.action_type === "draft_approval" && selectedDraftIds.has(a.source_id))
+      .map((a) => a.source_id);
+  }, [allActions, selectedDraftIds]);
+
+  const selectAllDraftRows = useCallback(() => {
+    const ids = allActions.filter((a) => a.action_type === "draft_approval").map((a) => a.source_id);
+    setSelectedDraftIds(new Set(ids));
+    setDraftBatchError(null);
+  }, [allActions]);
+
+  const clearDraftSelection = useCallback(() => {
+    setSelectedDraftIds(new Set());
+    setDraftBatchError(null);
+  }, []);
+
+  const toggleDraftSelected = useCallback((sourceId: string) => {
+    setSelectedDraftIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      return next;
+    });
+    setDraftBatchError(null);
+  }, []);
+
+  const handleBatchApproveDrafts = useCallback(async () => {
+    const ids = selectedDraftIdList;
+    if (ids.length < 2) return;
+    setDraftBatchError(null);
+    const ok = window.confirm(
+      `Approve and queue ${ids.length} drafts for send? Same path as Approvals and single-draft flows.`,
+    );
+    if (!ok) return;
+
+    setDraftBatchBusy(true);
+    setDraftBatchProgress({ done: 0, total: ids.length });
+    try {
+      const { succeeded, failed } = await enqueueDraftsApprovedForOutboundBatch(ids, (done, total) => {
+        setDraftBatchProgress({ done, total });
       });
+      if (succeeded.length > 0) {
+        fireDraftsChanged();
+        setSelectedDraftIds((prev) => {
+          const next = new Set(prev);
+          for (const id of succeeded) next.delete(id);
+          return next;
+        });
+      }
+      if (failed.length > 0) {
+        const detail = failed.map((f) => `${f.id.slice(0, 8)}…: ${f.message}`).join("\n");
+        setDraftBatchError(`${failed.length} failed:\n${detail}`);
+      }
+    } catch (e) {
+      setDraftBatchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDraftBatchBusy(false);
+      setDraftBatchProgress(null);
     }
+  }, [selectedDraftIdList]);
 
-    for (const d of drafts) {
-      items.push({
-        id: `dft-${d.id}`,
-        kind: "draft",
-        label: d.thread_title,
-        detail: d.couple_names,
-        status: "Pending Approval",
-        threadId: d.id,
-        weddingId: d.wedding_id,
-        createdAt: (d as Record<string, unknown>).created_at as string | undefined,
-      });
+  /** First draft row in feed order among checkbox-selected drafts — scroll into view when selection changes. */
+  const firstSelectedDraftRowId = useMemo(() => {
+    if (selectedDraftIds.size === 0) return null;
+    for (const a of allActions) {
+      if (a.action_type !== "draft_approval") continue;
+      if (selectedDraftIds.has(a.source_id)) return a.id;
     }
+    return null;
+  }, [allActions, selectedDraftIds]);
 
-    const eod = new Date();
-    eod.setHours(23, 59, 59, 999);
-    for (const t of tasks) {
-      const due = new Date(t.due_date);
-      if (due > eod) continue;
-      items.push({
-        id: `tsk-${t.id}`,
-        kind: "task",
-        label: t.title,
-        detail: t.couple_names ?? "",
-        status: due.toDateString() === new Date().toDateString() ? "Due Today" : "Overdue",
-        taskId: t.id,
-        weddingId: t.wedding_id,
-        createdAt: (t as Record<string, unknown>).created_at as string | undefined,
-      });
+  useLayoutEffect(() => {
+    if (!firstSelectedDraftRowId) return;
+    const el = document.querySelector(`[data-zen-priority-row="${CSS.escape(firstSelectedDraftRowId)}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    scrollPipelineWeddingRowIntoView(el);
+  }, [firstSelectedDraftRowId]);
+
+  useEffect(() => {
+    if (actionItems.length === 0) {
+      setPriorityRovingIndex(null);
+      return;
     }
+    setPriorityRovingIndex((prev) => {
+      if (prev === null) return null;
+      return Math.min(prev, actionItems.length - 1);
+    });
+  }, [actionItems.length]);
 
-    return items;
-  }, [unfiledThreads, drafts, tasks]);
+  const handlePriorityListKeyDownCapture = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (actionItems.length === 0) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+
+      const key = e.key;
+      const keyLower = key.length === 1 ? key.toLowerCase() : key;
+      const isDown = key === "ArrowDown" || keyLower === "j";
+      const isUp = key === "ArrowUp" || keyLower === "k";
+
+      if (key === "Escape") {
+        if (priorityRovingIndex !== null) {
+          e.preventDefault();
+          setPriorityRovingIndex(null);
+          requestAnimationFrame(() => priorityListRef.current?.focus());
+        }
+        return;
+      }
+
+      if (!isDown && !isUp) return;
+
+      e.preventDefault();
+      if (isDown) {
+        setPriorityRovingIndex((prev) => {
+          if (prev === null) return 0;
+          return Math.min(prev + 1, actionItems.length - 1);
+        });
+      } else {
+        setPriorityRovingIndex((prev) => {
+          if (prev === null) return actionItems.length - 1;
+          return Math.max(prev - 1, 0);
+        });
+      }
+    },
+    [actionItems.length, priorityRovingIndex],
+  );
+
+  const activePriorityRowId =
+    priorityRovingIndex !== null ? actionItems[priorityRovingIndex]?.id : undefined;
+
+  useLayoutEffect(() => {
+    if (priorityRovingIndex === null || !activePriorityRowId) return;
+    const wrap = document.querySelector(`[data-zen-priority-row="${CSS.escape(activePriorityRowId)}"]`);
+    if (wrap instanceof HTMLElement) scrollPipelineWeddingRowIntoView(wrap);
+    const btn = priorityRowActionRefs.current[priorityRovingIndex];
+    btn?.focus({ preventScroll: true });
+  }, [priorityRovingIndex, activePriorityRowId]);
 
   const endOfToday = new Date();
   endOfToday.setHours(23, 59, 59, 999);
-  const tasksDueCount = tasks.filter((t) => new Date(t.due_date) <= endOfToday).length;
+  const tasksDueCount = allActions.filter((a) => {
+    if (a.action_type !== "open_task" || !a.due_at) return false;
+    return new Date(a.due_at) <= endOfToday;
+  }).length;
 
   const kpiCards: { title: string; subtitle: string; count: number; icon: LucideIcon }[] = [
-    { title: "Inquiries", subtitle: "messages", count: unfiledThreads.length, icon: Inbox },
-    { title: "Drafts", subtitle: "awaiting review", count: drafts.length, icon: ClipboardPen },
+    { title: "Inquiries", subtitle: "messages", count: counts.unfiled, icon: Inbox },
+    { title: "Drafts", subtitle: "awaiting review", count: counts.drafts, icon: ClipboardPen },
     { title: "Tasks", subtitle: "due today", count: tasksDueCount, icon: ListTodo },
+    { title: "Escalations", subtitle: "blocked", count: counts.escalations, icon: AlertTriangle },
   ];
 
   return (
@@ -671,12 +802,13 @@ export function ZenLobby() {
                 card={kpiCards[0]}
                 delay={0.15}
                 enrichment={{
-                  metaTag: `+${Math.max(unfiledThreads.length, 1)} since yesterday`,
+                  metaTag: `+${Math.max(counts.unfiled, 1)} since yesterday`,
                 }}
               />
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <KpiCard card={kpiCards[1]} delay={0.25} compact />
                 <KpiCard card={kpiCards[2]} delay={0.3} compact />
+                <KpiCard card={kpiCards[3]} delay={0.35} compact />
               </div>
             </div>
 
@@ -695,56 +827,205 @@ export function ZenLobby() {
                 <>
                   <p className="mb-3 pl-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
                     Priority Actions
+                    <span className="ml-2 font-normal tabular-nums tracking-normal text-white/40">
+                      {actionItems.length} {actionItems.length === 1 ? "item" : "items"}
+                      {selectedDraftIds.size > 0 ? (
+                        <span className="text-white/35" aria-live="polite">
+                          {" "}
+                          · {selectedDraftIds.size} draft{selectedDraftIds.size === 1 ? "" : "s"} selected
+                        </span>
+                      ) : null}
+                    </span>
                   </p>
-                  <div className={`overflow-hidden rounded-xl ${OBSIDIAN_GLASS}`}>
+                  {draftRowCount > 0 ? (
+                    <div className="mb-2 flex flex-wrap items-center gap-2 pl-1 text-[11px] text-white/45">
+                      <span className="font-medium text-white/55">Drafts</span>
+                      <button
+                        type="button"
+                        onClick={selectAllDraftRows}
+                        disabled={draftBatchBusy}
+                        className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-white/80 hover:bg-white/10 disabled:opacity-50"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearDraftSelection}
+                        disabled={draftBatchBusy || selectedDraftIds.size === 0}
+                        className="rounded border border-white/15 bg-white/5 px-2 py-0.5 hover:bg-white/10 disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                      <span className="tabular-nums">
+                        {selectedDraftIds.size === 0 ? "None selected" : `${selectedDraftIds.size} selected`}
+                      </span>
+                    </div>
+                  ) : null}
+                  {selectedDraftIdList.length >= 2 ? (
+                    <div className="mb-2 space-y-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] text-white/80">
+                      <p className="text-[11px] leading-snug text-white/50">
+                        Approve multiple drafts you have already reviewed — same path as Approvals page batch.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={draftBatchBusy}
+                        onClick={() => void handleBatchApproveDrafts()}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-white hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Check className="h-4 w-4" strokeWidth={2} aria-hidden />
+                        {draftBatchBusy ? "Approving…" : `Approve ${selectedDraftIdList.length} selected`}
+                      </button>
+                      {draftBatchProgress ? (
+                        <p className="text-[10px] text-white/45" aria-live="polite">
+                          {draftBatchProgress.done} / {draftBatchProgress.total} queued
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {draftBatchError ? (
+                    <p
+                      className="mb-2 whitespace-pre-wrap rounded-md border border-red-400/30 bg-red-950/40 px-3 py-2 text-[11px] text-red-200"
+                      role="alert"
+                    >
+                      {draftBatchError}
+                    </p>
+                  ) : null}
+                  <div
+                    ref={priorityListRef}
+                    className={cn(
+                      `overflow-hidden rounded-xl ${OBSIDIAN_GLASS}`,
+                      "outline-none focus-visible:ring-2 focus-visible:ring-white/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0a0a]",
+                    )}
+                    tabIndex={priorityRovingIndex === null ? 0 : -1}
+                    role="listbox"
+                    aria-label="Priority actions"
+                    aria-activedescendant={
+                      activePriorityRowId ? `zen-priority-action-${activePriorityRowId}` : undefined
+                    }
+                    onKeyDownCapture={handlePriorityListKeyDownCapture}
+                  >
                     <div className="flex flex-col">
                       {actionItems.map((item, i) => {
+                        const isEscalation = item.kind === "escalation";
+                        const isDraftRow = Boolean(item.draftSourceId);
+                        const draftChecked = item.draftSourceId ? selectedDraftIds.has(item.draftSourceId) : false;
                         const initials = getInitials(item.detail || item.label);
                         const age = formatRelativeTime(item.createdAt);
                         const ink = fadingInk(item.createdAt);
                         const isLast = i === actionItems.length - 1;
                         return (
                           <MagneticRow key={item.id}>
-                            <motion.button
-                              type="button"
-                              initial={{ opacity: 0, y: 8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ duration: 0.35, delay: 0.4 + i * 0.06, ease: "easeOut" }}
-                              onClick={() => {
-                                if (item.kind === "message" && item.threadId) {
-                                  navigate(`/inbox?threadId=${item.threadId}`);
-                                } else if (item.kind === "draft" && item.threadId) {
-                                  navigate(`/inbox?threadId=${item.threadId}&action=review_draft`);
-                                } else if (item.kind === "task" && item.weddingId) {
-                                  navigate(`/pipeline/${item.weddingId}?openTask=${item.taskId}`);
-                                } else if (item.kind === "task") {
-                                  navigate("/pipeline");
-                                }
-                              }}
-                              className={`relative flex w-full cursor-pointer items-center gap-4 py-3.5 pr-3 pl-4 text-left transition-colors duration-200 hover:bg-white/[0.06]${isLast ? "" : " border-b border-white/10"}`}
+                            <div
+                              data-zen-priority-row={item.id}
+                              className={cn(
+                                "relative flex w-full items-stretch",
+                                isDraftRow && draftChecked ? "bg-white/[0.04]" : "",
+                                priorityRovingIndex === i && "z-[1] ring-2 ring-inset ring-white/25",
+                              )}
                             >
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/95 text-[11px] font-semibold text-[#0a0a0a] shadow-[inset_0_1px_0_rgba(255,255,255,1),0_1px_3px_rgba(0,0,0,0.1)]">
-                                {initials}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className={`truncate text-[13px] font-medium ${ink.name}`}>
-                                  {item.detail || "Unknown"}
-                                  <span className={`ml-2 text-[11px] font-normal ${ink.age}`}>
-                                    • {age}
-                                  </span>
-                                </p>
-                                <p className={`mt-0.5 truncate text-[12px] ${ink.snippet}`}>
-                                  {item.label}
-                                </p>
-                              </div>
-                              <LandingGlassPill tone="light" className="shrink-0" innerClassName="gap-1.5 font-normal">
-                                <span
-                                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500"
-                                  style={{ animation: "waiting-dot 2s ease-in-out infinite" }}
-                                />
-                                {item.status}
-                              </LandingGlassPill>
-                            </motion.button>
+                              {isDraftRow && item.draftSourceId ? (
+                                <div
+                                  className="flex shrink-0 items-start pt-4 pl-3"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-white/25 bg-white/10"
+                                    checked={draftChecked}
+                                    onChange={() => {
+                                      setPriorityRovingIndex(i);
+                                      toggleDraftSelected(item.draftSourceId!);
+                                    }}
+                                    disabled={draftBatchBusy}
+                                    aria-label={`Select draft ${item.label}`}
+                                  />
+                                </div>
+                              ) : null}
+                              <motion.button
+                                ref={(el) => {
+                                  priorityRowActionRefs.current[i] = el;
+                                }}
+                                id={`zen-priority-action-${item.id}`}
+                                type="button"
+                                role="option"
+                                tabIndex={priorityRovingIndex === i ? 0 : -1}
+                                aria-selected={priorityRovingIndex === i}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.35, delay: 0.4 + i * 0.06, ease: "easeOut" }}
+                                onClick={() => {
+                                  setPriorityRovingIndex(i);
+                                  navigate(item.routeTo);
+                                }}
+                                aria-label={
+                                  isEscalation
+                                    ? `Escalation, blocked decision: ${item.label}`
+                                    : undefined
+                                }
+                                className={cn(
+                                  "relative flex min-w-0 flex-1 cursor-pointer items-center gap-4 py-3.5 pr-3 pl-2 text-left transition-colors duration-200",
+                                  "outline-none focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
+                                  isEscalation
+                                    ? "border-l-2 border-l-amber-400/75 bg-gradient-to-r from-amber-500/[0.09] via-amber-500/[0.03] to-transparent hover:from-amber-500/[0.12] hover:via-amber-500/[0.05]"
+                                    : "hover:bg-white/[0.06]",
+                                  isLast ? "" : "border-b border-white/10",
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full shadow-[inset_0_1px_0_rgba(255,255,255,1),0_1px_3px_rgba(0,0,0,0.1)]",
+                                    isEscalation
+                                      ? "border border-amber-400/45 bg-gradient-to-br from-amber-400/25 to-rose-950/40 text-amber-200"
+                                      : "bg-white/95 text-[11px] font-semibold text-[#0a0a0a]",
+                                  )}
+                                >
+                                  {isEscalation ? (
+                                    <AlertTriangle className="h-4 w-4" strokeWidth={2} aria-hidden />
+                                  ) : (
+                                    initials
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className={`truncate text-[13px] font-medium ${ink.name}`}>
+                                    {item.detail || "Unknown"}
+                                    <span className={`ml-2 text-[11px] font-normal ${ink.age}`}>
+                                      • {age}
+                                    </span>
+                                  </p>
+                                  {isEscalation ? (
+                                    <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-amber-300/90">
+                                      Needs your approval
+                                    </p>
+                                  ) : null}
+                                  <p className={`mt-0.5 truncate text-[12px] ${ink.snippet}`}>
+                                    {item.label}
+                                  </p>
+                                </div>
+                                <LandingGlassPill
+                                  tone="light"
+                                  className={cn(
+                                    "shrink-0",
+                                    isEscalation &&
+                                      "border border-amber-400/30 bg-[#1a0f08]/85 text-amber-50 shadow-[inset_0_1px_0_rgba(251,191,36,0.2)]",
+                                  )}
+                                  innerClassName="gap-1.5 font-normal"
+                                >
+                                  <span
+                                    className={cn(
+                                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                                      isEscalation ? "bg-amber-400" : "bg-orange-500",
+                                    )}
+                                    style={
+                                      isEscalation
+                                        ? undefined
+                                        : { animation: "waiting-dot 2s ease-in-out infinite" }
+                                    }
+                                  />
+                                  {isEscalation ? ZEN_LOBBY_ESCALATION_ROW_BADGE : item.status}
+                                </LandingGlassPill>
+                              </motion.button>
+                            </div>
                           </MagneticRow>
                         );
                       })}
@@ -759,6 +1040,24 @@ export function ZenLobby() {
         </div>
 
       </div>
+
+      {urlEscalationId ? (
+        <div className="fixed bottom-6 left-1/2 z-[60] w-[min(100%,28rem)] -translate-x-1/2 px-4">
+          <EscalationResolutionPanel
+            escalationId={urlEscalationId}
+            onResolved={() => {
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("escalationId");
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

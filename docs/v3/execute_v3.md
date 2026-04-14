@@ -22,6 +22,92 @@ This plan also assumes one non-negotiable trust requirement:
 
 - one photographer must never receive, query, draft, send, or view another photographer's data
 
+## 1.1 Current Slice Tracker
+
+This section is the short operational tracker for active V3 slices so we can see, at a glance, what is done, what is next, and what is intentionally deferred.
+
+### Done Recently
+
+- Inquiry-writing hardening is green enough for this phase:
+  - budget-sensitive inquiry turns use deterministic injection when verified minimum pricing exists
+  - budget-sensitive inquiry turns fail closed when pricing data is missing
+  - weak availability inquiry replies now pass hosted proof without leaking booking/payment mechanics
+  - consultation-first inquiry replies are less funnel-like while staying within policy
+- Decision-context retrieval has been upgraded:
+  - deterministic case-memory promotion fills `selectedMemories`
+  - bounded `globalKnowledge` retrieval fills `globalKnowledge`
+  - retrieval gating skips unnecessary `knowledge_base` reads
+  - `DecisionContext.retrievalTrace` records selected ids, loaded ids, counts, and gate outcome
+- Verifier is now a typed pre-generation policy gate:
+  - richer audience / playbook / escalation / memory-summary-aware checks
+  - explicit stage output (`allow_auto`, `draft_only`, `escalate`, `block`)
+  - closed verifier reason-code set
+  - explicit halt-before-external-send semantics for `draft_only`
+- Orchestrator context injection is live:
+  - orchestrator consumes bounded `selectedMemories`, `globalKnowledge`, and `retrievalTrace` through `OrchestratorContextInjection`
+  - writer firewall remains intact; persona still receives only approved facts / constraints
+- Authorized case exceptions are live:
+  - schema/runtime support exists for case-specific approved exceptions
+  - effective playbook merge is deterministic and auditable
+  - replay and report output surface effective-policy diffs and active exception counts
+- Real-thread replay is now a meaningful proof harness:
+  - replay scenarios run against the upgraded runtime with deterministic cleanup
+  - synthetic playbook rules, exceptions, and scenario-specific verify-notes are scenario-scoped
+  - hosted reports now show cleaner per-scenario behavior without cross-scenario synthetic leakage
+- Hosted proof coverage is broader:
+  - direct hosted replay of `executeClientOrchestratorV1Core` is green with current schema
+  - true Inngest event-path proof exists for `ai/orchestrator.client.v1` and confirms the deployed worker runs end-to-end
+- CRM package inclusions foundation is live:
+  - `weddings.package_inclusions` is migrated and typed
+  - `crmSnapshot.package_inclusions` is loaded into decision context
+  - deterministic helpers exist, ready for orchestrator use in later slices
+- First package-inclusions behavior slice is live:
+  - orchestrator can ground travel and second-shooter inclusion replies from `crmSnapshot.package_inclusions`
+  - grounded facts flow through `OrchestratorContextInjection` / proposal rationale without widening the persona CRM block
+  - current intent detection is intentionally narrow and deterministic; it is a bootstrap layer, not the final enterprise contract-scope model
+
+### Next Slices
+
+1. Structured contract-scope / inclusion intent model
+   - replace phrase-level bootstrap detection for package inclusions with a broader structured contract-scope question model
+   - keep inclusion truth grounded in CRM / effective policy, not inferred from package name, contract value, or casual phrasing alone
+2. Multi-actor authority refinement
+   - improve third-party change handling when planner/payer/signer authority diverges
+   - make signer / approval-contact confirmation requirements explicit in candidate selection and writer guidance
+3. Operator control lane
+   - complete photographer-side resolution flows through WhatsApp and/or dashboard/API for approvals, exceptions, and blocked actions
+   - ensure operator replies write back to the correct durable layer (`playbook_rules`, case exception, memory, or open escalation state)
+4. Production explainability / telemetry
+   - surface clearer operator-facing reasons for `draft_only`, escalation, exception hits, and retrieval evidence
+   - tighten rollout confidence with production-safe observability
+5. Learning loop writeback
+   - classify photographer answers into reusable rule vs case-specific exception vs unresolved follow-up
+   - store the answer in one authoritative place instead of leaving it buried in freeform conversation
+6. Automation / pause hardening
+   - re-check pause flags and thread state after sleeps
+   - make follow-up workflows safe under retries, stale drafts, and delayed replies
+7. Email ingestion and historical project import
+   - add Gmail-first email integration, followed by custom IMAP support, into one normalized internal thread/message model
+   - support staged import of already-active weddings / inquiries from connected inboxes without polluting canonical `weddings` / `threads` before review
+   - prefer background sync/import jobs and human-reviewed import candidates over direct AI writes into canonical CRM state
+8. Inbox product overhaul
+   - replace the current inbox with a Gmail-class operator inbox experience
+   - support labels/folders, thread grouping, import review, and merge / attach-to-existing controls for imported projects
+9. Frontend operator surfaces and cutover readiness
+   - finish operator-facing controls for escalations, overrides, pauses, and playbook promotion
+   - keep legacy routing until replay, telemetry, and operator-lane exit criteria are satisfied
+
+### Deferred / Later
+
+- Anthropic prompt-cache stabilization
+  - useful cost/latency optimization, but not a core correctness blocker for V3 right now
+- Memory scoring / hygiene / decay
+  - useful after retrieval and verifier behavior are proven on real threads
+- Broader package-inclusion semantics
+  - expand beyond the first narrow inclusions after travel / second-shooter behavior and contract-scope detection are proven
+- Historical inbox import expansion
+  - after Gmail-first import is proven, broaden staged discovery / grouping / review flows for custom IMAP and larger backfills
+
 ## 2. Prime Directive
 
 ### 2.1 Build Additively
@@ -494,6 +580,36 @@ The implementation is only complete when onboarding answers are mapped into:
 - `playbook_rules`
 
 in structured form the runtime can actually query.
+
+### Step 4G (unresolved)
+
+Add onboarding support for photographer-specific **inquiry progression preferences** without hardcoding one global inquiry flow.
+
+Examples of the policy family we need to support later:
+
+- consultation first
+- send base packages first
+- qualify first before pricing
+- brochure or package overview before call
+- budget-gap communication preference
+
+Photographers should be able to express these preferences in their own words during onboarding, but runtime must not consume that raw prose directly.
+
+The onboarding flow should:
+
+- capture the photographer's freeform preference
+- normalize it into stable canonical policy categories
+- store the reusable studio-wide behavior in `playbook_rules`
+- keep raw onboarding wording only as source/audit material if needed
+
+Do not put this into:
+
+- `photographers.settings`
+- `lead_acceptance_rules`
+- raw `knowledge_base`
+- wedding-specific or thread-specific exceptions
+
+This remains unresolved until we define the canonical category set and the onboarding-to-policy normalization path.
 
 ## [ ] Phase 5: Decision Context Builder
 

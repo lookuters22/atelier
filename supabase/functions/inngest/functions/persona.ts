@@ -22,6 +22,13 @@ import {
   anthropicMessagesHeadersWithPromptCaching,
   cachedEphemeralSystemBlocks,
 } from "../../_shared/persona/anthropicPromptCache.ts";
+import {
+  boundPersonaContextForModel,
+  truncatePersonaWorkerAssistantBlocks,
+  truncatePersonaWorkerRawFacts,
+  truncatePersonaWorkerToolOutput,
+  type PersonaWorkerAssistantBlock,
+} from "../../_shared/persona/personaWorkerA5Budget.ts";
 
 const MODEL = "claude-sonnet-4-20250514";
 
@@ -277,23 +284,25 @@ export const personaFunction = inngest.createFunction(
       } satisfies PersonaContext;
     });
 
-    const systemPrompt = buildSystemPrompt(ctx);
+    const ctxForModel = boundPersonaContextForModel(ctx);
+    const systemPrompt = buildSystemPrompt(ctxForModel);
 
     // ── Reasoning: writer/persona loop + bounded tool (RAG only) ──
     const draftResult = await step.run("writer-persona-rag-tool-loop", async () => {
       const metrics: ClaudeMetricsContext = { qa_sim_turn };
+      const rawFactsForModel = truncatePersonaWorkerRawFacts(String(raw_facts ?? ""));
       const messages: AnthropicMessage[] = [
         {
           role: "user",
           content: [
             `photographer_id: ${photographer_id}`,
-            `couple_names: ${ctx.coupleNames}`,
-            `wedding_date: ${ctx.weddingDate}`,
-            `location: ${ctx.location}`,
-            `stage: ${ctx.stage}`,
+            `couple_names: ${ctxForModel.coupleNames}`,
+            `wedding_date: ${ctxForModel.weddingDate}`,
+            `location: ${ctxForModel.location}`,
+            `stage: ${ctxForModel.stage}`,
             "",
             "## Raw Facts",
-            raw_facts,
+            rawFactsForModel,
           ].join("\n"),
         },
       ];
@@ -309,7 +318,12 @@ export const personaFunction = inngest.createFunction(
         const response = await callClaude(systemPrompt, messages, metrics);
         addUsage(response.usage);
 
-        messages.push({ role: "assistant", content: response.content });
+        messages.push({
+          role: "assistant",
+          content: truncatePersonaWorkerAssistantBlocks(
+            response.content as PersonaWorkerAssistantBlock[],
+          ) as ContentBlock[],
+        });
 
         if (response.stop_reason === "end_turn" || response.stop_reason === "max_tokens") {
           return {
@@ -340,7 +354,7 @@ export const personaFunction = inngest.createFunction(
           toolResults.push({
             type: "tool_result",
             tool_use_id: toolUse.id,
-            content: result,
+            content: truncatePersonaWorkerToolOutput(result),
           });
         }
 

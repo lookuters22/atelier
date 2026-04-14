@@ -13,6 +13,7 @@ import {
   WHATSAPP_OPERATOR_V1_SCHEMA_VERSION,
 } from "../_shared/inngest.ts";
 import { supabaseAdmin } from "../_shared/supabase.ts";
+import { tryIngestFirstComplianceAttachmentFromOperatorWhatsApp } from "../_shared/orchestrator/complianceAssetWhatsAppIngest.ts";
 import { verifyTwilioWebhookSignature } from "../_shared/twilio.ts";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -210,21 +211,25 @@ Deno.serve(async (req) => {
     let rawTo = "";
     let messageBody = "";
 
+    let numMedia = 0;
     if (rawPayload._format === "twilio_form") {
       const rec = rawPayload as unknown as Record<string, string>;
       rawFrom = rec.From ?? "";
       rawTo = rec.To ?? "";
       messageBody = rec.Body ?? "";
+      numMedia = parseInt(rec.NumMedia ?? "0", 10) || 0;
     } else {
       rawFrom = String(
         rawPayload.From ?? rawPayload.from ?? rawPayload.from_number ?? "",
       );
       rawTo = String(rawPayload.To ?? rawPayload.to ?? rawPayload.to_number ?? "");
       messageBody = String(rawPayload.Body ?? rawPayload.body ?? rawPayload.message ?? "");
+      numMedia = parseInt(String(rawPayload.NumMedia ?? rawPayload.numMedia ?? 0), 10) || 0;
     }
 
     const fromNumber = normalizePhone(rawFrom);
     const toNumber = normalizePhone(rawTo);
+    const hasTextBody = messageBody.trim().length > 0;
 
     console.log(
       "[webhook-whatsapp] Parsed -> from:",
@@ -233,12 +238,17 @@ Deno.serve(async (req) => {
       toNumber,
       "body length:",
       messageBody.length,
+      "numMedia:",
+      numMedia,
     );
 
-    if (!fromNumber || !messageBody) {
-      console.warn("[webhook-whatsapp] Missing From or Body, returning 400");
-      return respond({ error: "Missing From or Body" }, 400);
+    if (!fromNumber || (!hasTextBody && numMedia === 0)) {
+      console.warn("[webhook-whatsapp] Missing From or body/media, returning 400");
+      return respond({ error: "Missing From or message body/media" }, 400);
     }
+
+    /** `messages.body` is NOT NULL — placeholder when Twilio sends media with an empty `Body`. */
+    const bodyForDb = hasTextBody ? messageBody : "[media]";
 
     const resolved = await resolvePhotographerByStudioNumber(toNumber);
     if (!resolved) {
@@ -281,7 +291,7 @@ Deno.serve(async (req) => {
 
     const rawPayloadForDb: Record<string, unknown> = {
       ...rawPayload,
-      _parsed: { from: fromNumber, to: toNumber, body: messageBody },
+      _parsed: { from: fromNumber, to: toNumber, body: bodyForDb, numMedia },
       attachments,
     };
 
@@ -311,7 +321,7 @@ Deno.serve(async (req) => {
         photographer_id: photographerId,
         direction: "in",
         sender: fromNumber,
-        body: messageBody,
+        body: bodyForDb,
         raw_payload: rawPayloadForDb,
         provider_message_id: providerMessageId,
         idempotency_key: providerMessageId,
@@ -338,6 +348,28 @@ Deno.serve(async (req) => {
       });
     }
 
+    /** First attachment only — see `tryIngestFirstComplianceAttachmentFromOperatorWhatsApp`. */
+    const complianceIngest =
+      attachments.length > 0
+        ? await tryIngestFirstComplianceAttachmentFromOperatorWhatsApp(
+            supabaseAdmin,
+            photographerId,
+            attachments.map((a) => ({
+              index: a.index,
+              url: a.url,
+              contentType: a.contentType,
+            })),
+          )
+        : ({ status: "skipped" as const, reason: "no_attachments" } as const);
+    console.log(
+      JSON.stringify({
+        type: "webhook_whatsapp_compliance_ingest",
+        photographer_id: photographerId,
+        message_id: messageId,
+        ...complianceIngest,
+      }),
+    );
+
     await supabaseAdmin
       .from("threads")
       .update({ last_inbound_at: new Date().toISOString() })
@@ -349,14 +381,19 @@ Deno.serve(async (req) => {
         schemaVersion: WHATSAPP_OPERATOR_V1_SCHEMA_VERSION,
         photographerId,
         operatorFromNumber: fromNumber,
-        rawMessage: messageBody,
+        rawMessage: bodyForDb,
         lane: "operator",
       },
     });
 
     console.log("[webhook-whatsapp] Inngest send:", JSON.stringify(sendResult));
 
-    return respond({ ok: true, photographer_id: photographerId, message_id: messageId });
+    return respond({
+      ok: true,
+      photographer_id: photographerId,
+      message_id: messageId,
+      compliance_ingest: complianceIngest,
+    });
   } catch (err) {
     console.error("[webhook-whatsapp] Unhandled error:", err);
     return respond({ error: "Internal error" }, 500);

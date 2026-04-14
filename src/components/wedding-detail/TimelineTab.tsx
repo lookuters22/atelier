@@ -1,4 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { scrollPipelineWeddingRowIntoView } from "../../lib/pipelineWeddingListNavigation";
+import {
+  adjacentThreadId,
+  isEditableKeyboardTarget,
+  threadQueuePosition,
+  timelineThreadAltArrowDelta,
+} from "../../lib/timelineThreadNavigation";
 import {
   messageFoldKey,
   type WeddingThread,
@@ -55,6 +63,37 @@ export function TimelineTab({
 
   const threadId = activeThread?.id ?? "";
   const todayIds = useMemo(() => new Set(todayMessages.map((m) => m.id)), [todayMessages]);
+
+  const threadChipsWrapRef = useRef<HTMLDivElement>(null);
+
+  const threadQueuePos = useMemo(
+    () => threadQueuePosition(threads, activeThread?.id),
+    [threads, activeThread?.id],
+  );
+
+  useLayoutEffect(() => {
+    if (threads.length < 2 || !activeThread?.id) return;
+    const root = threadChipsWrapRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-timeline-thread-chip="${CSS.escape(activeThread.id)}"]`);
+    if (el instanceof HTMLElement) scrollPipelineWeddingRowIntoView(el);
+  }, [threads.length, activeThread?.id]);
+
+  useEffect(() => {
+    if (threads.length < 2) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const delta = timelineThreadAltArrowDelta(e);
+      if (delta === null) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      const id = adjacentThreadId(threads, activeThread?.id, delta);
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedThreadId(id);
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [threads, activeThread?.id, setSelectedThreadId]);
 
   const draftSlot = showDraft ? (
     <div className="flex justify-end gap-2.5">
@@ -122,27 +161,62 @@ export function TimelineTab({
               {activeThread.participantHint}
             </p>
           ) : null}
+          {threads.length > 1 && threadQueuePos ? (
+            <p className="mt-1 text-[11px] text-muted-foreground tabular-nums" aria-live="polite">
+              Thread {threadQueuePos.current} of {threadQueuePos.total}
+            </p>
+          ) : null}
         </div>
         {threads.length > 1 ? (
-          <div className="flex flex-wrap justify-center gap-1.5">
-            {threads.map((t) => {
-              const on = t.id === activeThread?.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setSelectedThreadId(t.id)}
-                  className={
-                    "rounded-full px-3 py-1 text-[11px] font-semibold transition " +
-                    (on
-                      ? "bg-foreground text-background"
-                      : "border border-border text-muted-foreground hover:border-border/80")
-                  }
-                >
-                  {t.title}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            <button
+              type="button"
+              title="Previous thread (Alt+←)"
+              aria-label="Previous thread"
+              onClick={() => {
+                const id = adjacentThreadId(threads, activeThread?.id, -1);
+                if (id) setSelectedThreadId(id);
+              }}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+            <div
+              ref={threadChipsWrapRef}
+              className="flex max-w-full flex-1 flex-wrap justify-center gap-1.5"
+            >
+              {threads.map((t) => {
+                const on = t.id === activeThread?.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    data-timeline-thread-chip={t.id}
+                    onClick={() => setSelectedThreadId(t.id)}
+                    className={
+                      "rounded-full px-3 py-1 text-[11px] font-semibold transition " +
+                      (on
+                        ? "bg-foreground text-background"
+                        : "border border-border text-muted-foreground hover:border-border/80")
+                    }
+                  >
+                    {t.title}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              title="Next thread (Alt+→)"
+              aria-label="Next thread"
+              onClick={() => {
+                const id = adjacentThreadId(threads, activeThread?.id, 1);
+                if (id) setSelectedThreadId(id);
+              }}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronRight className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
           </div>
         ) : null}
       </div>

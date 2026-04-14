@@ -45,6 +45,14 @@ function intakeReplyChannelForOrchestratorParity(
   return "email";
 }
 
+/** Pass intake lead email into orchestrator for IE2 B2B domain hints (email-shaped only). */
+function intakeOrchestratorInboundSender(senderEmail: string | undefined): { inboundSenderEmail?: string } {
+  if (typeof senderEmail !== "string") return {};
+  const t = senderEmail.trim();
+  if (!t.includes("@")) return {};
+  return { inboundSenderEmail: t };
+}
+
 export const intakeFunction = inngest.createFunction(
   { id: "intake-worker", name: "Intake Agent — Data Extractor & Researcher" },
   { event: "ai/intent.intake" },
@@ -99,6 +107,7 @@ export const intakeFunction = inngest.createFunction(
           threadId: records.threadId,
           replyChannel: "email",
           rawMessage: rawMessageStr,
+          ...intakeOrchestratorInboundSender(sender_email),
           requestedExecutionMode: "draft_only",
           intakeLiveCorrelationId,
           intakeLiveFanoutSource: "intake_post_bootstrap_live_email",
@@ -131,6 +140,7 @@ export const intakeFunction = inngest.createFunction(
           threadId: records.threadId,
           replyChannel: "web",
           rawMessage: rawMessageStr,
+          ...intakeOrchestratorInboundSender(sender_email),
           requestedExecutionMode: "draft_only",
           intakeLiveWebCorrelationId,
           intakeLiveWebFanoutSource: "intake_post_bootstrap_live_web",
@@ -162,6 +172,7 @@ export const intakeFunction = inngest.createFunction(
           threadId: records.threadId,
           replyChannel: parityReplyChannel,
           rawMessage: rawMessageStr,
+          ...intakeOrchestratorInboundSender(sender_email),
           requestedExecutionMode: "draft_only",
           intakeParityCorrelationId,
           intakeParityFanoutSource: "intake_post_bootstrap_parity",

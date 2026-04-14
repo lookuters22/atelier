@@ -1,5 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
+import { EscalationResolutionPanel } from "../../escalations/EscalationResolutionPanel";
 import { MessageSquare } from "lucide-react";
+import { supabase } from "../../../lib/supabase";
+import { fetchGmailImportHtmlForDisplay } from "../../../lib/gmailImportMessageMetadata";
+import {
+  INBOX_DRAFT_THREAD_NOT_ON_TIMELINE_MESSAGE,
+  resolvePendingThreadHandoff,
+} from "../../../lib/inboxDraftDeepLink";
 import { useInboxMode } from "./InboxModeContext";
 import {
   PipelineTimelinePane,
@@ -10,20 +18,70 @@ import { ConversationFeed, type ChatMessage } from "../../chat/ConversationFeed"
 import { UniversalComposeBox } from "../../chat/ComposeBar";
 
 export function InboxWorkspace() {
-  const { selection } = useInboxMode();
+  const { selection, inboxUrlNotice, setInboxUrlNotice } = useInboxMode();
+  const [searchParams] = useSearchParams();
+  const preferredTimelineThreadId =
+    searchParams.get("action") === "review_draft" ? searchParams.get("threadId") : null;
 
-  if (selection.kind === "none") return <IdleState />;
-  if (selection.kind === "thread") return <ThreadView />;
-  return (
-    <PipelineWeddingProviderByWeddingId weddingId={selection.projectId}>
+  const shell = (body: ReactNode) => (
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      {inboxUrlNotice ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-amber-200/90 bg-amber-50 px-4 py-2.5 text-[12px] leading-snug text-amber-950"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <span>{inboxUrlNotice}</span>
+            <button
+              type="button"
+              className="shrink-0 text-[12px] font-medium text-amber-900 underline underline-offset-2"
+              onClick={() => setInboxUrlNotice(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
+    </div>
+  );
+
+  if (selection.kind === "none") return shell(<IdleState />);
+  if (selection.kind === "thread") return shell(<ThreadView />);
+  return shell(
+    <PipelineWeddingProviderByWeddingId
+      weddingId={selection.projectId}
+      preferredTimelineThreadId={preferredTimelineThreadId}
+    >
       <InboxProjectPipelineChat />
-    </PipelineWeddingProviderByWeddingId>
+    </PipelineWeddingProviderByWeddingId>,
   );
 }
 
 /** Matches Pipeline center pane: tabs, TimelineTab, draft approval, inline reply, composer modal. */
 function InboxProjectPipelineChat() {
+  const { pendingInboxPipelineThreadId, setPendingInboxPipelineThreadId, setInboxUrlNotice } = useInboxMode();
   const state = usePipelineWedding();
+
+  /** Layout phase so target thread wins before `useWeddingThreads`’s effect can default to `threads[0]`. */
+  useLayoutEffect(() => {
+    if (!state || !pendingInboxPipelineThreadId) return;
+    const { threadState } = state;
+    const timelineIds = threadState.threads.map((t) => t.id);
+    const outcome = resolvePendingThreadHandoff(pendingInboxPipelineThreadId, timelineIds);
+    if (!outcome) {
+      setPendingInboxPipelineThreadId(null);
+      return;
+    }
+    if (outcome.kind === "abandon_with_notice") {
+      setInboxUrlNotice(INBOX_DRAFT_THREAD_NOT_ON_TIMELINE_MESSAGE);
+      setPendingInboxPipelineThreadId(null);
+      return;
+    }
+    threadState.setSelectedThreadId(outcome.threadId);
+    setPendingInboxPipelineThreadId(null);
+  }, [state, pendingInboxPipelineThreadId, setPendingInboxPipelineThreadId, setInboxUrlNotice]);
+
   if (!state) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
@@ -47,22 +105,42 @@ function IdleState() {
 
 function ThreadView() {
   const { selection } = useInboxMode();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const escalationId = searchParams.get("escalationId");
   const [reply, setReply] = useState("");
+  const [lazyHtml, setLazyHtml] = useState<string | null>(null);
 
   if (selection.kind !== "thread") return null;
   const thread = selection.thread;
 
+  useEffect(() => {
+    setLazyHtml(null);
+    if (thread.latestMessageHtmlSanitized || !thread.gmailRenderHtmlRef) return;
+    let cancelled = false;
+    void fetchGmailImportHtmlForDisplay(supabase, thread.gmailRenderHtmlRef).then((html) => {
+      if (!cancelled && html) setLazyHtml(html);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [thread.id, thread.latestMessageHtmlSanitized, thread.gmailRenderHtmlRef]);
+
+  const bodyHtml = thread.latestMessageHtmlSanitized ?? lazyHtml;
+
   const earlier: ChatMessage[] = useMemo(
     () => [
       {
-        id: thread.id,
+        id: thread.latestMessageId ?? thread.id,
         direction: "in" as const,
         sender: thread.sender || "Unknown",
-        body: thread.snippet || "No message content available.",
+        body: thread.latestMessageBody?.trim() || thread.snippet || "No message content available.",
+        bodyHtmlSanitized: bodyHtml,
+        attachments:
+          thread.latestMessageAttachments.length > 0 ? thread.latestMessageAttachments : undefined,
         time: "Received",
       },
     ],
-    [thread],
+    [thread, bodyHtml],
   );
 
   return (
@@ -94,6 +172,24 @@ function ThreadView() {
           </p>
         </div>
       )}
+
+      {escalationId ? (
+        <div className="mx-5 mb-3 shrink-0">
+          <EscalationResolutionPanel
+            escalationId={escalationId}
+            onResolved={() => {
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("escalationId");
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+          />
+        </div>
+      ) : null}
 
       <UniversalComposeBox value={reply} onChange={setReply} placeholder="Reply to thread\u2026" />
     </div>

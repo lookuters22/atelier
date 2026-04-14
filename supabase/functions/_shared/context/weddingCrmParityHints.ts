@@ -17,7 +17,7 @@ export function buildWeddingCrmParityHints(
   weddingId: string | null,
   crmSnapshot: AgentContext["crmSnapshot"],
 ): WeddingCrmParityHints | null {
-  if (!weddingId || !crmSnapshot || Object.keys(crmSnapshot).length === 0) {
+  if (!weddingId || !crmSnapshot) {
     return null;
   }
   const sid = crmSnapshot.id;

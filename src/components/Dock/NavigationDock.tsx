@@ -9,7 +9,6 @@ import {
   Briefcase,
   Users,
   Settings,
-  AlertCircle,
 } from "lucide-react";
 import { FloatingDock, type DockItem } from "./FloatingDock";
 import { useAuth } from "../../context/AuthContext";
@@ -90,34 +89,28 @@ export function NavigationDock() {
   const handleMouseLeaveDock = useCallback(() => setIsHovering(false), []);
 
   const dockItems: DockItem[] = useMemo(() => {
-    const mapItem = (item: (typeof NAV_ITEMS)[number]): DockItem => ({
-      title: item.label,
-      icon: <item.icon className="size-[1em] shrink-0" strokeWidth={1.35} aria-hidden />,
-      href: item.to,
-      active: item.match(pathname),
-      onClick: () => navigate(item.to),
-    });
-
-    const escalationIcon = (
-      <span className="relative inline-flex items-center justify-center" aria-hidden>
-        <AlertCircle className="size-[1em] shrink-0" strokeWidth={1.35} />
-        {openEscalationsCount != null && openEscalationsCount > 0 ? (
-          <span className="absolute -right-2 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white tabular-nums shadow-sm">
-            {openEscalationsCount > 99 ? "99+" : openEscalationsCount}
+    return NAV_ITEMS.map((item) => {
+      const isHome = item.to === "/today";
+      const iconNode =
+        isHome && openEscalationsCount != null && openEscalationsCount > 0 ? (
+          <span className="relative inline-flex items-center justify-center" aria-hidden>
+            <item.icon className="size-[1em] shrink-0" strokeWidth={1.35} />
+            <span className="absolute -right-2 -top-1.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white tabular-nums shadow-sm">
+              {openEscalationsCount > 99 ? "99+" : openEscalationsCount}
+            </span>
           </span>
-        ) : null}
-      </span>
-    );
+        ) : (
+          <item.icon className="size-[1em] shrink-0" strokeWidth={1.35} aria-hidden />
+        );
 
-    const escalationsItem: DockItem = {
-      title: "Escalations",
-      icon: escalationIcon,
-      href: "/escalations",
-      active: pathname.startsWith("/escalations"),
-      onClick: () => navigate("/escalations"),
-    };
-
-    return [...NAV_ITEMS.slice(0, 2).map(mapItem), escalationsItem, ...NAV_ITEMS.slice(2).map(mapItem)];
+      return {
+        title: item.label,
+        icon: iconNode,
+        href: item.to,
+        active: item.match(pathname),
+        onClick: () => navigate(item.to),
+      };
+    });
   }, [navigate, pathname, openEscalationsCount]);
 
   const isVisible = !isFocusMode || isHovering;

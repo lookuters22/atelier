@@ -18,6 +18,7 @@ import {
   buildAuthoritativeCommercialContext,
 } from "../supabase/functions/_shared/orchestrator/auditDraftCommercialTerms.ts";
 import type { DecisionContext, PlaybookRuleContextRow } from "../src/types/decisionContext.types.ts";
+import { emptyCrmSnapshot } from "../src/types/crmSnapshot.types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -335,16 +336,41 @@ function minimalDecisionContext(over: Partial<DecisionContext> = {}): DecisionCo
     threadId: "t",
     replyChannel: "email",
     rawMessage: "",
-    crmSnapshot: { package_name: "Elite collection" },
+    crmSnapshot: { ...emptyCrmSnapshot(), package_name: "Elite collection" },
     recentMessages: [],
     threadSummary: null,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
-    audience: { broadcastRisk: "low" },
+    audience: {
+      threadParticipants: [],
+      agencyCcLock: null,
+      broadcastRisk: "low",
+      recipientCount: 0,
+      visibilityClass: "client_visible",
+      clientVisibleForPrivateCommercialRedaction: true,
+      approvalContactPersonIds: [],
+    },
     candidateWeddingIds: [],
+    rawPlaybookRules: [],
+    authorizedCaseExceptions: [],
     playbookRules: [],
     threadDraftsSummary: null,
+    inboundSenderIdentity: null,
+    inboundSenderAuthority: {
+      bucket: "unknown",
+      personId: null,
+      isApprovalContact: false,
+      source: "unresolved",
+    },
+    retrievalTrace: {
+      selectedMemoryIdsResolved: [],
+      selectedMemoriesLoadedCount: 0,
+      globalKnowledgeIdsLoaded: [],
+      globalKnowledgeLoadedCount: 0,
+      globalKnowledgeFetch: "skipped_by_gate",
+      globalKnowledgeGateDetail: "skipped_no_heuristic_signal",
+    },
     ...over,
   } as DecisionContext;
 }

@@ -1,52 +1,187 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import { findDraftForInboxHydration } from "../../../lib/todayActionFeed";
+import {
+  INBOX_DRAFT_MISSING_WEDDING_MESSAGE,
+  INBOX_UNRESOLVED_DRAFT_MESSAGE,
+  hasUsableDraftWeddingId,
+} from "../../../lib/inboxDraftDeepLink";
+import {
+  persistInboxDeepLinkPayload,
+  resolveInboxDeepLinkPayload,
+  clearPersistedInboxDeepLink,
+} from "../../../lib/inboxDeepLinkPersistence";
+import {
+  shouldSkipInboxHydrationApply,
+  shouldStripInboxUrlAfterDraftReviewHydration,
+  shouldStripInboxUrlAfterUnfiledThreadHydration,
+  signatureForInboxDeepLinkPayload,
+} from "../../../lib/inboxUrlHydrationPolicy";
 import { useUnfiledInbox } from "../../../hooks/useUnfiledInbox";
 import { usePendingApprovals } from "../../../hooks/usePendingApprovals";
+import { fetchThreadRowForEscalationDeepLink } from "../../../lib/inboxEscalationDeepLink";
 import { useInboxMode } from "./InboxModeContext";
 
 export function InboxUrlHydrator() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { selectThread, selectProject } = useInboxMode();
-  const { unfiledThreads, isLoading: threadsLoading } = useUnfiledInbox();
-  const { drafts, isLoading: draftsLoading } = usePendingApprovals();
-  const hydrated = useRef(false);
+  const { selectThread, selectProject, setPendingInboxPipelineThreadId, setInboxUrlNotice } = useInboxMode();
+  const { inboxThreads, isLoading: threadsLoading } = useUnfiledInbox();
+  const { drafts, isLoading: draftsLoading, error: draftsError } = usePendingApprovals();
+  /** Same URL must not re-apply project + pending handoff on every drafts rerender (collapses selection to first thread). */
+  const processedDeepLinkSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (hydrated.current) return;
+    let cancelled = false;
 
-    const threadId = searchParams.get("threadId");
-    if (!threadId) return;
+    const payload = resolveInboxDeepLinkPayload(searchParams);
+    if (!payload?.threadId) {
+      processedDeepLinkSignatureRef.current = null;
+      return;
+    }
 
-    const action = searchParams.get("action");
-    const isDraftReview = action === "review_draft";
+    const payloadSignature = signatureForInboxDeepLinkPayload(payload);
+
+    if (searchParams.get("threadId")) {
+      persistInboxDeepLinkPayload(payload);
+    }
+
+    /** Strip persisted mirror + search params only on terminal failure (success keeps canonical URL). */
+    const stripDeepLinkFromUrlAndSession = () => {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        clearPersistedInboxDeepLink();
+        setSearchParams({}, { replace: true });
+      });
+    };
+
+    const isDraftReview = payload.action === "review_draft";
 
     if (isDraftReview) {
       if (draftsLoading) return;
 
-      const draft = drafts.find((d) => d.id === threadId);
-      if (draft) {
-        selectProject(draft.wedding_id, draft.couple_names);
+      if (draftsError) {
+        setInboxUrlNotice(`Could not load pending drafts: ${draftsError}`);
+        processedDeepLinkSignatureRef.current = null;
+        stripDeepLinkFromUrlAndSession();
+        return () => {
+          cancelled = true;
+        };
       }
-    } else {
-      if (threadsLoading) return;
 
-      const thread = unfiledThreads.find((t) => t.id === threadId);
-      if (thread) {
-        selectThread(thread);
+      const draft = findDraftForInboxHydration(drafts, {
+        threadId: payload.threadId,
+        draftId: payload.draftId,
+      });
+      const hasWedding = draft ? hasUsableDraftWeddingId(draft.wedding_id) : false;
+
+      if (
+        shouldStripInboxUrlAfterDraftReviewHydration({
+          draftsFetchError: false,
+          draftFound: Boolean(draft),
+          hasUsableWeddingId: hasWedding,
+        })
+      ) {
+        if (draft && !hasWedding) {
+          setInboxUrlNotice(INBOX_DRAFT_MISSING_WEDDING_MESSAGE);
+        } else if (!draft) {
+          setInboxUrlNotice(INBOX_UNRESOLVED_DRAFT_MESSAGE);
+        }
+        processedDeepLinkSignatureRef.current = null;
+        stripDeepLinkFromUrlAndSession();
+        return () => {
+          cancelled = true;
+        };
+      }
+
+      if (shouldSkipInboxHydrationApply(processedDeepLinkSignatureRef.current, payloadSignature)) {
+        return () => {
+          cancelled = true;
+        };
+      }
+      processedDeepLinkSignatureRef.current = payloadSignature;
+
+      selectProject(draft!.wedding_id, draft!.couple_names);
+      /** Canonical URL `threadId` drives handoff (matches `preferredTimelineThreadId` in pipeline). */
+      if (payload.threadId) {
+        setPendingInboxPipelineThreadId(payload.threadId);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (threadsLoading) return;
+
+    const thread = inboxThreads.find((t) => t.id === payload.threadId);
+    const escalationId = searchParams.get("escalationId");
+
+    if (!thread) {
+      if (escalationId) {
+        if (shouldSkipInboxHydrationApply(processedDeepLinkSignatureRef.current, payloadSignature)) {
+          return () => {
+            cancelled = true;
+          };
+        }
+        processedDeepLinkSignatureRef.current = payloadSignature;
+        void (async () => {
+          const mapped = await fetchThreadRowForEscalationDeepLink(payload.threadId);
+          if (cancelled) return;
+          if (!mapped) {
+            processedDeepLinkSignatureRef.current = null;
+            stripDeepLinkFromUrlAndSession();
+            return;
+          }
+          selectThread(mapped);
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }
+      if (shouldStripInboxUrlAfterUnfiledThreadHydration(true)) {
+        processedDeepLinkSignatureRef.current = null;
+        stripDeepLinkFromUrlAndSession();
+        return () => {
+          cancelled = true;
+        };
       }
     }
 
-    hydrated.current = true;
-    setSearchParams({}, { replace: true });
+    if (shouldStripInboxUrlAfterUnfiledThreadHydration(Boolean(thread))) {
+      processedDeepLinkSignatureRef.current = null;
+      stripDeepLinkFromUrlAndSession();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (shouldSkipInboxHydrationApply(processedDeepLinkSignatureRef.current, payloadSignature)) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    processedDeepLinkSignatureRef.current = payloadSignature;
+    if (!thread) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    selectThread(thread);
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     searchParams,
     setSearchParams,
-    unfiledThreads,
+    inboxThreads,
     threadsLoading,
     drafts,
     draftsLoading,
+    draftsError,
     selectThread,
     selectProject,
+    setPendingInboxPipelineThreadId,
+    setInboxUrlNotice,
   ]);
 
   return null;

@@ -9,6 +9,7 @@
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
 import { buildAgentContext } from "../../_shared/memory/buildAgentContext.ts";
 import { inngest } from "../../_shared/inngest.ts";
+import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 
@@ -132,6 +133,9 @@ export const calendarRemindersFunction = inngest.createFunction(
 
       if (v24.ok) {
         await step.run("draft-24h-reminder", async () => {
+          if (await isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId)) {
+            return { skipped: true as const, reason: "v3_operator_hold" as const };
+          }
           const agentContext: AgentContext = await buildAgentContext(
             supabaseAdmin,
             photographerId,
@@ -227,6 +231,9 @@ export const calendarRemindersFunction = inngest.createFunction(
 
       if (v1.ok) {
         await step.run("draft-1h-reminder", async () => {
+          if (await isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId)) {
+            return;
+          }
           const agentContext: AgentContext = await buildAgentContext(
             supabaseAdmin,
             photographerId,

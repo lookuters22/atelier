@@ -4,7 +4,14 @@
  */
 import type { PlaybookRuleContextRow } from "../../../../src/types/decisionContext.types.ts";
 
-function playbookHasVerifiedDepositOrRetainerPercent(playbookBlob: string): boolean {
+/** Lowercased concatenation of active playbook topics + instructions (same shape as unknown-signal audit). */
+export function buildActivePlaybookInstructionBlob(rules: PlaybookRuleContextRow[]): string {
+  const activeRules = rules.filter((r) => r.is_active !== false);
+  return activeRules.map((r) => `${r.topic ?? ""} ${r.instruction ?? ""}`).join("\n").toLowerCase();
+}
+
+/** True when playbook text carries a verifiable deposit/retainer-style percentage in commercial context. */
+export function playbookHasVerifiedDepositOrRetainerPercent(playbookBlob: string): boolean {
   if (!playbookBlob.trim()) return false;
   if (!/\b(\d{1,2}|100)\s*%|\b\d+\s*(?:percent|pct)\b/i.test(playbookBlob)) return false;
   return /\bretainer|deposit|booking|hold\b|invoice|balance\s+due|installment|payment\s+schedule|milestone|second\s+payment|third\s+payment|final\s+payment|due\s+at/i.test(
@@ -20,11 +27,26 @@ function playbookHasVerifiedTravelDistance(playbookBlob: string): boolean {
   );
 }
 
-function playbookHasVerifiedPaymentSchedulePercents(playbookBlob: string): boolean {
+/** True when playbook text ties schedule/installment language to verifiable % figures (deterministic). */
+export function playbookHasVerifiedPaymentSchedulePercents(playbookBlob: string): boolean {
   if (!playbookBlob.trim()) return false;
   if (!/\b(\d{1,2}|100)\s*%|\b\d+\s*(?:percent|pct)\b/i.test(playbookBlob)) return false;
   return /installment|payment\s+schedule|milestone|second\s+payment|third\s+payment|split|balance|tranche|remainder/i.test(
     playbookBlob,
+  );
+}
+
+/**
+ * **Specific payment-term grounding** in the playbook instruction blob (deterministic pattern match):
+ * ties numeric % to deposit/retainer/hold/invoice language and/or to installment / payment-schedule language.
+ *
+ * This is **not** “financial existence” (e.g. total contract value or balance due on CRM) — those are
+ * handled separately from payment-term specificity for starvation and policy gates.
+ */
+export function playbookBlobHasSpecificPaymentTermsGrounding(playbookBlob: string): boolean {
+  return (
+    playbookHasVerifiedDepositOrRetainerPercent(playbookBlob) ||
+    playbookHasVerifiedPaymentSchedulePercents(playbookBlob)
   );
 }
 
@@ -33,8 +55,8 @@ export function buildUnknownPolicySignals(
   playbookRules: PlaybookRuleContextRow[],
   rawMessage: string,
 ): string[] {
+  const blob = buildActivePlaybookInstructionBlob(playbookRules);
   const activeRules = playbookRules.filter((r) => r.is_active !== false);
-  const blob = activeRules.map((r) => `${r.topic ?? ""} ${r.instruction ?? ""}`).join("\n").toLowerCase();
   const raw = rawMessage.toLowerCase();
   const out: string[] = [];
 

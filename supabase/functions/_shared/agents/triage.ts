@@ -6,6 +6,8 @@
  * Set OPENAI_API_KEY in Supabase Edge Function secrets.
  */
 
+import { truncateTriageUserMessage } from "../triageA5Budget.ts";
+
 export type TriageIntent =
   | "intake"
   | "commercial"
@@ -35,8 +37,15 @@ Classify the user message into exactly one of these categories:
 Respond with ONLY the single lowercase category string. No punctuation, no explanation.`;
 
 export async function runTriageAgent(messageText: string): Promise<TriageIntent> {
+  const inboundTrim = String(messageText ?? "").trim();
+  if (!inboundTrim) {
+    return "concierge";
+  }
+
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+  const userForModel = truncateTriageUserMessage(String(messageText ?? ""));
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -50,7 +59,7 @@ export async function runTriageAgent(messageText: string): Promise<TriageIntent>
       max_tokens: 10,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: messageText },
+        { role: "user", content: userForModel },
       ],
     }),
   });

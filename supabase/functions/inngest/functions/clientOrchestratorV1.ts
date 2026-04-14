@@ -115,7 +115,12 @@ import {
   logIntakePostBootstrapParityObservationRecord,
   parseIntakePostBootstrapParityFromEventData,
 } from "../../_shared/orchestrator/intakePostBootstrapOrchestratorObservationRecord.ts";
+import { applyMissingComplianceAssetOperatorProposals } from "../../_shared/orchestrator/complianceAssetMissingCapture.ts";
+import { syncComplianceWhatsAppPendingCollectState } from "../../_shared/orchestrator/complianceWhatsAppPendingCollect.ts";
 import { maybeRewriteOrchestratorDraftWithPersona } from "../../_shared/orchestrator/maybeRewriteOrchestratorDraftWithPersona.ts";
+import { enrichProposalsWithComplianceAssetResolution } from "../../_shared/orchestrator/resolveComplianceAssetStorage.ts";
+import { recordStrategicTrustRepairEscalation } from "../../_shared/orchestrator/recordStrategicTrustRepairEscalation.ts";
+import { upsertV3ThreadWorkflowFromInboundMessage } from "../../_shared/workflow/v3ThreadWorkflowRepository.ts";
 import {
   buildShadowOrchestratorReadinessRecord,
   logShadowOrchestratorReadinessRecord,
@@ -144,6 +149,13 @@ export const clientOrchestratorV1Function = inngest.createFunction(
     const requestedExecutionMode: ClientOrchestratorV1ExecutionMode =
       event.data.requestedExecutionMode ?? "auto";
 
+    const inboundSenderEmail =
+      typeof event.data.inboundSenderEmail === "string" ? event.data.inboundSenderEmail : undefined;
+    const inboundSenderDisplayName =
+      typeof event.data.inboundSenderDisplayName === "string"
+        ? event.data.inboundSenderDisplayName
+        : undefined;
+
     const intakePostBootstrapParityEarly = parseIntakePostBootstrapParityFromEventData(
       event.data as Record<string, unknown>,
     );
@@ -158,8 +170,26 @@ export const clientOrchestratorV1Function = inngest.createFunction(
         replyChannel,
         rawMessage,
         undefined,
+        undefined,
+        inboundSenderEmail,
+        inboundSenderDisplayName,
+        undefined,
+        undefined,
       ),
     );
+
+    await step.run("v3-workflow-upsert-inbound", async () => {
+      if (skipIntakeParityDbSideEffects || !threadId) {
+        return { skipped: true as const };
+      }
+      await upsertV3ThreadWorkflowFromInboundMessage(supabaseAdmin, {
+        photographerId,
+        threadId,
+        weddingId,
+        rawMessage,
+      });
+      return { skipped: false as const };
+    });
 
     const heavyContextLayers = await step.run("orchestrator-assemble-heavy-context-layers", async () =>
       assembleHeavyContextForClientOrchestratorV1(
@@ -171,9 +201,10 @@ export const clientOrchestratorV1Function = inngest.createFunction(
       ),
     );
 
-    const proposedActions = await step.run("propose-candidate-actions", async () =>
+    const proposeResult = await step.run("propose-candidate-actions", async () =>
       proposeCandidateActionsForClientOrchestratorV1(
         heavyContextLayers,
+        decisionContext,
         weddingId,
         threadId,
         replyChannel,
@@ -181,6 +212,38 @@ export const clientOrchestratorV1Function = inngest.createFunction(
         requestedExecutionMode,
       ),
     );
+    const { proposals: proposedRaw, orchestratorContextInjection } = proposeResult;
+
+    /** Parity with `executeClientOrchestratorV1Core`: storage resolution + missing-file operator remap + WhatsApp pending. */
+    const proposedActions = await step.run("orchestrator-compliance-enrich-and-pending-sync", async () => {
+      let p = await enrichProposalsWithComplianceAssetResolution(
+        supabaseAdmin,
+        photographerId,
+        proposedRaw,
+      );
+      p = applyMissingComplianceAssetOperatorProposals(p);
+      if (!skipIntakeParityDbSideEffects) {
+        await syncComplianceWhatsAppPendingCollectState(supabaseAdmin, photographerId, {
+          weddingId,
+          threadId,
+          proposals: p,
+        });
+      }
+      return p;
+    });
+
+    await step.run("strategic-trust-repair-durable", async () => {
+      if (skipIntakeParityDbSideEffects || !threadId) {
+        return { skipped: true as const, reason: "intake_parity_or_no_thread" as const };
+      }
+      return recordStrategicTrustRepairEscalation(supabaseAdmin, {
+        photographerId,
+        threadId,
+        weddingId,
+        rawMessage,
+        threadContextSnippet: heavyContextLayers.threadContextSnippet,
+      });
+    });
 
     const verifierResult = await step.run("tool-verifier", async () =>
       runToolVerifierForClientOrchestratorV1(
@@ -190,12 +253,14 @@ export const clientOrchestratorV1Function = inngest.createFunction(
         photographerId,
         threadId,
         weddingId,
+        proposedActions,
       ),
     );
 
     const orchestratorOutcome = mapClientOrchestratorV1Outcome(
       verifierResult.success,
       requestedExecutionMode,
+      verifierResult.facts,
     );
 
     const draftAttempt = await step.run(
@@ -214,6 +279,7 @@ export const clientOrchestratorV1Function = inngest.createFunction(
               rawMessage,
               replyChannel,
               playbookRules: heavyContextLayers.playbookRules,
+              audience: decisionContext.audience,
             }),
     );
 
@@ -315,6 +381,8 @@ export const clientOrchestratorV1Function = inngest.createFunction(
       escalationAttempt,
       calculatorResult,
       orchestratorOutcome,
+      orchestratorContextInjection,
+      requestedExecutionMode,
       personaOutputAuditor,
     );
 

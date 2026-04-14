@@ -11,6 +11,7 @@
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
 import { buildAgentContext } from "../../_shared/memory/buildAgentContext.ts";
 import { inngest } from "../../_shared/inngest.ts";
+import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 
@@ -169,6 +170,10 @@ export const prepPhaseFunction = inngest.createFunction(
         return { questionnaireDrafted: false as const, reason: "no_thread_for_wedding" as const };
       }
 
+      if (await isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId)) {
+        return { questionnaireDrafted: false as const, reason: "v3_operator_hold" as const };
+      }
+
       const agentContext: AgentContext = await buildAgentContext(
         supabaseAdmin,
         photographerId,
@@ -264,6 +269,10 @@ export const prepPhaseFunction = inngest.createFunction(
       const threadId = await resolveThreadForWedding(weddingId, photographerId);
       if (!threadId) {
         return { reminderDrafted: false as const, reason: "no_thread_for_wedding" as const };
+      }
+
+      if (await isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId)) {
+        return { reminderDrafted: false as const, reason: "v3_operator_hold" as const };
       }
 
       const agentContext: AgentContext = await buildAgentContext(

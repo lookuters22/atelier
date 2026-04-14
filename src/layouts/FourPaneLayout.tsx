@@ -7,7 +7,6 @@ import { StudioSpotlight } from "../components/StudioSpotlight";
 import { PageTransition } from "../components/PageTransition";
 import { DynamicBackground } from "../components/modes/today/DynamicBackground";
 
-import { TodayModeProvider } from "../components/modes/today/TodayModeContext";
 import { ZenLobby } from "../components/modes/today/ZenLobby";
 
 import { InboxModeProvider } from "../components/modes/inbox/InboxModeContext";
@@ -41,7 +40,6 @@ import { InvoiceSetupProvider } from "../components/modes/settings/InvoiceSetupC
 import { SettingsPreview } from "../components/modes/settings/SettingsPreview";
 
 import { OfferBuilderSettingsProvider } from "../pages/settings/offerBuilderSettingsContext";
-import { EscalationsPage } from "../pages/EscalationsPage";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 type Mode =
@@ -51,8 +49,7 @@ type Mode =
   | "calendar"
   | "workspace"
   | "directory"
-  | "settings"
-  | "escalations";
+  | "settings";
 
 function detectMode(pathname: string): Mode {
   if (pathname.startsWith("/inbox")) return "inbox";
@@ -61,7 +58,6 @@ function detectMode(pathname: string): Mode {
   if (pathname.startsWith("/workspace")) return "workspace";
   if (pathname.startsWith("/directory")) return "directory";
   if (pathname.startsWith("/settings")) return "settings";
-  if (pathname.startsWith("/escalations")) return "escalations";
   return "today";
 }
 
@@ -156,12 +152,9 @@ function TwoPaneShell({ pane2, pane3 }: { pane2: ReactNode; pane3: ReactNode }) 
 /*  Mode components                                                   */
 /* ------------------------------------------------------------------ */
 
+/** Operator attention hub: Priority Actions feed + escalation deep-link overlay (`ZenLobby`). */
 function TodayMode() {
-  return (
-    <TodayModeProvider>
-      <ZenLobby />
-    </TodayModeProvider>
-  );
+  return <ZenLobby />;
 }
 
 function InboxMode() {
@@ -278,17 +271,6 @@ function SettingsMode() {
   );
 }
 
-/** Phase 11 Step 11C — escalation queues (full-width shell like settings). */
-function EscalationsMode() {
-  return (
-    <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto max-w-3xl px-8 py-8">
-        <EscalationsPage />
-      </div>
-    </div>
-  );
-}
-
 function ModeSwitch({ mode }: { mode: Mode }) {
   switch (mode) {
     case "today": return <TodayMode />;
@@ -298,7 +280,6 @@ function ModeSwitch({ mode }: { mode: Mode }) {
     case "workspace": return <WorkspaceMode />;
     case "directory": return <DirectoryMode />;
     case "settings": return <SettingsMode />;
-    case "escalations": return <EscalationsMode />;
   }
 }
 

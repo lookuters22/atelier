@@ -2,6 +2,17 @@
  * Inngest API endpoint for Supabase Edge Functions.
  * Register this URL in Inngest Cloud (GET/PUT/POST for sync + invoke).
  *
+ * ## Hosted Supabase — required secrets (project → Edge Functions → Secrets)
+ * - `INNGEST_SIGNING_KEY` — Inngest Cloud → signing key for this environment (validates sync + invokes).
+ * - `INNGEST_EVENT_KEY` — Event API key (used by `gmail-enqueue-label-sync` and other emitters; must match app `atelier-os`).
+ * - `INNGEST_ALLOW_IN_BAND_SYNC=1` — strongly recommended so Cloud sync registers the full function bundle (see #1929 below).
+ * - Optional: `INNGEST_SERVE_HOST` — set to `https://<project-ref>.supabase.co` if the sync URL is rewritten (edge-runtime) and functions are missing.
+ *
+ * ## Post-deploy verification (Inngest Cloud)
+ * 1. Apps → Sync URL must be `https://<project-ref>.supabase.co/functions/v1/inngest` (PUT/GET for sync).
+ * 2. After sync, Functions includes `sync-gmail-label-import-candidates` with trigger `import/gmail.label_sync.v1`.
+ * 3. Send a test event or enqueue from Settings; Runs should show an execution for that function.
+ *
  * **Supabase Edge:** set project secret `INNGEST_ALLOW_IN_BAND_SYNC=1` so Inngest Cloud sync picks up the
  * full `serve()` function list (avoids “event accepted, no functions triggered” for triggers like
  * `ai/orchestrator.client.v1`). See https://github.com/inngest/inngest/issues/1929#issuecomment-2474770494
@@ -66,12 +77,30 @@ import { postWeddingFunction } from "./functions/postWeddingFlow.ts";
 import { clientOrchestratorV1Function } from "./functions/clientOrchestratorV1.ts";
 import { operatorOrchestratorFunction } from "./functions/operatorOrchestrator.ts";
 import { operatorEscalationDeliveryFunction } from "./functions/operatorEscalationDelivery.ts";
+import { v3ThreadWorkflowSweepFunction } from "./functions/v3ThreadWorkflowSweep.ts";
+import { syncGmailLabelImportCandidates } from "./functions/syncGmailLabelImportCandidates.ts";
+import { prepareGmailImportCandidateMaterialization } from "./functions/prepareGmailImportCandidateMaterialization.ts";
+import { backfillGmailImportCandidateMaterialization } from "./functions/backfillGmailImportCandidateMaterialization.ts";
+import { processGmailLabelGroupApproval } from "./functions/processGmailLabelGroupApproval.ts";
+import { processGmailSingleImportCandidateApprove } from "./functions/processGmailSingleImportCandidateApprove.ts";
+import { processEscalationResolutionQueued } from "./functions/processEscalationResolutionQueued.ts";
+import { processGmailLabelsRefresh } from "./functions/processGmailLabelsRefresh.ts";
+import { repairGmailMessagesInlineHtmlArtifacts } from "./functions/repairGmailMessagesInlineHtmlArtifacts.ts";
+import { repairGmailImportCandidateArtifactInlineHtml } from "./functions/repairGmailImportCandidateArtifactInlineHtml.ts";
 
 /** Step 12D anchor: retain legacy registration until cutover; referenced so the gate module stays linked. */
 void LEGACY_ROUTING_RETAINED_PENDING_STEP12_EXIT_CRITERIA;
 
+/**
+ * Public URL path on Supabase: `/functions/v1/inngest` (function name `inngest`).
+ * `serveHost` defaults from the incoming request; override with `INNGEST_SERVE_HOST` if Inngest Cloud shows a wrong host.
+ */
+const serveHost = Deno.env.get("INNGEST_SERVE_HOST")?.trim();
+
 const handler = serve({
   client: inngest,
+  servePath: "/functions/v1/inngest",
+  ...(serveHost ? { serveHost } : {}),
   functions: [
     triageFunction,
     intakeFunction,
@@ -92,6 +121,16 @@ const handler = serve({
     clientOrchestratorV1Function,
     operatorOrchestratorFunction,
     operatorEscalationDeliveryFunction,
+    v3ThreadWorkflowSweepFunction,
+    syncGmailLabelImportCandidates,
+    prepareGmailImportCandidateMaterialization,
+    backfillGmailImportCandidateMaterialization,
+    processGmailLabelGroupApproval,
+    processGmailSingleImportCandidateApprove,
+    processEscalationResolutionQueued,
+    processGmailLabelsRefresh,
+    repairGmailMessagesInlineHtmlArtifacts,
+    repairGmailImportCandidateArtifactInlineHtml,
   ],
 });
 

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Plus, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,13 @@ import {
 } from "@/components/ui/context-menu";
 import { useAuth } from "@/context/AuthContext";
 import { useWeddings } from "@/hooks/useWeddings";
+import {
+  adjacentWeddingIdInOrderedList,
+  isEditableKeyboardTarget,
+  pipelineWeddingAltVerticalDelta,
+  scrollPipelineWeddingRowIntoView,
+  weddingQueuePosition,
+} from "@/lib/pipelineWeddingListNavigation";
 import { usePipelineMode } from "./PipelineModeContext";
 
 const INQUIRY_STAGES = new Set(["inquiry", "consultation", "proposal_sent", "contract_out"]);
@@ -56,6 +63,8 @@ function stageBadgeClass(stage: string): string {
 
 type Bucket = "inquiries" | "active" | "deliverables" | "archived";
 
+const BUCKET_ORDER: Bucket[] = ["inquiries", "active", "deliverables", "archived"];
+
 function bucketForStage(stage: string): Bucket {
   if (INQUIRY_STAGES.has(stage)) return "inquiries";
   if (ACTIVE_STAGES.has(stage)) return "active";
@@ -69,6 +78,7 @@ export function PipelineContextList() {
   const { data: weddings, isLoading, error, deleteWedding } = useWeddings(photographerId ?? "");
   const { weddingId, selectWedding } = usePipelineMode();
   const [query, setQuery] = useState("");
+  const listScrollRef = useRef<HTMLDivElement>(null);
 
   async function handleDelete(id: string, name: string) {
     if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
@@ -95,6 +105,57 @@ export function PipelineContextList() {
     return out;
   }, [filtered]);
 
+  /** Same order as sidebar sections: inquiries → active → deliverables → archived. */
+  const orderedWeddingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const b of BUCKET_ORDER) {
+      for (const w of buckets[b]) {
+        ids.push(w.id);
+      }
+    }
+    return ids;
+  }, [buckets]);
+
+  const goPrevWedding = useCallback(() => {
+    const id = adjacentWeddingIdInOrderedList(orderedWeddingIds, weddingId, -1);
+    if (id && id !== weddingId) selectWedding(id);
+  }, [orderedWeddingIds, weddingId, selectWedding]);
+
+  const goNextWedding = useCallback(() => {
+    const id = adjacentWeddingIdInOrderedList(orderedWeddingIds, weddingId, 1);
+    if (id && id !== weddingId) selectWedding(id);
+  }, [orderedWeddingIds, weddingId, selectWedding]);
+
+  useEffect(() => {
+    if (orderedWeddingIds.length < 2) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const delta = pipelineWeddingAltVerticalDelta(e);
+      if (delta === null) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      const id = adjacentWeddingIdInOrderedList(orderedWeddingIds, weddingId, delta);
+      if (!id || id === weddingId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      selectWedding(id);
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [orderedWeddingIds, weddingId, selectWedding]);
+
+  useLayoutEffect(() => {
+    if (!weddingId) return;
+    const root = listScrollRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-pipeline-wedding-row="${CSS.escape(weddingId)}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    scrollPipelineWeddingRowIntoView(el);
+  }, [weddingId, orderedWeddingIds]);
+
+  const queuePosition = useMemo(
+    () => weddingQueuePosition(orderedWeddingIds, weddingId),
+    [orderedWeddingIds, weddingId],
+  );
+
   const sections: { id: Bucket; title: string }[] = [
     { id: "inquiries", title: "Inquiries" },
     { id: "active", title: "Active Bookings" },
@@ -112,6 +173,42 @@ export function PipelineContextList() {
           onChange={(e) => setQuery(e.target.value)}
           className="h-8 border-border bg-background text-[13px] placeholder:text-[12px]"
         />
+        {!isLoading && !error && orderedWeddingIds.length >= 2 ? (
+          <div
+            role="region"
+            aria-label="Pipeline wedding queue navigation"
+            className="flex items-center justify-between gap-2 rounded-md border border-border bg-background/80 px-2 py-1.5"
+          >
+            <div className="min-w-0">
+              <span className="text-[11px] font-medium text-muted-foreground">Queue</span>
+              {queuePosition ? (
+                <span className="ml-1.5 tabular-nums text-[11px] text-muted-foreground" aria-live="polite">
+                  {queuePosition.current} / {queuePosition.total}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                title="Previous wedding (Alt+↑)"
+                aria-label="Previous wedding in queue"
+                onClick={goPrevWedding}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              >
+                <ChevronUp className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+              <button
+                type="button"
+                title="Next wedding (Alt+↓)"
+                aria-label="Next wedding in queue"
+                onClick={goNextWedding}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+          </div>
+        ) : null}
         <Button variant="outline" size="sm" className="h-8 w-full border-slate-200 text-slate-900 hover:bg-slate-100 hover:text-slate-900 text-[12px]" asChild>
           <Link to="/weddings/new">
             <Plus className="size-3.5" strokeWidth={2} />
@@ -120,7 +217,7 @@ export function PipelineContextList() {
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto p-2">
         {isLoading && (
           <p className="px-2 py-3 text-[12px] text-muted-foreground">Loading weddings…</p>
         )}
@@ -162,6 +259,7 @@ export function PipelineContextList() {
                             <ContextMenuTrigger asChild>
                               <button
                                 type="button"
+                                data-pipeline-wedding-row={w.id}
                                 onClick={() => selectWedding(w.id)}
                                 className={cn(
                                   "flex w-full flex-col gap-1 rounded-md border border-transparent px-2 py-2 text-left transition-colors",

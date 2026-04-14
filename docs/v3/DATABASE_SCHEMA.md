@@ -42,9 +42,11 @@ Tables present in the checked-in migrations:
 - `thread_summaries`
 - `calendar_events`
 - `wedding_milestones`
+- `authorized_case_exceptions` (V3 case-scoped approved policy overrides; see §5.17.1)
 
 Important truth:
 
+- **Slice 2 (production readiness)** added composite btree indexes matching proven app reads: `weddings (photographer_id, wedding_date desc)`, `threads (photographer_id, last_activity_at desc)`, `drafts (photographer_id, status, created_at desc)`, `tasks (photographer_id, status, due_date)`, `import_candidates (photographer_id, connected_account_id, created_at desc)` — see migration `20260430152000_slice2_pgvector_ann_and_hot_indexes.sql`.
 - `vendors` and `deliverables` do not exist in the current migration chain.
 - `drafts.created_at` exists in migrations, but the generated frontend database types are behind.
 - The current frontend settings page uses `photographers.settings.whatsapp_number`.
@@ -714,7 +716,9 @@ Implemented today.
 
 ### Status
 
-Implemented today.
+Implemented today. **RLS** is enabled with tenant isolation on `photographer_id` (`auth.uid()` = studio row); edge workers using the service role bypass RLS for ingestion and `match_knowledge` RPC callers.
+
+**Slice 2 (indexes):** partial **HNSW** index on `embedding` (`vector_cosine_ops`, `WHERE embedding IS NOT NULL`); btree `idx_knowledge_base_photographer_type_created` on `(photographer_id, document_type, created_at DESC)` for tenant-scoped list/recency paths.
 
 ### Current columns
 
@@ -725,6 +729,12 @@ Implemented today.
 - `embedding` VECTOR(1536) NULL
 - `metadata` JSONB DEFAULT `{}`
 - `created_at` TIMESTAMPTZ DEFAULT now()
+
+### `match_knowledge` RPC
+
+- **Args:** `query_embedding`, `match_threshold`, `match_count`, `p_photographer_id`, optional `p_document_type`.
+- **Returns:** `id`, `content`, `metadata`, `similarity` (cosine-based), `document_type`, `created_at`.
+- Rows with `embedding IS NULL` are excluded.
 
 ### Rules
 
@@ -891,6 +901,40 @@ The initial topic map should cover at least:
 - `automation`
 - `escalation`
 
+## 5.17.1 authorized_case_exceptions (additive migration `20260416120000_authorized_case_exceptions.sql`)
+
+### Status
+
+Implemented in repo migrations.
+
+### Purpose
+
+Schema-backed **approved** overrides that may **narrow** normal `playbook_rules` behavior for a specific wedding (and optionally one thread). Runtime merges raw playbook + active exceptions in TypeScript (`deriveEffectivePlaybook`) before verifier/orchestrator/persona policy excerpts.
+
+This is **not** `memories.metadata` and not ordinary case memory.
+
+### Columns (summary)
+
+- `id` UUID PK
+- `photographer_id` UUID FK → `photographers.id` NOT NULL
+- `wedding_id` UUID FK → `weddings.id` NOT NULL
+- `thread_id` UUID NULL FK → `threads.id` (null = wedding-wide)
+- `status` TEXT CHECK (`draft` \| `active` \| `revoked`)
+- `overrides_action_key` TEXT NOT NULL (join key to `playbook_rules.action_key` when `target_playbook_rule_id` is null)
+- `target_playbook_rule_id` UUID NULL FK → `playbook_rules.id`
+- `override_payload` JSONB NOT NULL (structured: `decision_mode`, `instruction_override`, `instruction_append`, …)
+- `approved_by` UUID NULL FK → `people.id`
+- `approved_via_escalation_id` UUID NULL FK → `escalation_requests.id`
+- `effective_from` / `effective_until` TIMESTAMPTZ
+- `notes` TEXT
+- `created_at` / `updated_at` TIMESTAMPTZ
+
+### Rules
+
+- Tenant isolation: always filter by `photographer_id` in service-role queries.
+- Only **`active`** rows in the effective time window are loaded into `DecisionContext.authorizedCaseExceptions`.
+- Persona does not receive raw exception rows; policy text uses **`effectivePlaybookRules`** after merge.
+
 ## 5.18 escalation_requests
 
 ### Status
@@ -936,6 +980,7 @@ Audit trail of "Ana does not know enough, so she asked the photographer".
   - `playbook_rules`
   - `memories`
   - `documents`
+  - `authorized_case_exceptions` (structured case-scoped policy override; see §5.17.1)
   - `escalation_requests_open`
 - If the answer is one-off, keep it here and optionally write wedding-scoped memory.
 - If the answer is reusable, create or update `playbook_rules` and link it here.

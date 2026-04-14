@@ -1,4 +1,9 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { trySanitizeEmailHtmlForIframe } from "../../lib/sanitizeEmailHtml";
+import { EmailHtmlIframe } from "../email/EmailHtmlIframe";
+import { MessageAttachmentChips, type ChatAttachmentRow } from "./MessageAttachmentChips";
+
+export type { ChatAttachmentRow };
 
 export interface ChatMessage {
   id: string;
@@ -7,6 +12,10 @@ export interface ChatMessage {
   body: string;
   time: string;
   meta?: string;
+  /** Server-sanitized HTML for approved Gmail imports; client re-sanitizes before render. */
+  bodyHtmlSanitized?: string | null;
+  /** Structured rows from `message_attachments` (e.g. Gmail import, WhatsApp). */
+  attachments?: ChatAttachmentRow[];
 }
 
 interface ConversationFeedProps {
@@ -39,11 +48,22 @@ function MessageBubble({
   const incoming = msg.direction === "in";
   const initials = senderInitials(msg.sender);
 
-  const content = expanded ? (
+  const iframeSrcDoc = useMemo(
+    () => trySanitizeEmailHtmlForIframe(msg.bodyHtmlSanitized),
+    [msg.bodyHtmlSanitized],
+  );
+  const hasHtml = Boolean(iframeSrcDoc);
+
+  const plainContent = expanded ? (
     <span className="whitespace-pre-wrap">{msg.body}</span>
   ) : (
     <span className="line-clamp-4">{msg.body}</span>
   );
+
+  const htmlContent =
+    iframeSrcDoc ? <EmailHtmlIframe srcDoc={iframeSrcDoc} expanded={expanded} /> : null;
+
+  const content = hasHtml ? htmlContent : plainContent;
 
   const bubbleClasses =
     "rounded-2xl px-3.5 py-2.5 text-left text-[13px] leading-relaxed transition " +
@@ -51,8 +71,38 @@ function MessageBubble({
       ? "bg-accent text-foreground rounded-bl-md"
       : "border border-border bg-background text-foreground rounded-br-md");
 
+  /** Imported email: full thread width, no “chat bubble” chrome — iframe blends into the pane. */
+  const htmlShellClasses =
+    "w-full min-w-0 max-w-full rounded-lg bg-transparent p-0 text-left " +
+    (onToggle ? "cursor-pointer" : "");
+
+  /** `button` must not wrap interactive HTML (e.g. `<a href>`); use a focusable div when foldable + HTML. */
+  const foldableHtmlShell =
+    onToggle && hasHtml ? (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className={htmlShellClasses}
+      >
+        {content}
+      </div>
+    ) : null;
+
+  const columnClass =
+    "flex min-w-0 flex-col " +
+    (hasHtml
+      ? "min-w-0 flex-1 max-w-full items-stretch "
+      : "max-w-[75%] " + (incoming ? "items-start " : "items-end "));
+
   return (
-    <div className={"flex gap-2.5 " + (incoming ? "justify-start" : "justify-end")}>
+    <div className={"flex w-full min-w-0 gap-2.5 " + (incoming ? "justify-start" : "justify-end")}>
       {incoming && (
         <div
           className="mt-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-muted-foreground"
@@ -61,19 +111,28 @@ function MessageBubble({
           {initials}
         </div>
       )}
-      <div className={"flex max-w-[75%] flex-col " + (incoming ? "items-start" : "items-end")}>
+      <div className={columnClass}>
         {incoming && (
           <span className="mb-0.5 px-1 text-[10px] font-medium text-muted-foreground">
             {msg.sender}
           </span>
         )}
-        {onToggle ? (
+        {foldableHtmlShell ? (
+          foldableHtmlShell
+        ) : onToggle ? (
           <button type="button" onClick={onToggle} className={bubbleClasses}>
             {content}
           </button>
+        ) : hasHtml ? (
+          <div className={htmlShellClasses}>{content}</div>
         ) : (
           <div className={bubbleClasses}>{content}</div>
         )}
+        {msg.attachments && msg.attachments.length > 0 ? (
+          <div className={hasHtml ? "w-full min-w-0 px-1" : "max-w-full px-1"}>
+            <MessageAttachmentChips attachments={msg.attachments} />
+          </div>
+        ) : null}
         <time className="mt-0.5 px-1 text-[10px] tabular-nums text-muted-foreground">
           {msg.time}
         </time>

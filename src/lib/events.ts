@@ -1,18 +1,56 @@
 const DATA_CHANGED = "atelier:data-changed";
 
 /**
- * Fire after any mutation that should refresh sidebar badges,
- * notification bell, approval lists, or timeline views.
+ * Scoped invalidation: one mutation should not always refetch every dashboard hook.
+ * `all` preserves legacy full-fanout behavior.
  */
-export function fireDataChanged() {
-  window.dispatchEvent(new CustomEvent(DATA_CHANGED));
+export type DataChangeScope =
+  | "all"
+  | "tasks"
+  | "drafts"
+  | "inbox"
+  | "weddings"
+  | "metrics"
+  | "escalations"
+  | "settings";
+
+type DataChangedDetail = { scope: DataChangeScope };
+
+/**
+ * Fire a single scope. For multi-entity updates, call multiple times (e.g. inbox + weddings).
+ */
+export function fireDataChanged(scope: DataChangeScope = "all") {
+  window.dispatchEvent(new CustomEvent(DATA_CHANGED, { detail: { scope } satisfies DataChangedDetail }));
 }
 
-export function onDataChanged(callback: () => void): () => void {
-  window.addEventListener(DATA_CHANGED, callback);
-  return () => window.removeEventListener(DATA_CHANGED, callback);
+/**
+ * Subscribe to refetches. Without `scopes`, only `all` events run the callback (safe default).
+ * With `scopes`, the callback runs when the event scope is `all` or matches any listed scope.
+ */
+export function onDataChanged(
+  callback: () => void,
+  options?: { scopes?: DataChangeScope[] },
+): () => void {
+  const want = options?.scopes;
+  const handler = (e: Event) => {
+    const d = (e as CustomEvent<DataChangedDetail>).detail;
+    const scope = d?.scope ?? "all";
+    if (!want || want.length === 0) {
+      if (scope === "all") callback();
+      return;
+    }
+    if (scope === "all" || want.includes(scope)) {
+      callback();
+    }
+  };
+  window.addEventListener(DATA_CHANGED, handler as EventListener);
+  return () => window.removeEventListener(DATA_CHANGED, handler as EventListener);
 }
 
-// Keep the old names as aliases so existing call-sites still compile.
-export const fireDraftsChanged = fireDataChanged;
+/** @deprecated Prefer `fireDataChanged("drafts")` — kept for a few call sites. */
+export function fireDraftsChanged() {
+  fireDataChanged("drafts");
+}
+
+/** @deprecated Use `onDataChanged` with scopes. */
 export const onDraftsChanged = onDataChanged;

@@ -139,10 +139,11 @@ export function DashboardLayout() {
   useEffect(() => {
     const channel = supabase
       .channel("global-db-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "drafts" }, () => fireDataChanged())
-      .on("postgres_changes", { event: "*", schema: "public", table: "threads" }, () => fireDataChanged())
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, () => fireDataChanged())
-      .on("postgres_changes", { event: "*", schema: "public", table: "weddings" }, () => fireDataChanged())
+      .on("postgres_changes", { event: "*", schema: "public", table: "drafts" }, () => fireDataChanged("drafts"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "threads" }, () => fireDataChanged("inbox"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, () => fireDataChanged("inbox"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "weddings" }, () => fireDataChanged("weddings"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, () => fireDataChanged("tasks"))
       .subscribe();
 
     return () => {

@@ -13,6 +13,12 @@ import { executeCalendarTool, runBookCalendarEvent } from "../../_shared/tools/c
 import { executeCrmTool } from "../../_shared/tools/crmTool.ts";
 import { executeTravelTool } from "../../_shared/tools/travelTool.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
+import {
+  truncateWhatsappOrchestratorAssistantContent,
+  truncateWhatsappOrchestratorSanitizedContextJson,
+  truncateWhatsappOrchestratorToolOutput,
+  truncateWhatsappOrchestratorUserMessage,
+} from "../../_shared/whatsappOrchestratorA5Budget.ts";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const MODEL = "gpt-4o-mini";
@@ -151,11 +157,13 @@ type ChatCompletionResponse = {
 
 function buildSystemPrompt(ctx: AgentContext): string {
   const payload = sanitizeAgentContextForOrchestratorPrompt(ctx);
+  const jsonText = JSON.stringify(payload);
+  const truncatedJson = truncateWhatsappOrchestratorSanitizedContextJson(jsonText);
   return [
     "You are the Atelier OS orchestrator. Use the provided tools when you need operational facts.",
     "Prefer calling tools over guessing. When you have enough information, reply with a concise plain-text answer for WhatsApp.",
     "Sanitized agent context (JSON — no raw thread bodies or memory full text; the user's latest message is only in the next user message):",
-    JSON.stringify(payload),
+    truncatedJson,
   ].join("\n\n");
 }
 
@@ -265,9 +273,15 @@ async function runOrchestratorReasoningLoop(
   agentContext: AgentContext,
   supabase: typeof supabaseAdmin,
 ): Promise<{ finalText: string }> {
+  if (agentContext.rawMessage.trim().length === 0) {
+    return { finalText: "" };
+  }
+
+  const userContent = truncateWhatsappOrchestratorUserMessage(agentContext.rawMessage);
+
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(agentContext) },
-    { role: "user", content: agentContext.rawMessage },
+    { role: "user", content: userContent },
   ];
 
   let finalText = "";
@@ -289,7 +303,7 @@ async function runOrchestratorReasoningLoop(
     if (toolCalls && toolCalls.length > 0) {
       messages.push({
         role: "assistant",
-        content: msg.content ?? null,
+        content: truncateWhatsappOrchestratorAssistantContent(msg.content ?? null),
         tool_calls: toolCalls,
       });
 
@@ -307,14 +321,17 @@ async function runOrchestratorReasoningLoop(
       const toolMessages: ChatMessage[] = toolCalls.map((tc, i) => ({
         role: "tool",
         tool_call_id: tc.id,
-        content: resultStrings[i] ?? "",
+        content: truncateWhatsappOrchestratorToolOutput(resultStrings[i] ?? ""),
       }));
 
       messages.push(...toolMessages);
       continue;
     }
 
-    finalText = typeof msg.content === "string" ? msg.content : "";
+    finalText =
+      typeof msg.content === "string"
+        ? truncateWhatsappOrchestratorAssistantContent(msg.content) ?? ""
+        : "";
     break;
   }
 

@@ -5,23 +5,76 @@ import {
   type BuildDecisionContextOptions,
   type DecisionAudienceSnapshot,
   type DecisionContext,
+  type DecisionContextRetrievalTrace,
+  type InboundSenderAuthoritySnapshot,
+  type AuthorizedCaseExceptionRow,
+  type EffectivePlaybookRule,
   type PlaybookRuleContextRow,
   type ThreadDraftsSummary,
   type ThreadParticipantAudienceRow,
 } from "../../../../src/types/decisionContext.types.ts";
+import { applyAudiencePrivateCommercialRedaction } from "./applyAudiencePrivateCommercialRedaction.ts";
+import {
+  applyVisibilityClassOverride,
+  resolveAudienceVisibility,
+  type WeddingPersonRoleRow,
+} from "./resolveAudienceVisibility.ts";
 import { buildAgentContext } from "../memory/buildAgentContext.ts";
 import { fetchSelectedMemoriesFull } from "../memory/fetchSelectedMemoriesFull.ts";
+import {
+  MAX_SELECTED_MEMORIES,
+  selectRelevantMemoryIdsDeterministic,
+} from "../memory/selectRelevantMemoriesForDecisionContext.ts";
 import { fetchActivePlaybookRulesForDecisionContext } from "./fetchActivePlaybookRulesForDecisionContext.ts";
+import { fetchAuthorizedCaseExceptionsForDecisionContext } from "./fetchAuthorizedCaseExceptionsForDecisionContext.ts";
+import { deriveEffectivePlaybook } from "../policy/deriveEffectivePlaybook.ts";
+import { fetchRelevantGlobalKnowledgeForDecisionContext } from "./fetchRelevantGlobalKnowledgeForDecisionContext.ts";
+import {
+  buildDecisionContextRetrievalTrace,
+  decideGlobalKnowledgeBaseQuery,
+} from "./gateGlobalKnowledgeRetrievalForDecisionContext.ts";
 import { fetchThreadDraftsSummaryForDecisionContext } from "./fetchThreadDraftsSummaryForDecisionContext.ts";
+import { buildInboundSenderIdentityFromIngress } from "../identity/inboundSenderIdentity.ts";
+import { deriveInboundSenderAuthority } from "./deriveInboundSenderAuthority.ts";
+import { resolveInboundSenderAuthorityForAudienceLoad } from "./resolveInboundSenderAuthorityForAudienceLoad.ts";
 
 export type { BuildDecisionContextOptions } from "../../../../src/types/decisionContext.types.ts";
+
+function resolveMemoryIdsForDecisionContext(
+  tenantPhotographerId: string,
+  weddingId: string | null,
+  threadId: string | null,
+  rawMessage: string,
+  base: AgentContext,
+  options?: BuildDecisionContextOptions,
+): string[] {
+  const explicit = options?.selectedMemoryIds?.filter((id) => id.length > 0) ?? [];
+  if (explicit.length > 0) {
+    return explicit.slice(0, MAX_SELECTED_MEMORIES);
+  }
+  return selectRelevantMemoryIdsDeterministic({
+    photographerId: tenantPhotographerId,
+    weddingId,
+    threadId,
+    rawMessage,
+    threadSummary: base.threadSummary,
+    memoryHeaders: base.memoryHeaders,
+  });
+}
 
 /**
  * **Sole factory** for `DecisionContext` (execute_v3 Step 5F). Do not hand-roll context
  * objects in workers — call this helper so playbook, audience, and memory layers stay consistent.
  *
  * Phase 5 — Steps 5A–5C: header-scan via `buildAgentContext` / `fetchMemoryHeaders`;
- * optional `selectedMemoryIds` promotes full memory rows.
+ * deterministic promotion (`selectRelevantMemoryIdsDeterministic`) fills `selectedMemories` when
+ * `options.selectedMemoryIds` is omitted or empty; explicit ids override for QA/replay.
+ * `selectedMemories` / `globalKnowledge` do not override `playbook_rules` (supporting context only).
+ * **Authorized case exceptions:** `authorized_case_exceptions` rows are loaded per wedding/thread and merged
+ * with raw playbook in TS (`deriveEffectivePlaybook`) — `playbookRules` on the context is the **effective** view.
+ *
+ * **Global KB gating:** `decideGlobalKnowledgeBaseQuery` may skip the tenant `knowledge_base` vector RPC
+ * on low-signal turns (no extra DB round-trip to decide). `retrievalTrace` records ids, counts, and gate outcome.
  *
  * **Step 5G:** `photographerId` must be a **resolved** tenant key (never trust raw client input).
  * All fetches are scoped with `.eq("photographer_id", …)`; the returned context pins that id.
@@ -50,55 +103,299 @@ export async function buildDecisionContext(
     rawMessage,
   );
 
-  const memoryIds = options?.selectedMemoryIds?.filter((id) => id.length > 0) ?? [];
+  const memoryIds = resolveMemoryIdsForDecisionContext(
+    tenantPhotographerId,
+    weddingId,
+    threadId,
+    rawMessage,
+    base,
+    options,
+  );
   const selectedMemoriesPromise =
     memoryIds.length > 0
       ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds)
       : Promise.resolve(base.selectedMemories);
 
-  const [audience, candidateWeddingIds, playbookRules, selectedMemories, threadDraftsSummary] =
-    await Promise.all([
-      loadAudienceSnapshot(supabase, tenantPhotographerId, weddingId, threadId),
-      loadCandidateWeddingIds(supabase, tenantPhotographerId, threadId),
-      fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
-      selectedMemoriesPromise,
-      fetchThreadDraftsSummaryForDecisionContext(supabase, tenantPhotographerId, threadId),
-    ]);
+  const globalKnowledgeGate = decideGlobalKnowledgeBaseQuery({
+    rawMessage,
+    threadSummary: base.threadSummary,
+    replyChannel: base.replyChannel,
+    promotedMemoryIds: memoryIds,
+    qaBypassGate: options?.qaBypassGlobalKnowledgeGate === true,
+  });
+  const globalKnowledgePromise =
+    globalKnowledgeGate.queryKnowledgeBase
+      ? fetchRelevantGlobalKnowledgeForDecisionContext(supabase, {
+          photographerId: tenantPhotographerId,
+          rawMessage,
+          threadSummary: base.threadSummary,
+          replyChannel: base.replyChannel,
+        })
+      : Promise.resolve([]);
 
-  return finalizeDecisionContext(base, tenantPhotographerId, {
+  const [
+    audienceBundle,
+    candidateWeddingIds,
+    rawPlaybookRules,
+    authorizedCaseExceptions,
+    selectedMemories,
+    threadDraftsSummary,
+    globalKnowledge,
+  ] = await Promise.all([
+    loadAudienceSnapshot(
+      supabase,
+      tenantPhotographerId,
+      weddingId,
+      threadId,
+      options?.inboundSenderEmail,
+    ),
+    loadCandidateWeddingIds(supabase, tenantPhotographerId, threadId),
+    fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
+    fetchAuthorizedCaseExceptionsForDecisionContext(
+      supabase,
+      tenantPhotographerId,
+      weddingId,
+      threadId,
+    ),
+    selectedMemoriesPromise,
+    fetchThreadDraftsSummaryForDecisionContext(supabase, tenantPhotographerId, threadId),
+    globalKnowledgePromise,
+  ]);
+  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
+
+  const effectivePlaybookRules = deriveEffectivePlaybook(rawPlaybookRules, authorizedCaseExceptions);
+
+  const retrievalTrace = buildDecisionContextRetrievalTrace({
+    selectedMemoryIdsResolved: memoryIds,
+    selectedMemories,
+    globalKnowledge,
+    gate: globalKnowledgeGate,
+  });
+
+  const merged = mergeDecisionContextWithoutRedaction(base, tenantPhotographerId, {
     selectedMemories,
     audience,
+    inboundSenderAuthorityFromLoad,
     candidateWeddingIds,
-    playbookRules,
+    rawPlaybookRules,
+    authorizedCaseExceptions,
+    effectivePlaybookRules,
     threadDraftsSummary,
+    globalKnowledge,
+    retrievalTrace,
+    options,
   });
+  return applyAudiencePrivateCommercialRedaction(merged);
 }
 
 /**
- * Single merge point for the `DecisionContext` object shape (Step 5F).
- * Pins `photographerId` to the validated tenant (Step 5G) so the object cannot reflect mixed tenants.
+ * QA/replay harness only — same DB path as {@link buildDecisionContext}, but returns the merged
+ * context **before** and **after** `applyAudiencePrivateCommercialRedaction` for proof reports.
  */
-function finalizeDecisionContext(
+export async function buildDecisionContextQaProofPair(
+  supabase: SupabaseClient,
+  photographerId: string,
+  weddingId: string | null,
+  threadId: string | null,
+  replyChannel: AgentContext["replyChannel"],
+  rawMessage: string,
+  options?: BuildDecisionContextOptions,
+): Promise<{ preRedaction: DecisionContext; postRedaction: DecisionContext }> {
+  const tenantPhotographerId = assertResolvedTenantPhotographerId(photographerId);
+
+  const base = await buildAgentContext(
+    supabase,
+    tenantPhotographerId,
+    weddingId,
+    threadId,
+    replyChannel,
+    rawMessage,
+  );
+
+  const memoryIds = resolveMemoryIdsForDecisionContext(
+    tenantPhotographerId,
+    weddingId,
+    threadId,
+    rawMessage,
+    base,
+    options,
+  );
+  const selectedMemoriesPromise =
+    memoryIds.length > 0
+      ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds)
+      : Promise.resolve(base.selectedMemories);
+
+  const globalKnowledgeGate = decideGlobalKnowledgeBaseQuery({
+    rawMessage,
+    threadSummary: base.threadSummary,
+    replyChannel: base.replyChannel,
+    promotedMemoryIds: memoryIds,
+    qaBypassGate: options?.qaBypassGlobalKnowledgeGate === true,
+  });
+  const globalKnowledgePromise =
+    globalKnowledgeGate.queryKnowledgeBase
+      ? fetchRelevantGlobalKnowledgeForDecisionContext(supabase, {
+          photographerId: tenantPhotographerId,
+          rawMessage,
+          threadSummary: base.threadSummary,
+          replyChannel: base.replyChannel,
+        })
+      : Promise.resolve([]);
+
+  const [
+    audienceBundle,
+    candidateWeddingIds,
+    rawPlaybookRules,
+    authorizedCaseExceptions,
+    selectedMemories,
+    threadDraftsSummary,
+    globalKnowledge,
+  ] = await Promise.all([
+    loadAudienceSnapshot(
+      supabase,
+      tenantPhotographerId,
+      weddingId,
+      threadId,
+      options?.inboundSenderEmail,
+    ),
+    loadCandidateWeddingIds(supabase, tenantPhotographerId, threadId),
+    fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
+    fetchAuthorizedCaseExceptionsForDecisionContext(
+      supabase,
+      tenantPhotographerId,
+      weddingId,
+      threadId,
+    ),
+    selectedMemoriesPromise,
+    fetchThreadDraftsSummaryForDecisionContext(supabase, tenantPhotographerId, threadId),
+    globalKnowledgePromise,
+  ]);
+  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
+
+  const effectivePlaybookRules = deriveEffectivePlaybook(rawPlaybookRules, authorizedCaseExceptions);
+
+  const retrievalTrace = buildDecisionContextRetrievalTrace({
+    selectedMemoryIdsResolved: memoryIds,
+    selectedMemories,
+    globalKnowledge,
+    gate: globalKnowledgeGate,
+  });
+
+  const preRedaction = mergeDecisionContextWithoutRedaction(base, tenantPhotographerId, {
+    selectedMemories,
+    audience,
+    inboundSenderAuthorityFromLoad,
+    candidateWeddingIds,
+    rawPlaybookRules,
+    authorizedCaseExceptions,
+    effectivePlaybookRules,
+    threadDraftsSummary,
+    globalKnowledge,
+    retrievalTrace,
+    options,
+  });
+  return {
+    preRedaction,
+    postRedaction: applyAudiencePrivateCommercialRedaction(preRedaction),
+  };
+}
+
+/**
+ * Merge-only Step 5F object (no audience redaction). Used by `buildDecisionContext` and QA proof pair.
+ */
+function mergeDecisionContextWithoutRedaction(
   base: AgentContext,
   canonicalTenantPhotographerId: string,
   parts: {
     selectedMemories: AgentContext["selectedMemories"];
     audience: DecisionAudienceSnapshot;
+    inboundSenderAuthorityFromLoad: InboundSenderAuthoritySnapshot;
     candidateWeddingIds: string[];
-    playbookRules: PlaybookRuleContextRow[];
+    rawPlaybookRules: PlaybookRuleContextRow[];
+    authorizedCaseExceptions: AuthorizedCaseExceptionRow[];
+    effectivePlaybookRules: EffectivePlaybookRule[];
     threadDraftsSummary: ThreadDraftsSummary | null;
+    globalKnowledge: AgentContext["globalKnowledge"];
+    retrievalTrace: DecisionContextRetrievalTrace;
+    options?: BuildDecisionContextOptions;
   },
 ): DecisionContext {
+  let audience = parts.audience;
+  if (parts.options?.qaVisibilityClassOverride) {
+    audience = {
+      ...audience,
+      ...applyVisibilityClassOverride(
+        {
+          visibilityClass: audience.visibilityClass,
+          clientVisibleForPrivateCommercialRedaction: audience.clientVisibleForPrivateCommercialRedaction,
+        },
+        parts.options.qaVisibilityClassOverride,
+      ),
+    };
+  }
+
+  const inboundSenderIdentity = buildInboundSenderIdentityFromIngress({
+    inboundSenderEmail: parts.options?.inboundSenderEmail,
+    inboundSenderDisplayName: parts.options?.inboundSenderDisplayName,
+  });
+
+  const inboundSenderAuthority = parts.options?.qaInboundSenderAuthorityOverride
+    ? parts.options.qaInboundSenderAuthorityOverride
+    : parts.inboundSenderAuthorityFromLoad;
+
   return {
     ...base,
     photographerId: canonicalTenantPhotographerId,
     contextVersion: 1,
     selectedMemories: parts.selectedMemories,
-    audience: parts.audience,
+    audience,
     candidateWeddingIds: parts.candidateWeddingIds,
-    playbookRules: parts.playbookRules,
+    rawPlaybookRules: parts.rawPlaybookRules,
+    authorizedCaseExceptions: parts.authorizedCaseExceptions,
+    playbookRules: parts.effectivePlaybookRules,
     threadDraftsSummary: parts.threadDraftsSummary,
+    globalKnowledge: parts.globalKnowledge,
+    retrievalTrace: parts.retrievalTrace,
+    inboundSenderIdentity,
+    inboundSenderAuthority,
   };
+}
+
+/** Conservative default when thread or participants are missing: assume client-visible. */
+const DEFAULT_VISIBILITY: Pick<
+  DecisionAudienceSnapshot,
+  "visibilityClass" | "clientVisibleForPrivateCommercialRedaction"
+> = {
+  visibilityClass: "client_visible",
+  clientVisibleForPrivateCommercialRedaction: true,
+};
+
+async function fetchWeddingPeopleByWedding(
+  supabase: SupabaseClient,
+  photographerId: string,
+  weddingId: string | null,
+): Promise<Map<string, WeddingPersonRoleRow>> {
+  if (!weddingId) return new Map();
+
+  const { data, error } = await supabase
+    .from("wedding_people")
+    .select("person_id, role_label, is_payer")
+    .eq("photographer_id", photographerId)
+    .eq("wedding_id", weddingId);
+
+  if (error) {
+    throw new Error(`buildDecisionContext wedding_people: ${error.message}`);
+  }
+
+  const m = new Map<string, WeddingPersonRoleRow>();
+  for (const row of data ?? []) {
+    m.set(row.person_id as string, {
+      person_id: row.person_id as string,
+      role_label: typeof row.role_label === "string" ? row.role_label : "",
+      is_payer: Boolean(row.is_payer),
+    });
+  }
+  return m;
 }
 
 async function loadAudienceSnapshot(
@@ -106,7 +403,11 @@ async function loadAudienceSnapshot(
   photographerId: string,
   weddingId: string | null,
   threadId: string | null,
-): Promise<DecisionAudienceSnapshot> {
+  inboundSenderEmailFromIngress: string | null | undefined,
+): Promise<{
+  audience: DecisionAudienceSnapshot;
+  inboundSenderAuthority: InboundSenderAuthoritySnapshot;
+}> {
   if (!threadId) {
     const agencyCcLock = weddingId
       ? await fetchAgencyCcLock(supabase, photographerId, weddingId)
@@ -116,12 +417,17 @@ async function loadAudienceSnapshot(
       photographerId,
       weddingId,
     );
-    return {
+    const audience: DecisionAudienceSnapshot = {
       threadParticipants: [],
       agencyCcLock,
       broadcastRisk: "unknown",
       recipientCount: 0,
       approvalContactPersonIds,
+      ...DEFAULT_VISIBILITY,
+    };
+    return {
+      audience,
+      inboundSenderAuthority: deriveInboundSenderAuthority([], new Map(), approvalContactPersonIds),
     };
   }
 
@@ -141,16 +447,26 @@ async function loadAudienceSnapshot(
       photographerId,
       weddingId,
     );
-    return {
+    const audience: DecisionAudienceSnapshot = {
       threadParticipants: [],
       agencyCcLock: null,
       broadcastRisk: "unknown",
       recipientCount: 0,
       approvalContactPersonIds,
+      ...DEFAULT_VISIBILITY,
+    };
+    return {
+      audience,
+      inboundSenderAuthority: deriveInboundSenderAuthority([], new Map(), approvalContactPersonIds),
     };
   }
 
   const effectiveWeddingId = weddingId ?? threadRow.wedding_id ?? null;
+  const weddingPeopleByPersonId = await fetchWeddingPeopleByWedding(
+    supabase,
+    photographerId,
+    effectiveWeddingId,
+  );
 
   const { data: parts, error: partErr } = await supabase
     .from("thread_participants")
@@ -189,12 +505,35 @@ async function loadAudienceSnapshot(
     effectiveWeddingId,
   );
 
-  return {
+  const { visibilityClass, clientVisibleForPrivateCommercialRedaction } = resolveAudienceVisibility(
+    threadParticipants,
+    weddingPeopleByPersonId,
+  );
+
+  const audience: DecisionAudienceSnapshot = {
     threadParticipants,
     agencyCcLock,
     broadcastRisk: "unknown",
     recipientCount,
     approvalContactPersonIds,
+    visibilityClass,
+    clientVisibleForPrivateCommercialRedaction,
+  };
+
+  const inboundSenderAuthority = await resolveInboundSenderAuthorityForAudienceLoad(
+    supabase,
+    photographerId,
+    effectiveWeddingId,
+    threadId,
+    threadParticipants,
+    weddingPeopleByPersonId,
+    approvalContactPersonIds,
+    inboundSenderEmailFromIngress,
+  );
+
+  return {
+    audience,
+    inboundSenderAuthority,
   };
 }
 

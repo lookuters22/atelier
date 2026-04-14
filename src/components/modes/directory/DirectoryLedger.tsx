@@ -1,5 +1,13 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  adjacentWeddingIdInOrderedList,
+  isEditableKeyboardTarget,
+  pipelineWeddingAltVerticalDelta,
+  scrollPipelineWeddingRowIntoView,
+  weddingQueuePosition,
+} from "@/lib/pipelineWeddingListNavigation";
 import { useDirectoryMode, matchesCategory, categoryLabel } from "./DirectoryModeContext";
 import type { DirectoryContact } from "../../../data/contactsDirectory";
 
@@ -26,7 +34,58 @@ export function DirectoryLedger() {
     [contacts, activeCategory, searchQuery],
   );
 
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
+  const orderedEmails = useMemo(() => filtered.map((c) => c.email), [filtered]);
+
   const selectedEmail = selectedRow?.kind === "contact" ? selectedRow.data.email : null;
+
+  const contactQueuePosition = useMemo(
+    () => weddingQueuePosition(orderedEmails, selectedEmail),
+    [orderedEmails, selectedEmail],
+  );
+
+  const goPrevContact = useCallback(() => {
+    const email = adjacentWeddingIdInOrderedList(orderedEmails, selectedEmail, -1);
+    if (!email) return;
+    const c = filtered.find((x) => x.email === email);
+    if (c) setSelectedRow({ kind: "contact", data: c });
+  }, [orderedEmails, selectedEmail, filtered, setSelectedRow]);
+
+  const goNextContact = useCallback(() => {
+    const email = adjacentWeddingIdInOrderedList(orderedEmails, selectedEmail, 1);
+    if (!email) return;
+    const c = filtered.find((x) => x.email === email);
+    if (c) setSelectedRow({ kind: "contact", data: c });
+  }, [orderedEmails, selectedEmail, filtered, setSelectedRow]);
+
+  useEffect(() => {
+    if (orderedEmails.length < 2) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const delta = pipelineWeddingAltVerticalDelta(e);
+      if (delta === null) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      const email = adjacentWeddingIdInOrderedList(orderedEmails, selectedEmail, delta);
+      if (!email) return;
+      const c = filtered.find((x) => x.email === email);
+      if (!c) return;
+      if (email === selectedEmail) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedRow({ kind: "contact", data: c });
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [orderedEmails, selectedEmail, filtered, setSelectedRow]);
+
+  useLayoutEffect(() => {
+    if (!selectedEmail) return;
+    const root = listScrollRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-directory-contact-row="${CSS.escape(selectedEmail)}"]`);
+    if (el instanceof HTMLElement) scrollPipelineWeddingRowIntoView(el);
+  }, [selectedEmail, orderedEmails]);
+
   const title = categoryLabel(activeCategory);
 
   return (
@@ -38,10 +97,42 @@ export function DirectoryLedger() {
             {filtered.length} contact{filtered.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <div className="flex items-center" />
+        {orderedEmails.length >= 2 ? (
+          <div
+            role="region"
+            aria-label="Directory contact queue navigation"
+            className="flex shrink-0 items-center gap-1"
+          >
+            {contactQueuePosition ? (
+              <span className="mr-1 tabular-nums text-[12px] text-muted-foreground" aria-live="polite">
+                {contactQueuePosition.current} / {contactQueuePosition.total}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              title="Previous contact (Alt+↑)"
+              aria-label="Previous contact in list"
+              onClick={goPrevContact}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronUp className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+            <button
+              type="button"
+              title="Next contact (Alt+↓)"
+              aria-label="Next contact in list"
+              onClick={goNextContact}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center" />
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={listScrollRef} className="min-h-0 flex-1 overflow-auto">
         <table className="w-full text-left text-[13px]">
           <thead className="sticky top-0 z-10 border-b border-border bg-background text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -65,6 +156,7 @@ export function DirectoryLedger() {
                 return (
                   <tr
                     key={c.email}
+                    data-directory-contact-row={c.email}
                     onClick={() => setSelectedRow({ kind: "contact", data: c })}
                     className={cn(
                       "cursor-pointer border-b border-border/60 transition-colors last:border-0",

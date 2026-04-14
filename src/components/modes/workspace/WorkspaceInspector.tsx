@@ -13,7 +13,14 @@ import {
 import { cn } from "@/lib/utils";
 import { useWorkspaceMode } from "./WorkspaceModeContext";
 import { InvoiceForm } from "./InvoiceForm";
-import type { FinancialsOverviewRow } from "../../../data/weddingFinancials";
+import type { FinancialsOverviewRow, FinancialTransaction } from "../../../data/weddingFinancials";
+
+const TX_METHOD_LABELS: Record<FinancialTransaction["method"], string> = {
+  stripe: "Stripe",
+  bank_transfer: "Bank Transfer",
+  cash: "Cash",
+  check: "Check",
+};
 import { getFinancialsForWedding } from "../../../data/weddingFinancials";
 
 function statusPill(status: string): string {
@@ -91,13 +98,6 @@ function IdleInspector() {
     case "fin-overview":
     case "invoices":
       return <RecentCashflow />;
-    case "transactions":
-      return (
-        <IdleShell
-          icon={<ArrowLeftRight className="h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />}
-          message="Transaction details will appear here when you select a payment record."
-        />
-      );
     case "contracts":
       return (
         <IdleShell
@@ -309,10 +309,66 @@ function FinancialDossier({ row }: { row: FinancialsOverviewRow }) {
   return <ProposalDossier row={row} />;
 }
 
+function TransactionDossier({ tx }: { tx: FinancialTransaction }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col border-l border-border bg-background text-[13px] text-foreground">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-accent/50">
+            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15px] font-semibold text-foreground">Recorded payment</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">{tx.date}</p>
+          </div>
+        </div>
+        <div className="space-y-2 text-[13px]">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Couple</span>
+            <Link to={`/pipeline/${tx.weddingId}`} className="shrink-0 font-medium text-[#2563eb] hover:underline">
+              {tx.couple}
+            </Link>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Amount</span>
+            <span className="font-medium tabular-nums text-emerald-700">
+              +{new Intl.NumberFormat("en", { style: "currency", currency: tx.currency, maximumFractionDigits: 0 }).format(tx.amount)}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Method</span>
+            <span className="text-foreground">{TX_METHOD_LABELS[tx.method]}</span>
+          </div>
+          {tx.note ? (
+            <div className="pt-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Note</p>
+              <p className="mt-1 leading-relaxed text-muted-foreground">{tx.note}</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceInspector() {
-  const { selectedRow, formMode } = useWorkspaceMode();
+  const { selectedRow, formMode, activeIndex, transactions, selectedTransactionId } = useWorkspaceMode();
 
   if (formMode?.kind === "new-invoice") return <InvoiceForm />;
+
+  if (activeIndex === "transactions") {
+    const tx = selectedTransactionId
+      ? transactions.find((t) => t.id === selectedTransactionId)
+      : undefined;
+    if (tx) return <TransactionDossier tx={tx} />;
+    return (
+      <IdleShell
+        icon={<ArrowLeftRight className="h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />}
+        message="Transaction details will appear here when you select a payment record."
+      />
+    );
+  }
+
   if (!selectedRow) return <IdleInspector />;
   return <FinancialDossier row={selectedRow.data} />;
 }
