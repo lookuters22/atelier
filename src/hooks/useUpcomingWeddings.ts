@@ -17,7 +17,7 @@ export function useUpcomingWeddings(photographerId: string, limit = 4) {
 
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  useEffect(() => onDataChanged(refetch), [refetch]);
+  useEffect(() => onDataChanged(refetch, { scopes: ["weddings", "all"] }), [refetch]);
 
   useEffect(() => {
     if (!photographerId) {

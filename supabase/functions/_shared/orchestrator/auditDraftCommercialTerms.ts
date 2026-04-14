@@ -4,6 +4,7 @@
  */
 import type { PlaybookRuleContextRow } from "../../../../src/types/decisionContext.types.ts";
 import type { DecisionContext } from "../../../../src/types/decisionContext.types.ts";
+import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
 
 /** Narrow structured extraction contract (persona writer output). */
 export type CommercialCommittedTerms = {
@@ -24,7 +25,7 @@ export function buildAuthoritativeCommercialContext(
   decisionContext: DecisionContext,
   playbookRules: PlaybookRuleContextRow[],
 ): AuthoritativeCommercialContext {
-  const snap = decisionContext.crmSnapshot ?? {};
+  const snap = decisionContext.crmSnapshot ?? emptyCrmSnapshot();
   const pkg =
     typeof snap.package_name === "string" && snap.package_name.trim().length > 0
       ? snap.package_name.trim()
@@ -83,19 +84,28 @@ function packageNameGrounded(name: string, ctx: AuthoritativeCommercialContext):
   return false;
 }
 
-/** Heuristic: email prose asserts a booking/deposit percentage near commercial keywords. */
+/** Heuristic: email prose asserts a booking/deposit percentage near commercial keywords (`50%`, `50 percent`, `50 pct`). */
 function extractDepositPercentsClaimedInProse(emailLc: string): number[] {
   const out: number[] = [];
-  const re = /\b(\d{1,2}|100)\s*%/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(emailLc)) !== null) {
-    const idx = m.index ?? 0;
+  const nearCommercial = (idx: number): boolean => {
     const window = emailLc.slice(Math.max(0, idx - 80), Math.min(emailLc.length, idx + 80));
-    if (/(retainer|deposit|booking|hold|invoice|payment|balance)/.test(window)) {
-      out.push(parseInt(m[1]!, 10));
-    }
+    return /(retainer|deposit|booking|hold|invoice|payment|balance|due|milestone|installment)/.test(window);
+  };
+
+  const rePct = /\b(\d{1,2}|100)\s*%/g;
+  let m: RegExpExecArray | null;
+  while ((m = rePct.exec(emailLc)) !== null) {
+    const idx = m.index ?? 0;
+    if (nearCommercial(idx)) out.push(parseInt(m[1]!, 10));
   }
-  return out;
+
+  const reWord = /\b(\d{1,2}|100)\s*(?:percent|pct)\b/g;
+  while ((m = reWord.exec(emailLc)) !== null) {
+    const idx = m.index ?? 0;
+    if (nearCommercial(idx)) out.push(parseInt(m[1]!, 10));
+  }
+
+  return [...new Set(out)];
 }
 
 function extractTravelMilesClaimedInProse(emailLc: string): number[] {

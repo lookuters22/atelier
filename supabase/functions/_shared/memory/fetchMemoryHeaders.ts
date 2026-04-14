@@ -6,6 +6,8 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
  */
 export type MemoryHeader = {
   id: string;
+  /** Null = tenant-wide; used to prefer wedding-scoped rows when `weddingId` is in scope. */
+  wedding_id: string | null;
   type: string;
   title: string;
   summary: string;
@@ -22,7 +24,7 @@ export async function fetchMemoryHeaders(
 ): Promise<MemoryHeader[]> {
   let query = supabase
     .from("memories")
-    .select("id, type, title, summary")
+    .select("id, wedding_id, type, title, summary")
     .eq("photographer_id", photographerId);
 
   const scope = typeof weddingId === "string" && weddingId.length > 0 ? weddingId : null;
@@ -36,5 +38,13 @@ export async function fetchMemoryHeaders(
     throw new Error(`fetchMemoryHeaders: ${error.message}`);
   }
 
-  return (data ?? []) as MemoryHeader[];
+  const rows = (data ?? []) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    id: String(r.id ?? ""),
+    wedding_id:
+      r.wedding_id != null && String(r.wedding_id).trim() !== "" ? String(r.wedding_id).trim() : null,
+    type: String(r.type ?? ""),
+    title: String(r.title ?? ""),
+    summary: String(r.summary ?? ""),
+  }));
 }

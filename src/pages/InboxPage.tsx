@@ -84,14 +84,14 @@ function threadToRow(
 
   return {
     id: t.id,
-    wedding: "Unfiled",
-    weddingId: null,
+    wedding: t.weddingId ? (weddingLookup.get(t.weddingId) ?? "Linked project") : "Unfiled",
+    weddingId: t.weddingId,
     subject: t.title,
     snippet: t.snippet,
     sender: t.sender,
     time: formatTimeAgo(t.last_activity_at),
-    badges: ["Unfiled"],
-    categories: ["unfiled"],
+    badges: t.weddingId ? ["Linked"] : ["Unfiled"],
+    categories: t.weddingId ? ["all"] : ["all", "unfiled"],
     suggestedWeddingId: suggestedId,
     suggestedCoupleName: suggestedName,
     suggestedReasoning: meta?.reasoning ?? null,
@@ -101,14 +101,15 @@ function threadToRow(
 
 export function InboxPage() {
   const [searchParams] = useSearchParams();
-  const initialFilter = (searchParams.get("filter") as FilterId) || "unfiled";
+  const initialFilter = (searchParams.get("filter") as FilterId) || "all";
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterId>(initialFilter);
   const panelRef = useRef<HTMLDivElement>(null);
   const [linkSelections, setLinkSelections] = useState<Record<string, string>>({});
 
-  const { unfiledThreads, activeWeddings, isLoading, linkThread, deleteThread } = useUnfiledInbox();
+  const { inboxThreads, activeWeddings, isLoading, loadError, linkThread, deleteThread } =
+    useUnfiledInbox();
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -134,8 +135,8 @@ export function InboxPage() {
   );
 
   const rows = useMemo(
-    () => unfiledThreads.map((t) => threadToRow(t, weddingLookup)),
-    [unfiledThreads, weddingLookup],
+    () => inboxThreads.map((t) => threadToRow(t, weddingLookup)),
+    [inboxThreads, weddingLookup],
   );
 
   const visible = useMemo(() => {
@@ -167,6 +168,15 @@ export function InboxPage() {
           <p className="mt-2 max-w-2xl type-small text-ink-muted">
             Triage across every wedding. Link stray threads once—Atelier keeps the timeline unified.
           </p>
+          {loadError ? (
+            <div
+              className="mt-3 max-w-2xl rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 type-small text-red-700 dark:text-red-300/95"
+              role="alert"
+            >
+              <span className="font-semibold">Could not load Inbox data. </span>
+              <span className="font-mono text-[12px]">{loadError}</span>
+            </div>
+          ) : null}
         </div>
         <div className="relative" ref={panelRef}>
           <button
@@ -269,14 +279,14 @@ export function InboxPage() {
         <div className="rounded-lg border border-dashed border-border bg-canvas/40 px-6 py-12 text-center">
           <p className="type-body font-semibold text-ink">No threads in this view</p>
           <p className="mt-2 type-small text-ink-muted">
-            Try another filter, or open <strong className="text-ink">Unfiled</strong> for stray threads.
+            Try another filter, or switch back to <strong className="text-ink">All messages</strong>.
           </p>
           <button
             type="button"
             className="mt-4 rounded-md border border-border bg-surface px-4 py-2 type-small font-semibold text-ink transition hover:border-white/[0.12]"
-            onClick={() => setActiveFilter("unfiled")}
+            onClick={() => setActiveFilter("all")}
           >
-            Show unfiled
+            Show all messages
           </button>
         </div>
       ) : (

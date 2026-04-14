@@ -11,6 +11,7 @@
 import type { DecisionContext } from "../../../../src/types/decisionContext.types.ts";
 import { buildDecisionContext } from "../../_shared/context/buildDecisionContext.ts";
 import { inngest } from "../../_shared/inngest.ts";
+import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 
@@ -98,6 +99,13 @@ export const contractFollowupFunction = inngest.createFunction(
 
     if (!threadId) {
       return { skipped: true as const, reason: "no_thread_for_wedding" };
+    }
+
+    const onHold = await step.run("check-v3-operator-hold", async () =>
+      isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId),
+    );
+    if (onHold) {
+      return { skipped: true as const, reason: "v3_operator_hold" as const };
     }
 
     await step.run("draft-contract-check-in", async () => {

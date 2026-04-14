@@ -1,6 +1,14 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import {
+  adjacentWeddingIdInOrderedList,
+  isEditableKeyboardTarget,
+  pipelineWeddingAltVerticalDelta,
+  scrollPipelineWeddingRowIntoView,
+  weddingQueuePosition,
+} from "@/lib/pipelineWeddingListNavigation";
 import { useWorkspaceMode } from "./WorkspaceModeContext";
 import { FinancialOverview } from "./FinancialOverview";
 import { InvoiceLedger } from "./InvoiceLedger";
@@ -34,6 +42,10 @@ function matchesFinancialSearch(r: FinancialsOverviewRow, q: string): boolean {
   );
 }
 
+function financialRowQueueKey(r: FinancialsOverviewRow): string {
+  return `${r.kind}-${r.id}`;
+}
+
 function GenericFinancialsLedger() {
   const { activeIndex, financialRows, searchQuery, selectedRow, setSelectedRow } = useWorkspaceMode();
 
@@ -47,7 +59,60 @@ function GenericFinancialsLedger() {
     [financialRows, kind, searchQuery],
   );
 
-  const selectedId = selectedRow?.kind === "financial" ? selectedRow.data.id : null;
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
+  const orderedKeys = useMemo(() => filtered.map(financialRowQueueKey), [filtered]);
+
+  const selectedKey = useMemo(() => {
+    if (selectedRow?.kind !== "financial" || selectedRow.data.kind !== kind) return null;
+    return financialRowQueueKey(selectedRow.data);
+  }, [selectedRow, kind]);
+
+  const queuePosition = useMemo(
+    () => weddingQueuePosition(orderedKeys, selectedKey),
+    [orderedKeys, selectedKey],
+  );
+
+  const goPrevRow = useCallback(() => {
+    const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, -1);
+    if (!k) return;
+    const r = filtered.find((row) => financialRowQueueKey(row) === k);
+    if (r) setSelectedRow({ kind: "financial", data: r });
+  }, [orderedKeys, selectedKey, filtered, setSelectedRow]);
+
+  const goNextRow = useCallback(() => {
+    const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, 1);
+    if (!k) return;
+    const r = filtered.find((row) => financialRowQueueKey(row) === k);
+    if (r) setSelectedRow({ kind: "financial", data: r });
+  }, [orderedKeys, selectedKey, filtered, setSelectedRow]);
+
+  useEffect(() => {
+    if (orderedKeys.length < 2) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const delta = pipelineWeddingAltVerticalDelta(e);
+      if (delta === null) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, delta);
+      if (!k) return;
+      const r = filtered.find((row) => financialRowQueueKey(row) === k);
+      if (!r) return;
+      if (k === selectedKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedRow({ kind: "financial", data: r });
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [orderedKeys, selectedKey, filtered, setSelectedRow]);
+
+  useLayoutEffect(() => {
+    if (!selectedKey) return;
+    const root = listScrollRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-workspace-financial-row="${CSS.escape(selectedKey)}"]`);
+    if (el instanceof HTMLElement) scrollPipelineWeddingRowIntoView(el);
+  }, [selectedKey, orderedKeys]);
 
   const title = kind === "contract" ? "Agreements & Contracts" : "Proposals";
   const subtitle = `${filtered.length} ${kind}${filtered.length !== 1 ? "s" : ""}`;
@@ -59,10 +124,42 @@ function GenericFinancialsLedger() {
           <h2 className="text-lg font-semibold text-foreground">{title}</h2>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
-        <div className="flex items-center" />
+        {orderedKeys.length >= 2 ? (
+          <div
+            role="region"
+            aria-label="Proposals and contracts table queue navigation"
+            className="flex shrink-0 items-center gap-1"
+          >
+            {queuePosition ? (
+              <span className="mr-1 tabular-nums text-[12px] text-muted-foreground" aria-live="polite">
+                {queuePosition.current} / {queuePosition.total}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              title="Previous row (Alt+↑)"
+              aria-label="Previous row in list"
+              onClick={goPrevRow}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronUp className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+            <button
+              type="button"
+              title="Next row (Alt+↓)"
+              aria-label="Next row in list"
+              onClick={goNextRow}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+            >
+              <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center" />
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={listScrollRef} className="min-h-0 flex-1 overflow-auto">
         <table className="w-full text-left text-[13px]">
           <thead className="sticky top-0 z-10 border-b border-border bg-background text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -83,10 +180,15 @@ function GenericFinancialsLedger() {
               </tr>
             ) : (
               filtered.map((r) => {
-                const isSelected = selectedId === r.id;
+                const isSelected =
+                  selectedRow?.kind === "financial" &&
+                  selectedRow.data.kind === r.kind &&
+                  selectedRow.data.id === r.id;
+                const qk = financialRowQueueKey(r);
                 return (
                   <tr
-                    key={`${r.kind}-${r.id}`}
+                    key={qk}
+                    data-workspace-financial-row={qk}
                     onClick={() => setSelectedRow({ kind: "financial", data: r })}
                     className={cn(
                       "cursor-pointer border-b border-border/60 transition-colors last:border-0",

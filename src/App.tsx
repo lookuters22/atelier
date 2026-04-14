@@ -106,10 +106,17 @@ export default function App() {
         {/* Settings mode */}
         <Route path="settings" element={<SettingsHubPage />} />
         <Route path="settings/ai" element={<Navigate to="/settings" replace />} />
-
-        {/* Phase 11 Step 11C — escalation surface (content from FourPaneLayout ModeSwitch) */}
-        <Route path="escalations" element={null} />
       </Route>
+
+      {/* Escalations are surfaced on Today only; keep bookmark compatibility */}
+      <Route
+        path="escalations"
+        element={
+          <ProtectedRoute>
+            <Navigate to="/today" replace />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Legacy redirects */}
       <Route path="wedding/:weddingId" element={<RedirectToPipeline />} />

@@ -7,37 +7,8 @@
  *
  * Set OPENAI_API_KEY in Supabase Edge Function secrets.
  */
+import { generateTextEmbeddingSmall } from "../embeddings/generateTextEmbeddingSmall.ts";
 import { supabaseAdmin } from "../supabase.ts";
-
-// ── Embedding helper ─────────────────────────────────────────────
-
-async function generateEmbedding(text: string): Promise<number[]> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
-
-  const res = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "text-embedding-3-small",
-      input: text,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`OpenAI Embeddings API error ${res.status}: ${body}`);
-  }
-
-  const json = (await res.json()) as {
-    data: { embedding: number[] }[];
-  };
-
-  return json.data[0].embedding;
-}
 
 // ── AgentKit tool definition ─────────────────────────────────────
 
@@ -82,7 +53,12 @@ export const searchPastCommunications = {
   handler: async (params: RagToolParams): Promise<string> => {
     const { query, photographer_id, document_type } = params;
 
-    const embedding = await generateEmbedding(query);
+    const queryTrim = String(query ?? "").trim();
+    if (!queryTrim) {
+      return "No relevant documents found in the knowledge base for this query.";
+    }
+
+    const embedding = await generateTextEmbeddingSmall(queryTrim);
 
     const { data, error } = await supabaseAdmin.rpc("match_knowledge", {
       query_embedding: embedding,

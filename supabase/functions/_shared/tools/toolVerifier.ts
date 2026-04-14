@@ -1,17 +1,25 @@
 import type { AgentResult } from "../../../../src/types/agent.types.ts";
 import {
   type VerifierBlockTelemetryAttribution,
-  logBlocksByVerifier,
 } from "../telemetry/telemetryV315Step115a.ts";
 import { ToolVerifierInputSchema } from "./schemas.ts";
-
-const RULE_ID = "broadcast_risk_high_blocks_auto" as const;
+import { composeToolVerifierAgentResult } from "./toolVerifierCompose.ts";
 
 /**
- * `toolVerifier` — mandatory gate before execution (execute_v3 Step 6D).
+ * `toolVerifier` — mandatory **pre-generation** gate before execution (execute_v3 Step 6D).
  *
- * **Implemented rule (narrow slice):** if `broadcastRisk === "high"`, block `auto` execution
- * for this message (message-level gate; does not mutate thread overrides).
+ * **Verifier vs Output Auditor:** This tool evaluates **action allowance, intent, and decision context**
+ * before draft/persona generation. It does **not** audit final client-facing prose; post-generation checks
+ * (e.g. planner-private leakage) live in output auditors, not here.
+ *
+ * **Layer 1 — broadcast:** high `broadcastRisk` blocks `auto` (Step 6D.1 escalation shape when required).
+ *
+ * **Layer 2 — policy gate:** when `policyGate` is present, deterministic rules use audience, playbook
+ * metadata, escalation counts, retrieval trace signals, and memory **types/ids only** (no raw body text).
+ * Coercions set `facts.verifierStage` / `pipelineHaltsBeforeExternalSend` so autonomous **send/commit**
+ * stops while **draft** generation may still proceed when stage is `draft_only`.
+ *
+ * **Truth hierarchy:** playbook remains primary; memories are supporting signals only.
  */
 export async function executeToolVerifier(
   input: unknown,
@@ -30,48 +38,16 @@ export async function executeToolVerifier(
     }
 
     const d = parsed.data;
-    const blocked =
-      d.broadcastRisk === "high" && d.requestedExecutionMode === "auto";
-
-    if (blocked) {
-      logBlocksByVerifier({
-        metric: "blocks_by_verifier",
-        rule_id: RULE_ID,
-        photographer_id: photographerId,
-        broadcast_risk: d.broadcastRisk,
-        requested_execution_mode: d.requestedExecutionMode,
-        thread_id: telemetry?.thread_id ?? null,
-        wedding_id: telemetry?.wedding_id ?? null,
-        source_event: telemetry?.source_event ?? null,
-        risk_class: telemetry?.risk_class ?? d.broadcastRisk,
-      });
-      return {
-        success: false,
-        facts: {
-          verifier: "toolVerifier",
-          ruleId: RULE_ID,
-          broadcastRisk: d.broadcastRisk,
-          requestedExecutionMode: d.requestedExecutionMode,
-          photographerId,
-          escalation: d.escalation,
-        },
-        confidence: 1,
-        error: "broadcast_risk_high_blocks_auto_execution",
-      };
-    }
-
-    return {
-      success: true,
-      facts: {
-        verifier: "toolVerifier",
-        ruleId: "broadcast_risk_gate_passed",
+    return composeToolVerifierAgentResult(
+      {
         broadcastRisk: d.broadcastRisk,
         requestedExecutionMode: d.requestedExecutionMode,
-        photographerId,
+        policyGate: d.policyGate,
+        escalation: d.escalation as Record<string, unknown> | undefined,
       },
-      confidence: 1,
-      error: null,
-    };
+      photographerId,
+      telemetry,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {

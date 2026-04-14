@@ -188,9 +188,67 @@ export const CalculatorToolInputSchema = z
   })
   .strict();
 
+const AudienceVisibilityClassSchema = z.enum([
+  "planner_only",
+  "client_visible",
+  "vendor_only",
+  "internal_only",
+  "mixed_audience",
+]);
+
 /**
- * `toolVerifier` — execute_v3 Phase 6 Step 6D (narrow slice: broadcast risk only).
- * Backend-resolved `broadcastRisk` + intended execution mode; extend schema in later steps.
+ * Bounded snapshot from `DecisionContext` for verifier policy gate (no raw memory / KB text).
+ */
+export const VerifierPolicyGateSchema = z
+  .object({
+    audience: z
+      .object({
+        visibilityClass: AudienceVisibilityClassSchema,
+        clientVisibleForPrivateCommercialRedaction: z.boolean(),
+        broadcastRisk: z.enum(["low", "medium", "high", "unknown"]),
+        recipientCount: z.number().int().min(0),
+      })
+      .strict(),
+    playbookRules: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            action_key: z.string(),
+            decision_mode: z.enum(["auto", "draft_only", "ask_first", "forbidden"]).nullable(),
+            topic: z.string().nullable(),
+            is_active: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(512),
+    selectedMemoriesSummary: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            type: z.string(),
+          })
+          .strict(),
+      )
+      .max(16),
+    globalKnowledgeLoadedCount: z.number().int().min(0),
+    retrievalTrace: z
+      .object({
+        globalKnowledgeFetch: z.enum(["queried", "skipped_by_gate"]),
+        globalKnowledgeGateDetail: z.string().optional(),
+        selectedMemoryIdsResolved: z.array(z.string()).max(32),
+      })
+      .strict()
+      .optional(),
+    escalationOpenCount: z.number().int().min(0),
+    /** When set, verifier merges `decision_mode` only for playbook rows with this exact `action_key`. */
+    policyEvaluationActionKey: z.string().min(1).optional(),
+  })
+  .strict();
+
+/**
+ * `toolVerifier` — execute_v3 Phase 6 Step 6D. Broadcast risk + optional policy gate from `DecisionContext`.
  * Step 6D.1: when high broadcast risk would block `auto`, `escalation` is required.
  */
 export const ToolVerifierInputSchema = z
@@ -198,6 +256,7 @@ export const ToolVerifierInputSchema = z
     broadcastRisk: z.enum(["low", "medium", "high", "unknown"]),
     requestedExecutionMode: z.enum(["auto", "draft_only", "ask_first", "forbidden"]),
     escalation: EscalationReadyShapeSchema.optional(),
+    policyGate: VerifierPolicyGateSchema.optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -232,5 +291,6 @@ export type TravelToolInput = z.infer<typeof TravelToolInputSchema>;
 export type CrmToolInput = z.infer<typeof CrmToolInputSchema>;
 export type CalculatorToolInput = z.infer<typeof CalculatorToolInputSchema>;
 export type ToolVerifierInput = z.infer<typeof ToolVerifierInputSchema>;
+export type VerifierPolicyGate = z.infer<typeof VerifierPolicyGateSchema>;
 export type EscalationReadyShape = z.infer<typeof EscalationReadyShapeSchema>;
 export type ToolEscalateInput = z.infer<typeof ToolEscalateInputSchema>;

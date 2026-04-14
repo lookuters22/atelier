@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 import { onDataChanged } from "../lib/events";
 
@@ -25,36 +26,55 @@ function timeAgo(date: Date): string {
 }
 
 export function useNotifications(routePrefix = "") {
+  const { photographerId } = useAuth();
   const [items, setItems] = useState<NotificationItem[]>([]);
-  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [fetchKey, setFetchKey] = useState(0);
 
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  useEffect(() => onDataChanged(refetch), [refetch]);
+  useEffect(
+    () =>
+      onDataChanged(refetch, {
+        scopes: ["tasks", "drafts", "inbox", "all"],
+      }),
+    [refetch],
+  );
 
   useEffect(() => {
+    if (!photographerId) {
+      setItems([]);
+      setIsLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setIsLoading(true);
 
+    /** A1: same open-task projection as `useTasks` (flat wedding labels). */
     const q1 = supabase
-      .from("tasks")
-      .select("id, title, due_date, weddings(couple_names)")
-      .eq("status", "open")
+      .from("v_open_tasks_with_wedding")
+      .select("id, title, due_date")
+      .eq("photographer_id", photographerId)
       .order("due_date", { ascending: true })
       .limit(5);
 
+    /** A1: flat pending-draft projection (same source as Approvals / Today metrics). */
     const q2 = supabase
-      .from("drafts")
-      .select("id, body, threads(title, weddings(couple_names))")
-      .eq("status", "pending_approval")
+      .from("v_pending_approval_drafts")
+      .select("id, couple_names, thread_title, created_at")
+      .eq("photographer_id", photographerId)
+      .order("created_at", { ascending: false })
       .limit(5);
 
+    /** A1: unfiled threads via inbox projection (consistent with Inbox / Today unfiled count). */
     const q3 = supabase
-      .from("threads")
+      .from("v_threads_inbox_latest_message")
       .select("id, title, last_activity_at")
+      .eq("photographer_id", photographerId)
       .is("wedding_id", null)
+      .neq("kind", "other")
       .order("last_activity_at", { ascending: false })
       .limit(5);
 
@@ -77,10 +97,11 @@ export function useNotifications(routePrefix = "") {
       }
 
       for (const row of (r2.data ?? []) as Record<string, unknown>[]) {
-        const thread = row.threads as Record<string, unknown> | null;
-        const wedding = thread?.weddings as Record<string, unknown> | null;
-        const coupleName = (wedding?.couple_names as string) ?? "Unknown";
-        const threadTitle = (thread?.title as string) ?? "";
+        const coupleName =
+          typeof row.couple_names === "string" ? row.couple_names : "Unknown";
+        const threadTitle = typeof row.thread_title === "string" ? row.thread_title : "";
+        const created =
+          typeof row.created_at === "string" ? new Date(row.created_at as string) : new Date();
         notifications.push({
           id: `draft-${row.id}`,
           kind: "draft",
@@ -88,7 +109,7 @@ export function useNotifications(routePrefix = "") {
           body: `${coupleName} \u2014 ${threadTitle}`.slice(0, 80),
           time: "Pending",
           href: `${routePrefix}/approvals`,
-          sortKey: Date.now(),
+          sortKey: created.getTime(),
         });
       }
 
@@ -113,7 +134,7 @@ export function useNotifications(routePrefix = "") {
     return () => {
       cancelled = true;
     };
-  }, [routePrefix, fetchKey]);
+  }, [routePrefix, photographerId, fetchKey]);
 
   const unreadCount = items.filter((n) => !readIds.has(n.id)).length;
 

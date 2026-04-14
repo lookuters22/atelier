@@ -15,7 +15,7 @@ function formatDueDate(iso: string): string {
 }
 
 export function TasksPage() {
-  const { tasks, isLoading, completeTask } = useTasks();
+  const { tasks, isLoading, error, completeTask } = useTasks();
 
   if (isLoading) {
     return <ListPageSkeleton />;
@@ -23,6 +23,15 @@ export function TasksPage() {
 
   return (
     <div className="space-y-6">
+      {error ? (
+        <div
+          className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-[13px] text-red-700 dark:text-red-300"
+          role="alert"
+        >
+          <p className="font-medium">Could not load tasks</p>
+          <p className="mt-1 font-mono text-[11px] leading-snug break-words">{error}</p>
+        </div>
+      ) : null}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Tasks</h1>
         <p className="mt-2 max-w-2xl text-[14px] text-ink-muted">

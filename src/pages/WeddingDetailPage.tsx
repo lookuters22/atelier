@@ -66,6 +66,7 @@ export function WeddingDetailInner({
   clients,
   liveThreads,
   liveTasks,
+  timelineFetchEpoch = 0,
 }: {
   weddingId: string;
   entry: WeddingEntry;
@@ -73,6 +74,8 @@ export function WeddingDetailInner({
   clients: Tables<"clients">[];
   liveThreads: ThreadWithDrafts[];
   liveTasks: ProjectTask[];
+  /** Bumps when `useWeddingProject` refetches — reloads active thread messages. */
+  timelineFetchEpoch?: number;
 }) {
 
   const { toast, showToast } = useTimedToast();
@@ -80,7 +83,13 @@ export function WeddingDetailInner({
   const travelPlan = getTravelForWedding(weddingId);
   const { tab, setTabAndUrl } = useWeddingTabState();
   const detailState = useWeddingDetailState({ weddingId, entry, liveClients: clients, showToast });
-  const threadState = useWeddingThreads({ weddingId, photographerId, liveThreads, showToast });
+  const threadState = useWeddingThreads({
+    weddingId,
+    photographerId,
+    liveThreads,
+    showToast,
+    timelineFetchEpoch,
+  });
   const composerState = useWeddingComposer({
     activeThread: threadState.activeThread,
     people: detailState.people,
@@ -90,6 +99,7 @@ export function WeddingDetailInner({
     photographerId,
     sendMessage,
     showToast,
+    onAfterMessageSent: threadState.refreshActiveThreadMessages,
   });
 
   return (
@@ -215,7 +225,7 @@ export function WeddingDetailInner({
 
 export function WeddingDetailPage() {
   const { weddingId } = useParams();
-  const { project, timeline, tasks, isLoading, error } = useWeddingProject(weddingId);
+  const { project, timeline, tasks, isLoading, error, timelineFetchEpoch } = useWeddingProject(weddingId);
 
   if (isLoading) {
     return <WeddingDetailSkeleton />;
@@ -241,6 +251,7 @@ export function WeddingDetailPage() {
       clients={project.clients}
       liveThreads={timeline}
       liveTasks={tasks}
+      timelineFetchEpoch={timelineFetchEpoch}
     />
   );
 }

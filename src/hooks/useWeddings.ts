@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { fireDataChanged } from "../lib/events";
+import { fireDataChanged, onDataChanged } from "../lib/events";
 import type { Tables } from "../types/database.types";
 
 type Wedding = Tables<"weddings">;
@@ -29,6 +29,7 @@ export function useWeddings(photographerId: string) {
       .select("*")
       .eq("photographer_id", photographerId)
       .order("wedding_date", { ascending: false })
+      .limit(500)
       .then(({ data: rows, error: err }) => {
         if (cancelled) return;
         if (err) {
@@ -45,6 +46,9 @@ export function useWeddings(photographerId: string) {
     };
   }, [photographerId, fetchKey]);
 
+  /** Keep Inbox / Pipeline project rails in sync after Settings (e.g. G5 grouped Gmail approve) or other writes that call `fireDataChanged`. */
+  useEffect(() => onDataChanged(refetch, { scopes: ["weddings", "all"] }), [refetch]);
+
   async function deleteWedding(weddingId: string) {
     setData((prev) => prev.filter((w) => w.id !== weddingId));
 
@@ -54,7 +58,7 @@ export function useWeddings(photographerId: string) {
       console.error("deleteWedding error:", delErr.message);
       refetch();
     } else {
-      fireDataChanged();
+      fireDataChanged("weddings");
     }
   }
 

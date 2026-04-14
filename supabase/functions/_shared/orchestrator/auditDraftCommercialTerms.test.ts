@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { auditDraftTerms, buildAuthoritativeCommercialContext } from "./auditDraftCommercialTerms.ts";
 import type { DecisionContext } from "../../../../src/types/decisionContext.types.ts";
+import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
 import type { PlaybookRuleContextRow } from "../../../../src/types/decisionContext.types.ts";
 
 function minimalDc(over: Partial<DecisionContext> = {}): DecisionContext {
@@ -11,16 +12,41 @@ function minimalDc(over: Partial<DecisionContext> = {}): DecisionContext {
     threadId: "t",
     replyChannel: "email",
     rawMessage: "",
-    crmSnapshot: {},
+    crmSnapshot: emptyCrmSnapshot(),
     recentMessages: [],
     threadSummary: null,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
-    audience: { broadcastRisk: "low" },
+    audience: {
+      threadParticipants: [],
+      agencyCcLock: null,
+      broadcastRisk: "low",
+      recipientCount: 0,
+      visibilityClass: "client_visible",
+      clientVisibleForPrivateCommercialRedaction: true,
+      approvalContactPersonIds: [],
+    },
     candidateWeddingIds: [],
+    rawPlaybookRules: [],
+    authorizedCaseExceptions: [],
     playbookRules: [],
     threadDraftsSummary: null,
+    inboundSenderIdentity: null,
+    inboundSenderAuthority: {
+      bucket: "unknown",
+      personId: null,
+      isApprovalContact: false,
+      source: "unresolved",
+    },
+    retrievalTrace: {
+      selectedMemoryIdsResolved: [],
+      selectedMemoriesLoadedCount: 0,
+      globalKnowledgeIdsLoaded: [],
+      globalKnowledgeLoadedCount: 0,
+      globalKnowledgeFetch: "skipped_by_gate",
+      globalKnowledgeGateDetail: "skipped_no_heuristic_signal",
+    },
     ...over,
   } as DecisionContext;
 }
@@ -46,6 +72,19 @@ describe("auditDraftTerms", () => {
     expect(r.isValid).toBe(false);
     if (r.isValid === false) {
       expect(r.violations.some((v) => v.includes("30%"))).toBe(true);
+    }
+  });
+
+  it("fails when email prose asserts deposit as words (percent) with no playbook grounding", () => {
+    const ctx = buildAuthoritativeCommercialContext(minimalDc(), []);
+    const r = auditDraftTerms(
+      { package_names: [], deposit_percentage: null, travel_miles_included: null },
+      ctx,
+      "We typically take a 50 percent deposit to secure the wedding date.",
+    );
+    expect(r.isValid).toBe(false);
+    if (r.isValid === false) {
+      expect(r.violations.some((v) => v.includes("50%") || v.includes("50 percent"))).toBe(true);
     }
   });
 

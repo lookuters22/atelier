@@ -12,26 +12,40 @@
  * - Optional context notes → `memories` (operator_whatsapp_note)
  * - Step 8E: `delivery_policy` on escalations → triage worker (urgent WhatsApp vs batch vs dashboard-only);
  *   orchestrator skips duplicate WhatsApp when an escalation row is created.
- * - Step 9A: answered escalations get `learning_outcome` via `classifyEscalationLearningOutcome` (one classifier module).
- * - Step 9B / 9B.1: `writebackEscalationLearning` + strict single storage target (playbook vs memory vs documents audit).
+ * - Step 9A–9B: `resolveOperatorEscalationResolution` — learning-loop classifier + Zod + atomic RPC by default;
+ *   sensitive/compliance escalations still use legacy `completeEscalationResolutionAtomic` → `documents` audit RPC;
+ *   V3 operator hold is cleared inside the resolver (single ownership — not duplicated here).
  * - Step 9E: resolution text is written only in the writeback primary store — not duplicated on `escalation_requests` before writeback.
  * - Step 10D: deduped `Awaiting reply:` tasks via `create_awaiting_reply_task`; inbound disposition (answered/deferral/unresolved) when no open escalation.
  */
 import { classifyAwaitingReplyDisposition } from "../../_shared/classifyAwaitingReplyDisposition.ts";
-import { classifyEscalationLearningOutcome } from "../../_shared/classifyEscalationLearningOutcome.ts";
+import {
+  truncateOperatorOrchestratorChatMessage,
+  truncateOperatorOrchestratorEscalationQuestion,
+  truncateOperatorOrchestratorEscalationReply,
+  truncateOperatorOrchestratorToolOutput,
+} from "../../_shared/operatorOrchestratorA5Budget.ts";
 import {
   applyAwaitingReplyDisposition,
   DEFERRAL_DUE_POLICY_DAYS,
   findEarliestOpenAwaitingReplyTask,
 } from "../../_shared/operatorAwaitingReplyTask.ts";
-import { writebackEscalationLearning } from "../../_shared/writebackEscalationLearning.ts";
+import { classifyOperatorWhatsAppEscalationResolutionBundle } from "../../_shared/learning/classifyOperatorWhatsAppEscalationResolutionBundle.ts";
+import { resolveOperatorEscalationResolution } from "../../_shared/learning/resolveOperatorEscalationResolution.ts";
 import {
   inngest,
   WHATSAPP_OPERATOR_INBOUND_V1_EVENT,
 } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import { sendWhatsAppMessage } from "../../_shared/twilio.ts";
+import { fetchOpenEscalationForOperatorInbound } from "../../_shared/operator/operatorEscalationMatching.ts";
+import { appendEscalationOperatorTurn } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { handleOperatorDataToolCall } from "../../_shared/operatorDataTools.ts";
+import {
+  createModelInvocationLogger,
+  logModelInvocation,
+  type ModelInvocationLogFn,
+} from "../../_shared/telemetry/modelInvocationLog.ts";
 
 const MODEL = "gpt-4o-mini";
 const OPERATOR_THREAD_EXTERNAL_KEY = "operator_whatsapp_inbound";
@@ -175,6 +189,25 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_compliance_library_download_link",
+      description:
+        "Get a short-lived HTTPS download link for an on-file studio compliance document in Storage (public liability COI or venue/security packet). Only if the file already exists — returns error JSON if missing.",
+      parameters: {
+        type: "object",
+        properties: {
+          library_key: {
+            type: "string",
+            enum: ["public_liability_coi", "venue_security_compliance_packet"],
+            description: "Which standard compliance library object to download.",
+          },
+        },
+        required: ["library_key"],
+      },
+    },
+  },
 ];
 
 const SYSTEM_PROMPT = `You are Ana's operator control channel on WhatsApp for one wedding studio.
@@ -190,6 +223,7 @@ BEHAVIOR:
 - For anything that changes money, legal commitment, or client-facing promises without a clear studio rule, call record_operator_escalation with one concise yes/no style question. Set delivery_policy: urgent_now for time-sensitive or risk; batch_later for non-urgent FYIs; dashboard_only when no ping is needed.
 - For important follow-ups that need a photographer answer by a known date, use create_awaiting_reply_task with explicit due_date (ISO) — never invent relative dates.
 - For "I already got the timeline", "I met them yesterday", "remember X for this wedding" — call capture_operator_context with a clear summary.
+- For the on-file COI or venue/security compliance PDF already stored in the compliance library — use get_compliance_library_download_link with the correct library_key so the photographer can open or forward a time-limited link.
 - SEARCH: use a single first name or city keyword in query_weddings / query_clients, not full sentences.
 
 CONVERSATION HISTORY may follow; use it for pronouns.`;
@@ -201,12 +235,22 @@ type OaiMessage = {
   tool_call_id?: string;
 };
 
-async function callOpenAI(messages: OaiMessage[]): Promise<{
+async function callOpenAI(
+  messages: OaiMessage[],
+  logInvocation?: ModelInvocationLogFn,
+): Promise<{
   content: string | null;
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
 }> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+  (logInvocation ?? logModelInvocation)({
+    source: "operator_orchestrator",
+    model: MODEL,
+    phase: "chat_completions_tools",
+    workflow: "operator-whatsapp-orchestrator",
+  });
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -235,9 +279,25 @@ async function callOpenAI(messages: OaiMessage[]): Promise<{
 async function classifyEscalationResolution(
   questionBody: string,
   photographerReply: string,
+  logInvocation?: ModelInvocationLogFn,
 ): Promise<{ resolves: boolean; resolution_summary: string }> {
+  const replyTrim = photographerReply.trim();
+  if (replyTrim.length === 0) {
+    return { resolves: false, resolution_summary: "" };
+  }
+
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+
+  const questionForPrompt = truncateOperatorOrchestratorEscalationQuestion(questionBody);
+  const replyForPrompt = truncateOperatorOrchestratorEscalationReply(replyTrim);
+
+  (logInvocation ?? logModelInvocation)({
+    source: "operator_orchestrator",
+    model: MODEL,
+    phase: "escalation_resolution_classify",
+    workflow: "operator-whatsapp-orchestrator",
+  });
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -258,7 +318,7 @@ async function classifyEscalationResolution(
         },
         {
           role: "user",
-          content: `Pending question:\n${questionBody}\n\nPhotographer reply:\n${photographerReply}`,
+          content: `Pending question:\n${questionForPrompt}\n\nPhotographer reply:\n${replyForPrompt}`,
         },
       ],
     }),
@@ -329,78 +389,98 @@ export const operatorOrchestratorFunction = inngest.createFunction(
       return { status: "skipped", reason: "missing_fields" };
     }
 
+    const runId = crypto.randomUUID();
+    const eventId =
+      event && typeof event === "object" && "id" in event && typeof (event as { id?: unknown }).id === "string"
+        ? (event as { id: string }).id
+        : undefined;
+    const modelInvocationLog = createModelInvocationLogger({
+      runId,
+      eventId,
+      workflow: "operator-whatsapp-orchestrator",
+    });
+
     const threadId = await step.run("resolve-operator-thread", () => getOperatorThreadId(photographerId));
 
     const pending = await step.run("fetch-latest-open-escalation", async () => {
-      const { data: row } = await supabaseAdmin
-        .from("escalation_requests")
-        .select("id, question_body, created_at, action_key, wedding_id, reason_code, decision_justification")
-        .eq("photographer_id", photographerId)
-        .eq("thread_id", threadId)
-        .eq("status", "open")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      return row as {
-        id: string;
-        question_body: string;
-        action_key: string;
-        wedding_id: string | null;
-        reason_code: string;
-        decision_justification: unknown;
-      } | null;
+      return await fetchOpenEscalationForOperatorInbound(supabaseAdmin, {
+        photographerId,
+        operatorThreadId: threadId,
+        rawMessage,
+      });
     });
 
     if (pending) {
-      const decision = await step.run("classify-escalation-reply", () =>
-        classifyEscalationResolution(pending.question_body, rawMessage),
-      );
-
-      if (decision.resolves && decision.resolution_summary) {
-        const learningOutcome = await step.run("classify-escalation-learning-outcome", () =>
-          classifyEscalationLearningOutcome({
-            questionBody: pending.question_body,
-            photographerReply: rawMessage,
-            resolutionSummary: decision.resolution_summary,
-            actionKey: pending.action_key,
-            weddingId: pending.wedding_id,
-          }),
+      const classified = await step.run("classify-escalation-reply-bundle", async () => {
+        const bundle = await classifyOperatorWhatsAppEscalationResolutionBundle(
+          pending.question_body,
+          rawMessage,
+          {
+            learningContext: {
+              actionKey: pending.action_key,
+              weddingId: pending.wedding_id,
+            },
+            logInvocation: modelInvocationLog,
+          },
         );
+        if (!bundle.ok) {
+          const legacy = await classifyEscalationResolution(
+            pending.question_body,
+            rawMessage,
+            modelInvocationLog,
+          );
+          return { use: "legacy" as const, legacy };
+        }
+        return { use: "bundle" as const, bundle };
+      });
 
-        await step.run("apply-escalation-resolution", async () => {
-          const { error } = await supabaseAdmin
-            .from("escalation_requests")
-            .update({
-              status: "answered",
-              resolved_at: new Date().toISOString(),
-              resolved_decision_mode: "auto",
-              resolution_storage_target: null,
-              resolution_text: null,
-              learning_outcome: learningOutcome,
-            })
-            .eq("id", pending.id)
-            .eq("photographer_id", photographerId);
+      const resolves =
+        classified.use === "legacy" ? classified.legacy.resolves : classified.bundle.resolves;
+      const resolutionSummary =
+        classified.use === "legacy"
+          ? classified.legacy.resolution_summary
+          : classified.bundle.resolution_summary;
+      const prefetchedLearningOutcome =
+        classified.use === "legacy" ? undefined : classified.bundle.learning_outcome;
 
-          if (error) throw new Error(error.message);
-        });
-
-        const writeback = await step.run("writeback-escalation-learning", () =>
-          writebackEscalationLearning(supabaseAdmin, {
+      if (resolves && resolutionSummary) {
+        await step.run("append-escalation-operator-inbound", async () => {
+          await appendEscalationOperatorTurn(supabaseAdmin, {
             photographerId,
             escalationId: pending.id,
-            learningOutcome,
-            reasonCode: pending.reason_code,
-            actionKey: pending.action_key,
-            decisionJustification: pending.decision_justification,
-            weddingId: pending.wedding_id,
-            questionBody: pending.question_body,
-            resolutionSummary: decision.resolution_summary,
-          }),
-        );
+            direction: "in",
+            body: rawMessage,
+          });
+        });
+
+        const resolution = await step.run("resolve-operator-escalation-resolution", async () => {
+          const r = await resolveOperatorEscalationResolution(supabaseAdmin, {
+            photographerId,
+            escalationId: pending.id,
+            resolutionSummary,
+            photographerReplyRaw: rawMessage,
+            telemetryLogger: modelInvocationLog,
+            ...(prefetchedLearningOutcome !== undefined
+              ? { prefetchedLearningOutcome }
+              : {}),
+          });
+          if (!r.ok) {
+            const err = r.error;
+            const msg =
+              err.code === "RPC_FAILED" || err.code === "LEGACY_ATOMIC_FAILED"
+                ? err.message
+                : err.code === "VALIDATION_FAILED"
+                  ? "VALIDATION_FAILED"
+                  : err.code === "CLASSIFIER_FAILED"
+                    ? err.detail
+                    : err.code;
+            throw new Error(`resolveOperatorEscalationResolution: ${msg}`);
+          }
+          return r;
+        });
 
         const ack = await step.run("reply-escalation-ack", async () => {
-          const line = `Recorded: ${decision.resolution_summary}`.slice(0, 1600);
+          const line = `Recorded: ${resolutionSummary}`.slice(0, 1600);
           await supabaseAdmin.from("messages").insert({
             thread_id: threadId,
             photographer_id: photographerId,
@@ -415,12 +495,18 @@ export const operatorOrchestratorFunction = inngest.createFunction(
           return await sendWhatsAppMessage(operatorFromNumber, line);
         });
 
+        const writebackPayload =
+          resolution.mode === "legacy_atomic"
+            ? resolution.writeback
+            : { mode: "learning_loop" as const, receipt: resolution.receipt };
+
         return {
           status: "escalation_resolved",
           photographer_id: photographerId,
           escalation_id: pending.id,
-          learning_outcome: learningOutcome,
-          writeback,
+          resolution_mode: resolution.mode,
+          learning_outcome: resolution.learningOutcome,
+          writeback: writebackPayload,
           twilio_sid: ack,
         };
       }
@@ -551,7 +637,7 @@ export const operatorOrchestratorFunction = inngest.createFunction(
         role: (m.direction === "out" && m.sender === "ai-assistant" ? "assistant" : "user") as
           | "user"
           | "assistant",
-        content: (m.body as string) ?? "",
+        content: truncateOperatorOrchestratorChatMessage((m.body as string) ?? ""),
       }));
     });
 
@@ -559,11 +645,13 @@ export const operatorOrchestratorFunction = inngest.createFunction(
     const toolCtx = { photographerId, operatorThreadId: threadId, escalationRecordedRef };
 
     const response = await step.run("operator-orchestrator-think", async () => {
+      const inboundForChat = truncateOperatorOrchestratorChatMessage(rawMessage);
+
       const last = history[history.length - 1];
       const turns =
-        history.length > 0 && last?.role === "user" && last.content === rawMessage
+        history.length > 0 && last?.role === "user" && last.content === inboundForChat
           ? history
-          : [...history, { role: "user" as const, content: rawMessage }];
+          : [...history, { role: "user" as const, content: inboundForChat }];
 
       const messages: OaiMessage[] = [
         { role: "system", content: SYSTEM_PROMPT },
@@ -571,7 +659,7 @@ export const operatorOrchestratorFunction = inngest.createFunction(
       ];
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const reply = await callOpenAI(messages);
+        const reply = await callOpenAI(messages, modelInvocationLog);
 
         if (!reply.tool_calls?.length) {
           return (reply.content ?? "").trim();
@@ -579,7 +667,9 @@ export const operatorOrchestratorFunction = inngest.createFunction(
 
         messages.push({
           role: "assistant",
-          content: reply.content,
+          content: reply.content
+            ? truncateOperatorOrchestratorChatMessage(reply.content)
+            : reply.content,
           tool_calls: reply.tool_calls,
         });
 
@@ -595,12 +685,12 @@ export const operatorOrchestratorFunction = inngest.createFunction(
           messages.push({
             role: "tool",
             tool_call_id: tc.id,
-            content: result,
+            content: truncateOperatorOrchestratorToolOutput(result),
           });
         }
       }
 
-      const final = await callOpenAI(messages);
+      const final = await callOpenAI(messages, modelInvocationLog);
       return (final.content ?? "Could not complete that.").trim();
     });
 

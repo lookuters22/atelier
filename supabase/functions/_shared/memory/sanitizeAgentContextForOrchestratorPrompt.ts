@@ -1,4 +1,5 @@
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
+import { sanitizeInboundTextForModelContext } from "./sanitizeInboundTextForModelContext.ts";
 
 /**
  * execute_v3 Phase 6.5 Step 6.5F — default orchestrator **system** prompt must not include unrestricted
@@ -34,7 +35,10 @@ export function sanitizeAgentContextForOrchestratorPrompt(ctx: AgentContext): Re
   const threadSummary =
     ctx.threadSummary === null || ctx.threadSummary === undefined
       ? null
-      : truncate(String(ctx.threadSummary), MAX_THREAD_SUMMARY_CHARS);
+      : truncate(
+          sanitizeInboundTextForModelContext(String(ctx.threadSummary)),
+          MAX_THREAD_SUMMARY_CHARS,
+        );
 
   const recentMessages = ctx.recentMessages.map((m) => {
     const row = m as Record<string, unknown>;
@@ -49,6 +53,7 @@ export function sanitizeAgentContextForOrchestratorPrompt(ctx: AgentContext): Re
 
   const memoryHeaders = ctx.memoryHeaders.map((h) => ({
     id: h.id,
+    wedding_id: h.wedding_id,
     type: h.type,
     title: h.title,
     summary: truncate(h.summary, MAX_MEMORY_SUMMARY_CHARS),

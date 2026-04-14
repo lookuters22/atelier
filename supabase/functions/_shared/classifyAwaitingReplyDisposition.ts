@@ -1,8 +1,16 @@
 /**
  * Phase 10 Step 10D — classify photographer replies against an `Awaiting reply:` follow-up task
  * (`docs/v3/execute_v3.md`). Conservative: any failure → `unresolved` (never falsely `answered`).
+ *
+ * A5: bounded prompt inputs + deterministic skip when there is nothing to classify (no model call).
  */
+import { truncateA5ClassifierField } from "./a5MiniClassifierBudget.ts";
+
 const MODEL = "gpt-4o-mini";
+
+/** Per-field cap so pasted transcripts cannot explode token cost on this hot WhatsApp path. */
+export const AWAITING_REPLY_CLASSIFY_MAX_TASK_TITLE_CHARS = 2000;
+export const AWAITING_REPLY_CLASSIFY_MAX_PHOTOGRAPHER_REPLY_CHARS = 12000;
 
 export type AwaitingReplyDisposition = "answered" | "deferral" | "unresolved";
 
@@ -11,6 +19,9 @@ export type ClassifyAwaitingReplyInput = {
   photographerReply: string;
 };
 
+/** @deprecated Import `truncateA5ClassifierField` from `a5MiniClassifierBudget.ts` — alias kept for callers. */
+export { truncateA5ClassifierField as truncateAwaitingReplyClassifyField } from "./a5MiniClassifierBudget.ts";
+
 /**
  * Only a successful parse with explicit disposition may return answered/deferral; all errors → unresolved.
  */
@@ -18,8 +29,22 @@ export async function classifyAwaitingReplyDisposition(
   input: ClassifyAwaitingReplyInput,
 ): Promise<AwaitingReplyDisposition> {
   try {
+    const replyTrimmed = input.photographerReply.trim();
+    if (replyTrimmed.length === 0) {
+      return "unresolved";
+    }
+
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) return "unresolved";
+
+    const taskForPrompt = truncateA5ClassifierField(
+      input.taskTitle,
+      AWAITING_REPLY_CLASSIFY_MAX_TASK_TITLE_CHARS,
+    );
+    const replyForPrompt = truncateA5ClassifierField(
+      replyTrimmed,
+      AWAITING_REPLY_CLASSIFY_MAX_PHOTOGRAPHER_REPLY_CHARS,
+    );
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -46,7 +71,7 @@ If uncertain, use unresolved.`,
           },
           {
             role: "user",
-            content: `Task title:\n${input.taskTitle}\n\nPhotographer reply:\n${input.photographerReply}`,
+            content: `Task title:\n${taskForPrompt}\n\nPhotographer reply:\n${replyForPrompt}`,
           },
         ],
       }),

@@ -1,6 +1,13 @@
-import { useMemo } from "react";
-import { Plus, TrendingUp, Clock, AlertTriangle } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { ChevronDown, ChevronUp, Plus, TrendingUp, Clock, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  adjacentWeddingIdInOrderedList,
+  isEditableKeyboardTarget,
+  pipelineWeddingAltVerticalDelta,
+  scrollPipelineWeddingRowIntoView,
+  weddingQueuePosition,
+} from "@/lib/pipelineWeddingListNavigation";
 import { useWorkspaceMode } from "./WorkspaceModeContext";
 import type { FinancialsOverviewRow } from "../../../data/weddingFinancials";
 
@@ -28,6 +35,10 @@ function matchSearch(r: FinancialsOverviewRow, q: string): boolean {
   );
 }
 
+function invoiceRowQueueKey(r: FinancialsOverviewRow): string {
+  return `${r.kind}-${r.id}`;
+}
+
 export function InvoiceLedger() {
   const { financialRows, financialStats, searchQuery, selectedRow, setSelectedRow, openNewInvoice } =
     useWorkspaceMode();
@@ -37,7 +48,60 @@ export function InvoiceLedger() {
     [financialRows, searchQuery],
   );
 
-  const selectedId = selectedRow?.kind === "financial" ? selectedRow.data.id : null;
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
+  const orderedKeys = useMemo(() => invoices.map(invoiceRowQueueKey), [invoices]);
+
+  const selectedKey = useMemo(() => {
+    if (selectedRow?.kind !== "financial" || selectedRow.data.kind !== "invoice") return null;
+    return invoiceRowQueueKey(selectedRow.data);
+  }, [selectedRow]);
+
+  const queuePosition = useMemo(
+    () => weddingQueuePosition(orderedKeys, selectedKey),
+    [orderedKeys, selectedKey],
+  );
+
+  const goPrevRow = useCallback(() => {
+    const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, -1);
+    if (!k) return;
+    const r = invoices.find((row) => invoiceRowQueueKey(row) === k);
+    if (r) setSelectedRow({ kind: "financial", data: r });
+  }, [orderedKeys, selectedKey, invoices, setSelectedRow]);
+
+  const goNextRow = useCallback(() => {
+    const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, 1);
+    if (!k) return;
+    const r = invoices.find((row) => invoiceRowQueueKey(row) === k);
+    if (r) setSelectedRow({ kind: "financial", data: r });
+  }, [orderedKeys, selectedKey, invoices, setSelectedRow]);
+
+  useEffect(() => {
+    if (orderedKeys.length < 2) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const delta = pipelineWeddingAltVerticalDelta(e);
+      if (delta === null) return;
+      if (isEditableKeyboardTarget(e.target)) return;
+      const k = adjacentWeddingIdInOrderedList(orderedKeys, selectedKey, delta);
+      if (!k) return;
+      const r = invoices.find((row) => invoiceRowQueueKey(row) === k);
+      if (!r) return;
+      if (k === selectedKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedRow({ kind: "financial", data: r });
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [orderedKeys, selectedKey, invoices, setSelectedRow]);
+
+  useLayoutEffect(() => {
+    if (!selectedKey) return;
+    const root = listScrollRef.current;
+    if (!root) return;
+    const el = root.querySelector(`[data-workspace-invoice-row="${CSS.escape(selectedKey)}"]`);
+    if (el instanceof HTMLElement) scrollPipelineWeddingRowIntoView(el);
+  }, [selectedKey, orderedKeys]);
 
   const stats = [
     { label: "Total Revenue (YTD)", value: fmtEur(financialStats.totalRevenue), icon: TrendingUp, color: "text-emerald-600" },
@@ -54,7 +118,38 @@ export function InvoiceLedger() {
             {invoices.length} invoice{invoices.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <div className="flex items-center">
+        <div className="flex shrink-0 items-center gap-2">
+          {orderedKeys.length >= 2 ? (
+            <div
+              role="region"
+              aria-label="Invoices table queue navigation"
+              className="flex items-center gap-1"
+            >
+              {queuePosition ? (
+                <span className="mr-0.5 tabular-nums text-[12px] text-muted-foreground" aria-live="polite">
+                  {queuePosition.current} / {queuePosition.total}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                title="Previous row (Alt+↑)"
+                aria-label="Previous row in invoice list"
+                onClick={goPrevRow}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              >
+                <ChevronUp className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+              <button
+                type="button"
+                title="Next row (Alt+↓)"
+                aria-label="Next row in invoice list"
+                onClick={goNextRow}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:bg-accent hover:text-foreground"
+              >
+                <ChevronDown className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={openNewInvoice}
@@ -80,7 +175,7 @@ export function InvoiceLedger() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={listScrollRef} className="min-h-0 flex-1 overflow-auto">
         <table className="w-full text-left text-[13px]">
           <thead className="sticky top-0 z-10 border-b border-border bg-background text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -100,10 +195,15 @@ export function InvoiceLedger() {
               </tr>
             ) : (
               invoices.map((row) => {
-                const isSelected = selectedId === row.id;
+                const isSelected =
+                  selectedRow?.kind === "financial" &&
+                  selectedRow.data.kind === "invoice" &&
+                  selectedRow.data.id === row.id;
+                const qk = invoiceRowQueueKey(row);
                 return (
                   <tr
-                    key={row.id}
+                    key={qk}
+                    data-workspace-invoice-row={qk}
                     onClick={() => setSelectedRow({ kind: "financial", data: row })}
                     className={cn(
                       "cursor-pointer border-b border-border/60 transition-colors last:border-0",

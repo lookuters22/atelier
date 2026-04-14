@@ -7,7 +7,7 @@
  * 3. Else → `memories` (case-specific)
  *
  * "Unresolved open" is not returned here: when the reply does not resolve the ask, the orchestrator
- * skips writeback and leaves `escalation_requests.status` open (no `apply-escalation-resolution`).
+ * skips writeback and leaves `escalation_requests.status` open (no finalize after writeback).
  */
 import type { EscalationLearningOutcome } from "./classifyEscalationLearningOutcome.ts";
 

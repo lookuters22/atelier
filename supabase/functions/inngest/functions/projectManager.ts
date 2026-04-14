@@ -8,6 +8,10 @@
  * 3. Insert a task so the photographer sees the warning on their dashboard.
  */
 import { inngest } from "../../_shared/inngest.ts";
+import {
+  truncateProjectManagerCoupleNamesForTitle,
+  truncateProjectManagerTriggeredBy,
+} from "../../_shared/projectManagerA5Budget.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 
 type TimelineAnalysis = {
@@ -61,7 +65,8 @@ export const projectManagerFunction = inngest.createFunction(
     });
 
     const taskId = await step.run("create-task", async () => {
-      const title = `\u26A0\uFE0F Timeline Alert: Extend portrait time for ${wedding.couple_names}`;
+      const coupleForTitle = truncateProjectManagerCoupleNamesForTitle(String(wedding.couple_names ?? ""));
+      const title = `\u26A0\uFE0F Timeline Alert: Extend portrait time for ${coupleForTitle}`;
 
       const { data, error } = await supabaseAdmin
         .from("tasks")
@@ -87,7 +92,7 @@ export const projectManagerFunction = inngest.createFunction(
       wedding_id,
       taskId,
       analysis,
-      triggered_by: raw_message.slice(0, 120),
+      triggered_by: truncateProjectManagerTriggeredBy(String(raw_message ?? "")),
     };
   },
 );

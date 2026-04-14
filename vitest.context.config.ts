@@ -8,12 +8,17 @@ export default defineConfig({
       "npm:@supabase/supabase-js@2": path.resolve(
         "node_modules/@supabase/supabase-js",
       ),
+      /** Deno `npm:zod@4` in `supabase/functions/_shared/tools/schemas.ts` */
+      "npm:zod@4": path.resolve("node_modules/zod"),
+      /** Deno `npm:inngest@3` in `supabase/functions/_shared/inngest.ts` */
+      "npm:inngest@3": path.resolve("node_modules/inngest"),
     },
   },
   test: {
     include: [
       "supabase/functions/_shared/**/*.test.ts",
       "src/lib/**/*.test.ts",
+      "src/hooks/**/*.test.ts",
     ],
     environment: "node",
   },

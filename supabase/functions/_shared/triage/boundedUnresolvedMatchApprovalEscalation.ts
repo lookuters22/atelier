@@ -1,6 +1,10 @@
 /**
  * Bounded unresolved-email near-match → photographer approval via `escalation_requests` + Step 8E delivery fan-out.
  * Does not set `threads.wedding_id`; does not dispatch client specialists/orchestrator.
+ *
+ * **V3 operator silent hold:** sets `threads.v3_operator_automation_hold` + `v3_operator_hold_escalation_id` on the
+ * **client email thread** so follow-up automations (milestones, reminders, workflow sweeps) pause until resolution
+ * (`resolveOperatorEscalationResolution` clears hold by escalation id).
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { formatOperatorEscalationQuestion } from "../formatOperatorEscalation.ts";
@@ -65,6 +69,22 @@ export async function insertBoundedUnresolvedMatchApprovalEscalation(
   }
 
   const escalationId = data.id as string;
+
+  const { error: holdErr } = await supabase
+    .from("threads")
+    .update({
+      v3_operator_automation_hold: true,
+      v3_operator_hold_escalation_id: escalationId,
+    })
+    .eq("id", input.threadId)
+    .eq("photographer_id", input.photographerId);
+
+  if (holdErr) {
+    console.error(
+      "[boundedUnresolvedMatchApprovalEscalation] thread v3_operator_automation_hold update failed:",
+      holdErr.message,
+    );
+  }
 
   try {
     await inngest.send({

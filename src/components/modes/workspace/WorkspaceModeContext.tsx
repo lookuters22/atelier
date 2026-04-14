@@ -30,6 +30,9 @@ interface WorkspaceModeState {
   setActiveIndex: (idx: WorkspaceIndex) => void;
   selectedRow: SelectedRow;
   setSelectedRow: (row: SelectedRow) => void;
+  /** A7: transactions table selection (separate from financial row selection). */
+  selectedTransactionId: string | null;
+  setSelectedTransactionId: (id: string | null) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   financialRows: FinancialsOverviewRow[];
@@ -52,6 +55,7 @@ export function useWorkspaceMode() {
 export function WorkspaceModeProvider({ children }: { children: ReactNode }) {
   const [activeIndex, setActiveIndexRaw] = useState<WorkspaceIndex>("fin-overview");
   const [selectedRow, setSelectedRow] = useState<SelectedRow>(null);
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [formMode, setFormMode] = useState<WorkspaceFormMode>(null);
 
@@ -76,6 +80,7 @@ export function WorkspaceModeProvider({ children }: { children: ReactNode }) {
   const setActiveIndex = useCallback((idx: WorkspaceIndex) => {
     setActiveIndexRaw(idx);
     setSelectedRow(null);
+    setSelectedTransactionId(null);
     setSearchQuery("");
     setFormMode(null);
   }, []);
@@ -83,6 +88,7 @@ export function WorkspaceModeProvider({ children }: { children: ReactNode }) {
   const openNewInvoice = useCallback(() => {
     setFormMode({ kind: "new-invoice" });
     setSelectedRow(null);
+    setSelectedTransactionId(null);
   }, []);
 
   return (
@@ -92,6 +98,8 @@ export function WorkspaceModeProvider({ children }: { children: ReactNode }) {
         setActiveIndex,
         selectedRow,
         setSelectedRow,
+        selectedTransactionId,
+        setSelectedTransactionId,
         searchQuery,
         setSearchQuery,
         financialRows: allFinancials,

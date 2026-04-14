@@ -2,7 +2,14 @@
  * Inngest client + event dictionary (Atelier OS).
  * Event names match docs/ARCHITECTURE.md Section 2.
  *
- * Set INNGEST_EVENT_KEY (and signing key for the serve endpoint) in Supabase secrets.
+ * Hosted Supabase secrets (emit + serve):
+ * - `INNGEST_EVENT_KEY` — send events to Inngest Cloud (e.g. `gmail-enqueue-label-sync`).
+ * - `INNGEST_SIGNING_KEY` — `inngest` serve endpoint: sync + invocations for this environment.
+ * - `INNGEST_ALLOW_IN_BAND_SYNC=1` — if Cloud sync omits functions (events accepted, no runs). See `inngest/index.ts`.
+ * - Optional `INNGEST_SERVE_HOST` — `https://<project-ref>.supabase.co` if sync registers the wrong host.
+ * The `inngest` function uses `servePath: "/functions/v1/inngest"`.
+ * Local proof: `INNGEST_EVENT_KEY` must be the **Event key** from Inngest Cloud for the same app as `id` below
+ * (`atelier-os`); a revoked or cross-environment key yields HTTP 401 from the Event API.
  *
  * ## Phase 7 Step 7A — event versioning (execute_v3.md)
  *
@@ -78,6 +85,32 @@ export const OPERATOR_WHATSAPP_LEGACY_RECEIVED_EVENT = "operator/whatsapp.legacy
 export const OPERATOR_ESCALATION_PENDING_DELIVERY_V1_EVENT =
   "operator/escalation.pending_delivery.v1" as const;
 export const OPERATOR_ESCALATION_PENDING_DELIVERY_V1_SCHEMA_VERSION = 1 as const;
+
+/** Gmail fast-lane: label-scoped thread list → staged `import_candidates` (no canonical threads yet). */
+export const GMAIL_LABEL_SYNC_V1_EVENT = "import/gmail.label_sync.v1" as const;
+export const GMAIL_LABEL_SYNC_V1_SCHEMA_VERSION = 1 as const;
+
+/** G2: Precompute Gmail body/HTML/attachment staging for a staged import_candidate before human approval. */
+export const GMAIL_IMPORT_CANDIDATE_PREPARE_MATERIALIZATION_V1_EVENT =
+  "import/gmail.candidate.prepare_materialization.v1" as const;
+export const GMAIL_IMPORT_CANDIDATE_PREPARE_MATERIALIZATION_V1_SCHEMA_VERSION = 1 as const;
+
+/** G5 async: materialize all staged candidates for a label batch in chunked Inngest steps (not inline Edge). */
+export const GMAIL_LABEL_GROUP_APPROVE_V1_EVENT = "import/gmail.label_group_approve.v1" as const;
+export const GMAIL_LABEL_GROUP_APPROVE_V1_SCHEMA_VERSION = 1 as const;
+
+/** A3: single staged row → unfiled Inbox thread (was synchronous Edge work; now durable Inngest). */
+export const GMAIL_SINGLE_IMPORT_CANDIDATE_APPROVE_V1_EVENT =
+  "import/gmail.single_candidate_approve.v1" as const;
+export const GMAIL_SINGLE_IMPORT_CANDIDATE_APPROVE_V1_SCHEMA_VERSION = 1 as const;
+
+/** A3: Gmail `labels.list` — cache refresh off the Settings Edge request path. */
+export const GMAIL_LABELS_REFRESH_V1_EVENT = "import/gmail.labels_refresh.v1" as const;
+export const GMAIL_LABELS_REFRESH_V1_SCHEMA_VERSION = 1 as const;
+
+/** A3: dashboard operator escalation resolution — classifier + RPC off the Edge click path. */
+export const OPS_ESCALATION_RESOLUTION_V1_EVENT = "ops/escalation.resolution.v1" as const;
+export const OPS_ESCALATION_RESOLUTION_V1_SCHEMA_VERSION = 1 as const;
 
 export type OperatorEscalationDeliveryPolicy = "urgent_now" | "batch_later" | "dashboard_only";
 
@@ -252,6 +285,9 @@ export type AtelierEvents = {
       threadId: string | null;
       replyChannel: "email" | "web";
       rawMessage: string;
+      /** Verified ingress sender email (triage/intake); IE2 B2B domain signal when present. */
+      inboundSenderEmail?: string | null;
+      inboundSenderDisplayName?: string | null;
       requestedExecutionMode?: "auto" | "draft_only" | "ask_first" | "forbidden";
       /** Phase 2 B3 — set by `triage` shadow fanout only; correlates orchestrator run to legacy turn. */
       shadowCorrelationId?: string;
@@ -318,9 +354,56 @@ export type AtelierEvents = {
       threadId: string | null;
     };
   };
+  [GMAIL_LABEL_SYNC_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof GMAIL_LABEL_SYNC_V1_SCHEMA_VERSION;
+      photographerId: string;
+      connectedAccountId: string;
+      labelId: string;
+      labelName: string;
+    };
+  };
+  [GMAIL_IMPORT_CANDIDATE_PREPARE_MATERIALIZATION_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof GMAIL_IMPORT_CANDIDATE_PREPARE_MATERIALIZATION_V1_SCHEMA_VERSION;
+      photographerId: string;
+      importCandidateId: string;
+    };
+  };
+  [GMAIL_LABEL_GROUP_APPROVE_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof GMAIL_LABEL_GROUP_APPROVE_V1_SCHEMA_VERSION;
+      photographerId: string;
+      gmailLabelImportGroupId: string;
+    };
+  };
+  [GMAIL_SINGLE_IMPORT_CANDIDATE_APPROVE_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof GMAIL_SINGLE_IMPORT_CANDIDATE_APPROVE_V1_SCHEMA_VERSION;
+      photographerId: string;
+      importCandidateId: string;
+    };
+  };
+  [GMAIL_LABELS_REFRESH_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof GMAIL_LABELS_REFRESH_V1_SCHEMA_VERSION;
+      photographerId: string;
+      connectedAccountId: string;
+    };
+  };
+  [OPS_ESCALATION_RESOLUTION_V1_EVENT]: {
+    data: {
+      schemaVersion: typeof OPS_ESCALATION_RESOLUTION_V1_SCHEMA_VERSION;
+      photographerId: string;
+      jobId: string;
+      escalationId: string;
+    };
+  };
 };
 
 export const inngest = new Inngest({
   id: "atelier-os",
+  /** Vitest and other non-prod hosts infer `dev` and may POST to a local dev server with a cloud Event key (401). */
+  isDev: false,
   schemas: new EventSchemas().fromRecord<AtelierEvents>(),
 });

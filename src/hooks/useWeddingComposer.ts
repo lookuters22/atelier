@@ -14,6 +14,8 @@ export function useWeddingComposer({
   photographerId,
   sendMessage,
   showToast,
+  /** After a successful inline send — reload thread messages (A1 per-thread fetch). */
+  onAfterMessageSent,
 }: {
   activeThread: WeddingThread | undefined;
   people: WeddingPersonRow[];
@@ -23,6 +25,7 @@ export function useWeddingComposer({
   photographerId: string;
   sendMessage: (params: SendMessageParams) => Promise<SendMessageResult>;
   showToast: (message: string) => void;
+  onAfterMessageSent?: () => void;
 }) {
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerKind, setComposerKind] = useState<ComposerKind>("reply");
@@ -125,6 +128,7 @@ export function useWeddingComposer({
       setReplyBody("");
       setIsInternalNote(false);
       showToast(wasInternal ? "Internal note saved." : "Message sent.");
+      onAfterMessageSent?.();
     } else {
       showToast(result.error);
     }

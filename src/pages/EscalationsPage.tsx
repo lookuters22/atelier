@@ -2,12 +2,14 @@
  * Phase 11 Step 11C — escalation surface (open, resolved, specialty queues).
  * Queues are heuristic buckets over `escalation_requests` (same table; filters only).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, BookMarked, CheckCircle2, CircleDot, Clock3 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { cn } from "@/lib/utils";
+import { resolveEscalationsViaDashboardBatch } from "../lib/escalationResolutionClient";
+import { fireDataChanged } from "../lib/events";
 
 type EscalationStatus = "open" | "answered" | "dismissed" | "promoted";
 
@@ -48,6 +50,16 @@ function escalationQueueBucket(row: Pick<EscalationRow, "action_key" | "reason_c
   };
 }
 
+/** Tab that contains this row for deep-linking (specialty queue if it matches, else open / resolved). */
+function escalationTabForDeepLink(row: EscalationRow): EscalationQueueTab {
+  if (row.status !== "open") return "resolved";
+  const b = escalationQueueBucket(row);
+  if (b.visual) return "visual_review";
+  if (b.banking) return "banking";
+  if (b.prPublication) return "pr_publication";
+  return "open";
+}
+
 function formatShortDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -63,10 +75,19 @@ function formatShortDate(iso: string): string {
 
 export function EscalationsPage() {
   const { photographerId } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<EscalationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<EscalationQueueTab>("open");
+  const deepLinkHandled = useRef<string | null>(null);
+  /** A7: explicit multi-select on open-queue views only — same resolution summary queued per ID. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [batchSummary, setBatchSummary] = useState("");
+  const [batchNotes, setBatchNotes] = useState("");
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!photographerId) return;
@@ -94,6 +115,63 @@ export function EscalationsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (loading) return;
+    const escalationId = searchParams.get("escalationId");
+    if (!escalationId) {
+      deepLinkHandled.current = null;
+      return;
+    }
+
+    const signature = `${escalationId}|${searchParams.toString()}`;
+    if (deepLinkHandled.current === signature) return;
+
+    const row = rows.find((r) => r.id === escalationId);
+    if (!row) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("escalationId");
+          return next;
+        },
+        { replace: true },
+      );
+      return;
+    }
+
+    deepLinkHandled.current = signature;
+    setTab(escalationTabForDeepLink(row));
+
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        document.getElementById(`escalation-row-${escalationId}`)?.scrollIntoView({
+          block: "nearest",
+          behavior: "smooth",
+        });
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete("escalationId");
+            return next;
+          },
+          { replace: true },
+        );
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [loading, rows, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setBatchError(null);
+  }, [tab]);
+
   const filtered = useMemo(() => {
     const open = (r: EscalationRow) => r.status === "open";
     const resolved = (r: EscalationRow) => r.status !== "open";
@@ -114,6 +192,80 @@ export function EscalationsPage() {
     }
   }, [rows, tab]);
 
+  const selectionEnabled = tab !== "resolved";
+  const selectedOpenIds = useMemo(() => {
+    if (!selectionEnabled) return [];
+    return filtered.filter((r) => r.status === "open" && selectedIds.has(r.id)).map((r) => r.id);
+  }, [filtered, selectedIds, selectionEnabled]);
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllVisibleOpen = useCallback(() => {
+    const openIds = filtered.filter((r) => r.status === "open").map((r) => r.id);
+    setSelectedIds(new Set(openIds));
+  }, [filtered]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  async function queueBatchResolution() {
+    const ids = selectedOpenIds;
+    if (ids.length < 2) return;
+    const summary = batchSummary.trim();
+    if (!summary) {
+      setBatchError("Enter a resolution summary that applies to every selected escalation.");
+      return;
+    }
+    setBatchError(null);
+    const ok = window.confirm(
+      `Queue ${ids.length} background resolutions using the same summary for each? This matches recording one resolution per item, without waiting for each job to finish.`,
+    );
+    if (!ok) return;
+
+    setBatchBusy(true);
+    setBatchProgress({ done: 0, total: ids.length });
+    try {
+      const { succeeded, failed } = await resolveEscalationsViaDashboardBatch(
+        {
+          escalationIds: ids,
+          resolutionSummary: summary,
+          photographerReplyRaw: batchNotes.trim() || undefined,
+        },
+        (done, total) => setBatchProgress({ done, total }),
+      );
+      if (succeeded.length > 0) {
+        fireDataChanged("escalations");
+        fireDataChanged("inbox");
+        await load();
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of succeeded) next.delete(id);
+          return next;
+        });
+      }
+      if (failed.length > 0) {
+        const detail = failed.map((f) => `${f.id.slice(0, 8)}…: ${f.message}`).join("\n");
+        setBatchError(`${failed.length} failed:\n${detail}`);
+      } else {
+        setBatchSummary("");
+        setBatchNotes("");
+      }
+    } catch (e) {
+      setBatchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBatchBusy(false);
+      setBatchProgress(null);
+    }
+  }
+
   const tabs: { id: EscalationQueueTab; label: string; hint: string }[] = [
     { id: "open", label: "Open", hint: "All open escalation requests" },
     { id: "resolved", label: "Resolved", hint: "Answered, dismissed, or promoted" },
@@ -124,6 +276,16 @@ export function EscalationsPage() {
 
   return (
     <div className="space-y-6 text-[13px] text-foreground">
+      <div
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-[13px] text-foreground"
+        role="note"
+      >
+        <span className="font-medium">Today is your operator hub.</span> Resolve open escalations from{" "}
+        <Link to="/today" className="text-primary underline underline-offset-2">
+          Home / Today
+        </Link>{" "}
+        (priority feed and contextual surfaces). This page remains for history and specialty triage.
+      </div>
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Escalations</h1>
         <p className="mt-1 max-w-2xl text-[13px] text-muted-foreground">
@@ -152,6 +314,85 @@ export function EscalationsPage() {
         ))}
       </div>
 
+      {selectionEnabled && !loading && !error && filtered.some((r) => r.status === "open") ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-[12px] text-foreground">
+          <span className="font-medium text-muted-foreground">Selection</span>
+          <button
+            type="button"
+            title="Select all open items in this tab"
+            onClick={() => selectAllVisibleOpen()}
+            disabled={batchBusy}
+            className="rounded border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-accent/60 disabled:opacity-50"
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            title="Clear selection"
+            onClick={() => clearSelection()}
+            disabled={batchBusy || selectedIds.size === 0}
+            className="rounded border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-accent/60 disabled:opacity-50"
+          >
+            Clear
+          </button>
+          <span className="text-muted-foreground">
+            {selectedIds.size === 0 ? "None selected" : `${selectedIds.size} selected`}
+          </span>
+        </div>
+      ) : null}
+
+      {selectionEnabled && selectedOpenIds.length >= 2 ? (
+        <div className="space-y-2 rounded-lg border border-border bg-card px-4 py-3 text-[13px] text-foreground shadow-sm">
+          <p className="font-semibold text-foreground">Batch resolution (A7)</p>
+          <p className="text-[12px] leading-snug text-muted-foreground">
+            Use when the same outcome applies to every selected item (e.g. duplicates cleared, handled outside Ana). One
+            summary is queued per escalation via the same dashboard path as{" "}
+            <span className="font-medium text-foreground">Record resolution</span> in Today / Inbox.
+          </p>
+          <label className="block">
+            <span className="mb-1 block text-[12px] text-muted-foreground">Resolution summary (applies to all selected)</span>
+            <textarea
+              className="min-h-[64px] w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              value={batchSummary}
+              onChange={(e) => setBatchSummary(e.target.value)}
+              placeholder="What was decided for these items (one or two sentences)"
+              disabled={batchBusy}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[12px] text-muted-foreground">Notes / reply for learning (optional)</span>
+            <textarea
+              className="min-h-[48px] w-full rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+              value={batchNotes}
+              onChange={(e) => setBatchNotes(e.target.value)}
+              placeholder="Optional; defaults to summary if empty"
+              disabled={batchBusy}
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={batchBusy || !batchSummary.trim()}
+              onClick={() => void queueBatchResolution()}
+              className="rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-[12px] font-semibold text-foreground hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {batchBusy ? "Queueing…" : `Queue resolution for ${selectedOpenIds.length} selected`}
+            </button>
+            {batchProgress ? (
+              <span className="text-[11px] text-muted-foreground" aria-live="polite">
+                {batchProgress.done} / {batchProgress.total} queued
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {batchError ? (
+        <p className="whitespace-pre-wrap rounded-md border border-red-500/35 bg-red-500/10 px-3 py-2 text-[12px] text-red-700 dark:text-red-300" role="alert">
+          {batchError}
+        </p>
+      ) : null}
+
       {loading ? (
         <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : error ? (
@@ -165,11 +406,27 @@ export function EscalationsPage() {
           {filtered.map((r) => (
             <li
               key={r.id}
-              className="rounded-lg border border-border bg-background px-4 py-3 shadow-sm"
+              id={`escalation-row-${r.id}`}
+              className={cn(
+                "rounded-lg border bg-background px-4 py-3 shadow-sm",
+                selectionEnabled && r.status === "open" && selectedIds.has(r.id)
+                  ? "border-primary/50 ring-1 ring-primary/25"
+                  : "border-border",
+              )}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
+                    {selectionEnabled && r.status === "open" ? (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 rounded border-border"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelected(r.id)}
+                        disabled={batchBusy}
+                        aria-label={`Select escalation ${r.action_key}`}
+                      />
+                    ) : null}
                     <span className="font-mono text-[11px] text-muted-foreground">{r.action_key}</span>
                     <StatusPill status={r.status} />
                     {r.operator_delivery ? (

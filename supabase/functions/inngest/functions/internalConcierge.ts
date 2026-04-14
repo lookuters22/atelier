@@ -18,6 +18,13 @@
  * 4. Send the response back via Twilio WhatsApp immediately — no drafts table.
  */
 import { inngest } from "../../_shared/inngest.ts";
+import {
+  truncateInternalConciergeAssistantContent,
+  truncateInternalConciergeDraftBodyPreview,
+  truncateInternalConciergeHistoryLine,
+  truncateInternalConciergeToolOutput,
+  truncateInternalConciergeUserMessage,
+} from "../../_shared/internalConciergeA5Budget.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import { sendWhatsAppMessage } from "../../_shared/twilio.ts";
 
@@ -194,6 +201,19 @@ async function handleToolCall(
 
     case "query_tasks": {
       const status = (args.status as string) || "open";
+      if (status === "open") {
+        const { data, error } = await supabaseAdmin
+          .from("v_open_tasks_with_wedding")
+          .select("id, title, due_date, status, wedding_id, couple_names")
+          .eq("photographer_id", photographerId)
+          .order("due_date", { ascending: true })
+          .limit(10);
+
+        if (error) return `Error: ${error.message}`;
+        if (!data || data.length === 0) return "No open tasks.";
+        return JSON.stringify(data);
+      }
+
       const { data, error } = await supabaseAdmin
         .from("tasks")
         .select("id, title, due_date, status, wedding_id, weddings(couple_names)")
@@ -209,16 +229,23 @@ async function handleToolCall(
 
     case "query_pending_drafts": {
       const { data, error } = await supabaseAdmin
-        .from("drafts")
-        .select("id, body, status, created_at, threads(title, weddings(couple_names))")
+        .from("v_pending_approval_drafts")
+        .select("id, body, created_at, thread_title, couple_names, wedding_id")
         .eq("photographer_id", photographerId)
-        .eq("status", "pending_approval")
         .order("created_at", { ascending: false })
         .limit(5);
 
       if (error) return `Error: ${error.message}`;
       if (!data || data.length === 0) return "No pending drafts.";
-      return JSON.stringify(data);
+      const slim = data.map((row) => ({
+        id: row.id,
+        body: truncateInternalConciergeDraftBodyPreview(String(row.body ?? "")),
+        created_at: row.created_at,
+        thread_title: row.thread_title,
+        couple_names: row.couple_names,
+        wedding_id: row.wedding_id,
+      }));
+      return JSON.stringify(slim);
     }
 
     default:
@@ -276,6 +303,15 @@ export const internalConciergeFunction = inngest.createFunction(
   { event: "ai/intent.internal_concierge" },
   async ({ event, step }) => {
     const { photographer_id, from_number, raw_message } = event.data;
+
+    const inboundTrim = String(raw_message ?? "").trim();
+    if (!inboundTrim) {
+      return {
+        status: "skipped_empty" as const,
+        reason: "empty_message" as const,
+        photographer_id,
+      };
+    }
 
     // ── Resolve reply number + get/create internal thread ─────────
     const setup = await step.run("setup-context", async () => {
@@ -339,7 +375,7 @@ export const internalConciergeFunction = inngest.createFunction(
 
       return recentMessages.reverse().map((m) => ({
         role: (m.sender === "ai-assistant" ? "assistant" : "user") as "user" | "assistant",
-        content: (m.body as string) ?? "",
+        content: truncateInternalConciergeHistoryLine((m.body as string) ?? ""),
       }));
     });
 
@@ -356,22 +392,28 @@ export const internalConciergeFunction = inngest.createFunction(
 
     // ── Agentic tool-calling loop (with memory) ───────────────────
     const response = await step.run("internal-concierge-think", async () => {
+      const userForModel = truncateInternalConciergeUserMessage(String(raw_message ?? ""));
+
       const messages: OaiMessage[] = [
         { role: "system", content: SYSTEM_PROMPT },
         ...history.map((m) => ({ role: m.role, content: m.content }) as OaiMessage),
-        { role: "user", content: raw_message },
+        { role: "user", content: userForModel },
       ];
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const reply = await callOpenAI(messages);
 
         if (!reply.tool_calls || reply.tool_calls.length === 0) {
-          return (reply.content ?? "").trim();
+          const out =
+            typeof reply.content === "string"
+              ? truncateInternalConciergeAssistantContent(reply.content) ?? ""
+              : "";
+          return out.trim();
         }
 
         messages.push({
           role: "assistant",
-          content: reply.content,
+          content: truncateInternalConciergeAssistantContent(reply.content ?? null),
           tool_calls: reply.tool_calls,
         });
 
@@ -382,13 +424,17 @@ export const internalConciergeFunction = inngest.createFunction(
           messages.push({
             role: "tool",
             tool_call_id: tc.id,
-            content: result,
+            content: truncateInternalConciergeToolOutput(result),
           });
         }
       }
 
       const final = await callOpenAI(messages);
-      return (final.content ?? "Could not process your request.").trim();
+      const finalText =
+        typeof final.content === "string"
+          ? truncateInternalConciergeAssistantContent(final.content) ?? ""
+          : "";
+      return (finalText || "Could not process your request.").trim();
     });
 
     // ── Log the AI response ───────────────────────────────────────

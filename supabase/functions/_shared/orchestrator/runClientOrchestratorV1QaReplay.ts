@@ -7,7 +7,11 @@
  * **QA-only:** `qaBroadcastRiskOverride` is forwarded as the core optional parameter (replay-only).
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import type { BroadcastRiskLevel } from "../../../../src/types/decisionContext.types.ts";
+import type {
+  AudienceVisibilityClass,
+  BroadcastRiskLevel,
+  InboundSenderAuthoritySnapshot,
+} from "../../../../src/types/decisionContext.types.ts";
 import {
   type ClientOrchestratorV1CoreResult,
   type ClientOrchestratorV1ExecutionMode,
@@ -30,6 +34,15 @@ export type ClientOrchestratorV1QaReplayInput = {
    * Does not persist to DB.
    */
   qaBroadcastRiskOverride?: BroadcastRiskLevel;
+  /** Replay/QA only — forces visibility + redaction flag (same as orchestrator core). */
+  qaVisibilityClassOverride?: AudienceVisibilityClass;
+  /** Replay/QA only — hydrate selected memory rows by id. */
+  qaSelectedMemoryIds?: string[];
+  /** Replay/QA only — attach `qaHeavyContextLayers` on core result for audit reports. */
+  qaIncludeHeavyContextLayers?: boolean;
+  inboundSenderEmail?: string | null;
+  inboundSenderDisplayName?: string | null;
+  qaInboundSenderAuthorityOverride?: InboundSenderAuthoritySnapshot;
 };
 
 export type ClientOrchestratorV1QaReplayResult = ClientOrchestratorV1CoreResult;
@@ -49,5 +62,11 @@ export async function runClientOrchestratorV1QaReplay(
     rawMessage: params.rawMessage,
     requestedExecutionMode: params.requestedExecutionMode,
     qaBroadcastRiskOverride: params.qaBroadcastRiskOverride,
+    qaVisibilityClassOverride: params.qaVisibilityClassOverride,
+    qaSelectedMemoryIds: params.qaSelectedMemoryIds,
+    inboundSenderEmail: params.inboundSenderEmail,
+    inboundSenderDisplayName: params.inboundSenderDisplayName,
+    qaInboundSenderAuthorityOverride: params.qaInboundSenderAuthorityOverride,
+    qaIncludeHeavyContextLayers: params.qaIncludeHeavyContextLayers,
   });
 }

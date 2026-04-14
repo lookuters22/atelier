@@ -46,6 +46,8 @@ export function pickEscalationContextCandidate(
     (p) => p.action_family === "send_message" && p.likely_outcome !== "block",
   );
   if (send) return send;
+  const operator = proposedActions.find((p) => p.action_family === "operator_notification_routing");
+  if (operator) return operator;
   return proposedActions[0] ?? null;
 }
 

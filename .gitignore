@@ -56,3 +56,14 @@ supabase/.env
 scripts/v3_verify_gate_posture.env
 
 supabase/functions/inngest/.qa_fixtures.json
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+
+# Local QA harness output (timestamped JSON/MD)
+reports/
+
+# Supabase CLI local cache (machine-specific)
+supabase/.temp/

@@ -1,8 +1,15 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
+import type { CrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
+import { emptyCrmSnapshot, parsePackageInclusions } from "../../../../src/types/crmSnapshot.types.ts";
+import {
+  fetchMessageIdsWithStructuredAttachments,
+  redactMessageBodyForModelContext,
+} from "./attachmentSafetyForModelContext.ts";
 import { PERSONA_CONTEXT_RECENT_MESSAGE_LIMIT } from "./buildPersonaRawFacts.ts";
 import { fetchMemoryHeaders } from "./fetchMemoryHeaders.ts";
 import { fetchThreadSummary } from "./fetchThreadSummary.ts";
+import { sanitizeInboundTextForModelContext } from "./sanitizeInboundTextForModelContext.ts";
 
 /**
  * Assembles tenant-scoped `AgentContext` before Orchestrator reasoning (ARCHITECTURE.md §5).
@@ -43,15 +50,15 @@ async function loadCrmSnapshot(
   supabase: SupabaseClient,
   photographerId: string,
   weddingId: string | null,
-): Promise<Record<string, unknown>> {
+): Promise<CrmSnapshot> {
   if (!weddingId) {
-    return {};
+    return emptyCrmSnapshot();
   }
 
   const { data, error } = await supabase
     .from("weddings")
     .select(
-      "id, couple_names, stage, wedding_date, location, balance_due, strategic_pause, compassion_pause, package_name, contract_value",
+      "id, couple_names, stage, wedding_date, location, balance_due, strategic_pause, compassion_pause, package_name, contract_value, package_inclusions",
     )
     .eq("id", weddingId)
     .eq("photographer_id", photographerId)
@@ -61,7 +68,16 @@ async function loadCrmSnapshot(
     throw new Error(`buildAgentContext CRM: ${error.message}`);
   }
 
-  return data ? { ...data } : {};
+  if (!data) {
+    return emptyCrmSnapshot();
+  }
+
+  const row = data as Record<string, unknown>;
+  const package_inclusions = parsePackageInclusions(row.package_inclusions);
+  return {
+    ...data,
+    package_inclusions,
+  } as CrmSnapshot;
 }
 
 async function loadRecentMessages(
@@ -91,6 +107,7 @@ async function loadRecentMessages(
     .from("messages")
     .select("id, thread_id, direction, sender, body, sent_at")
     .eq("thread_id", threadId)
+    .eq("photographer_id", photographerId)
     .order("sent_at", { ascending: false })
     .limit(PERSONA_CONTEXT_RECENT_MESSAGE_LIMIT);
 
@@ -99,5 +116,22 @@ async function loadRecentMessages(
   }
 
   const chronological = [...(rows ?? [])].reverse();
-  return chronological.map((m) => ({ ...m })) as Array<Record<string, unknown>>;
+  const ids = chronological.map((m) => m.id as string).filter(Boolean);
+  const withAttachments = await fetchMessageIdsWithStructuredAttachments(
+    supabase,
+    photographerId,
+    ids,
+  );
+
+  return chronological.map((m) => {
+    const id = m.id as string;
+    const rawBody = String(m.body ?? "");
+    const layered = redactMessageBodyForModelContext(rawBody, {
+      hasStructuredAttachments: withAttachments.has(id),
+    });
+    return {
+      ...m,
+      body: sanitizeInboundTextForModelContext(layered),
+    };
+  }) as Array<Record<string, unknown>>;
 }

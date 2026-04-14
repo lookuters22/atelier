@@ -16,6 +16,37 @@ function toBase64(str: string): string {
   return btoa(str);
 }
 
+/**
+ * Download a Twilio-hosted media URL (e.g. `MediaUrl0` from inbound WhatsApp webhooks).
+ * Twilio requires HTTP Basic auth with Account SID and Auth Token.
+ */
+export async function fetchTwilioMediaUrlAsArrayBuffer(
+  mediaUrl: string,
+): Promise<
+  { ok: true; body: ArrayBuffer; contentType: string | null } | { ok: false; error: string }
+> {
+  const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+  const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+  if (!accountSid?.trim() || !authToken?.trim()) {
+    return { ok: false, error: "missing_twilio_credentials" };
+  }
+  const trimmed = mediaUrl.trim();
+  if (!trimmed.startsWith("https://")) {
+    return { ok: false, error: "invalid_media_url" };
+  }
+  const res = await fetch(trimmed, {
+    headers: {
+      Authorization: `Basic ${toBase64(`${accountSid}:${authToken}`)}`,
+    },
+  });
+  if (!res.ok) {
+    return { ok: false, error: `twilio_media_http_${res.status}` };
+  }
+  const body = await res.arrayBuffer();
+  const contentType = res.headers.get("content-type");
+  return { ok: true, body, contentType };
+}
+
 function timingSafeEqualString(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;

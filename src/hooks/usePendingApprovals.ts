@@ -1,65 +1,138 @@
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
-import { onDraftsChanged } from "../lib/events";
 
-export type PendingDraft = {
-  id: string;
-  body: string;
-  thread_title: string;
-  wedding_id: string;
-  couple_names: string;
-  photographer_id: string;
-};
+import { supabase } from "../lib/supabase";
+
+import { onDataChanged } from "../lib/events";
+
+import { useAuth } from "../context/AuthContext";
+
+import {
+
+  mapPendingApprovalProjectionRow,
+
+  type PendingDraft,
+
+} from "../lib/pendingApprovalProjection";
+
+
+
+export type { PendingDraft };
+
+
 
 export function usePendingApprovals() {
+
+  const { photographerId } = useAuth();
+
   const [drafts, setDrafts] = useState<PendingDraft[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
+
   const [error, setError] = useState<string | null>(null);
+
   const [fetchKey, setFetchKey] = useState(0);
+
+
 
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  useEffect(() => onDraftsChanged(refetch), [refetch]);
+
+
+  useEffect(() => onDataChanged(refetch, { scopes: ["drafts", "all"] }), [refetch]);
+
+
 
   useEffect(() => {
+
+    if (!photographerId) {
+
+      setDrafts([]);
+
+      setError(null);
+
+      setIsLoading(false);
+
+      return;
+
+    }
+
+
+
     let cancelled = false;
+
     setIsLoading(true);
+
     setError(null);
 
+
+
     supabase
-      .from("drafts")
-      .select("*, threads(title, wedding_id, weddings(id, couple_names, photographer_id))")
-      .eq("status", "pending_approval")
+
+      .from("v_pending_approval_drafts")
+
+      .select(
+
+        "id, body, thread_id, created_at, thread_title, wedding_id, couple_names, photographer_id",
+
+      )
+
+      .eq("photographer_id", photographerId)
+
+      .order("created_at", { ascending: false })
+
       .then(({ data: rows, error: err }) => {
+
         if (cancelled) return;
+
         if (err) {
-          setError(err.message);
+
+          const hint =
+
+            err.code === "PGRST205" || /v_pending_approval_drafts/i.test(String(err.message ?? ""))
+
+              ? " Apply migration 20260430120000_v_pending_approval_drafts.sql (view missing)."
+
+              : "";
+
+          setError(`${err.message}${hint}`);
+
           setDrafts([]);
+
           setIsLoading(false);
+
           return;
+
         }
 
-        const mapped: PendingDraft[] = (rows ?? []).map((row: Record<string, unknown>) => {
-          const thread = row.threads as Record<string, unknown> | null;
-          const wedding = thread?.weddings as Record<string, unknown> | null;
-          return {
-            id: row.id as string,
-            body: row.body as string,
-            thread_title: (thread?.title as string) ?? "Thread",
-            wedding_id: (wedding?.id as string) ?? "",
-            couple_names: (wedding?.couple_names as string) ?? "Unknown",
-            photographer_id: (wedding?.photographer_id as string) ?? "",
-          };
-        });
+
+
+        const mapped: PendingDraft[] = (rows ?? []).map((row) =>
+
+          mapPendingApprovalProjectionRow(row as Record<string, unknown>),
+
+        );
+
+
 
         setDrafts(mapped);
+
         setIsLoading(false);
+
       });
 
+
+
     return () => {
+
       cancelled = true;
+
     };
-  }, [fetchKey]);
+
+  }, [photographerId, fetchKey]);
+
+
 
   return { drafts, isLoading, error, count: drafts.length, refetch };
+
 }
+

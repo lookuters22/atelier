@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import {
+  inferV3ThreadWorkflowInboundPatch,
+  isV3ThreadWorkflowInboundPatchEmpty,
+} from "./inferV3ThreadWorkflowInboundPatch.ts";
+import { computeV3ThreadWorkflowNextDueAt, mergeV3ThreadWorkflow } from "./mergeV3ThreadWorkflow.ts";
+import { emptyV3ThreadWorkflowV1 } from "./v3ThreadWorkflowTypes.ts";
+
+describe("inferV3ThreadWorkflowInboundPatch", () => {
+  it("detects wire chase (stress 1 shaped)", () => {
+    const p = inferV3ThreadWorkflowInboundPatch(
+      "I am sending the wire transfer today for the remaining balance.",
+    );
+    expect(p.payment_wire?.promised_at).toBeDefined();
+    expect(p.payment_wire?.chase_due_at).toBeDefined();
+    expect(isV3ThreadWorkflowInboundPatchEmpty(p)).toBe(false);
+  });
+
+  it("detects timeline on WhatsApp (stress 2)", () => {
+    const p = inferV3ThreadWorkflowInboundPatch(
+      "I already sent the full timeline to Danilo on WhatsApp last week.",
+    );
+    expect(p.timeline?.suppressed).toBe(true);
+    expect(p.timeline?.received_channel).toBe("whatsapp");
+  });
+
+  it("detects stalled communication (stress 8)", () => {
+    const p = inferV3ThreadWorkflowInboundPatch(
+      "Following up — I never heard back on my question from March about the rehearsal time.",
+    );
+    expect(p.stalled_inquiry?.client_marked_at).toBeDefined();
+    expect(p.stalled_inquiry?.nudge_due_at).toBeDefined();
+  });
+});
+
+describe("mergeV3ThreadWorkflow + next due", () => {
+  it("computes next_due as min of chase and nudge", () => {
+    const merged = mergeV3ThreadWorkflow(emptyV3ThreadWorkflowV1(), {
+      payment_wire: { promised_at: "2026-01-01T00:00:00.000Z", chase_due_at: "2026-01-03T12:00:00.000Z" },
+      stalled_inquiry: {
+        client_marked_at: "2026-01-01T00:00:00.000Z",
+        nudge_due_at: "2026-01-04T00:00:00.000Z",
+      },
+    });
+    expect(computeV3ThreadWorkflowNextDueAt(merged)).toBe("2026-01-03T12:00:00.000Z");
+  });
+});

@@ -14,13 +14,44 @@ import type {
   OrchestratorProposalCandidate,
   PlaybookRuleContextRow,
 } from "../../../../src/types/decisionContext.types.ts";
+import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
+import type { InquiryReplyPlan } from "../../../../src/types/inquiryReplyPlan.types.ts";
 import { parsePhotographerSettings, readPhotographerSettings } from "../../../../src/lib/photographerSettings.ts";
 import { formatCompactContinuityForPersonaWriter } from "../memory/buildPersonaRawFacts.ts";
+import { sanitizeInboundTextForModelContext } from "../memory/sanitizeInboundTextForModelContext.ts";
 import { draftPersonaStructuredResponse, type PersonaWriterStructuredOutput } from "../persona/personaAgent.ts";
+import {
+  redactPersonaCommittedTermsForAudience,
+  redactPlannerPrivateCommercialText,
+  redactPersonaWriterFactsBlockForAudience,
+} from "../context/applyAudiencePrivateCommercialRedaction.ts";
 import { auditDraftTerms, buildAuthoritativeCommercialContext } from "./auditDraftCommercialTerms.ts";
+import { auditPlannerPrivateLeakage } from "./auditPlannerPrivateLeakage.ts";
 import { buildUnknownPolicySignals } from "./commercialPolicySignals.ts";
 import { buildOrchestratorStubDraftBody } from "./attemptOrchestratorDraft.ts";
 import { recordV3OutputAuditorEscalation } from "./recordV3OutputAuditorEscalation.ts";
+import {
+  applyBudgetStatementPlaceholder,
+  auditBudgetStatementFinalEmail,
+  auditBudgetStatementPlaceholderPresent,
+  buildBudgetStatementSlotFactsSection,
+  hasBudgetStatementPlaceholder,
+  planBudgetStatementInjection,
+  V3_PRICING_DATA_GUARDRAIL_STEP,
+  V3_PRICING_GUARDRAIL_BODY_MARKER,
+  type BudgetStatementInjectionPlan,
+} from "./budgetStatementInjection.ts";
+import { auditAvailabilityRestrictedBookingProse } from "./availabilityInquiryBookingGuard.ts";
+import {
+  buildInquiryReplyStrategyFactsSection,
+  deriveInquiryReplyPlan,
+} from "./deriveInquiryReplyPlan.ts";
+import {
+  buildCommercialDepositStarvationFullFallbackFactsSection,
+  buildCommercialDepositStarvationLastMileProximityBlock,
+  COMMERCIAL_DEPOSIT_STARVATION_ACTION_CONSTRAINT_MARKER,
+  shouldAppendCommercialDepositStarvationLastMileFacts,
+} from "./orchestratorCommercialDepositStarvation.ts";
 
 /** Include enough rows for policy coverage; orchestrator rationale alone has no verified numbers. */
 const PLAYBOOK_RULES_MAX = 50;
@@ -115,14 +146,21 @@ export function buildOrchestratorFactsForPersonaWriter(
   playbookRules: PlaybookRuleContextRow[],
   studioIdentityExcerpt: string | null,
   decisionContext: DecisionContext,
+  budgetPlan: BudgetStatementInjectionPlan = { mode: "none" },
+  inquiryReplyPlan: InquiryReplyPlan | null = null,
 ): string {
+  const safeInbound = sanitizeInboundTextForModelContext(rawMessage);
   const lines: string[] = [
     `Approved orchestrator action: ${chosen.action_family} (${chosen.action_key}).`,
     `Orchestrator rationale (generic — does not verify pricing/policy numbers): ${chosen.rationale}`,
     "",
   ];
 
-  const crmBlock = formatAuthoritativeCrmFromSnapshot(decisionContext.crmSnapshot ?? {});
+  if (inquiryReplyPlan !== null) {
+    lines.push(buildInquiryReplyStrategyFactsSection(inquiryReplyPlan), "");
+  }
+
+  const crmBlock = formatAuthoritativeCrmFromSnapshot(decisionContext.crmSnapshot ?? emptyCrmSnapshot());
   if (crmBlock) {
     lines.push(crmBlock, "");
   }
@@ -135,7 +173,7 @@ export function buildOrchestratorFactsForPersonaWriter(
     lines.push(continuity, "");
   }
 
-  lines.push("Client inbound (verbatim):", rawMessage.trim());
+  lines.push("Client inbound (verbatim):", safeInbound.trim());
 
   if (studioIdentityExcerpt && studioIdentityExcerpt.trim().length > 0) {
     lines.push("", "=== Business profile (identity only — not policy) ===", studioIdentityExcerpt);
@@ -154,7 +192,7 @@ export function buildOrchestratorFactsForPersonaWriter(
     lines.push("", "=== Verified policy: playbook_rules (none in snapshot) ===");
   }
 
-  const unknownSignals = buildUnknownPolicySignals(playbookRules, rawMessage);
+  const unknownSignals = buildUnknownPolicySignals(playbookRules, safeInbound);
   if (unknownSignals.length > 0) {
     lines.push("", "=== Explicit unknown / do-not-assert signals ===");
     for (const s of unknownSignals) lines.push(`- ${s}`);
@@ -162,6 +200,10 @@ export function buildOrchestratorFactsForPersonaWriter(
 
   if (chosen.blockers_or_missing_facts.length > 0) {
     lines.push("", `Open notes / missing facts: ${chosen.blockers_or_missing_facts.join("; ")}`);
+  }
+
+  if (budgetPlan.mode === "inject") {
+    lines.push(buildBudgetStatementSlotFactsSection());
   }
 
   lines.push(
@@ -181,9 +223,149 @@ export function buildOrchestratorFactsForPersonaWriter(
     "- If an **Explicit unknown** line appears, follow it: hedge, confirm, or defer — never invent.",
     "- If the client asks to confirm a term not covered by playbook rules, do not invent — acknowledge and confirm from the contract or team.",
     "",
+  );
+
+  if (
+    shouldAppendCommercialDepositStarvationLastMileFacts(
+      playbookRules,
+      chosen,
+      decisionContext.audience,
+      inquiryReplyPlan,
+    )
+  ) {
+    const useProximityOnly = chosen.rationale.includes(COMMERCIAL_DEPOSIT_STARVATION_ACTION_CONSTRAINT_MARKER);
+    lines.push(
+      useProximityOnly
+        ? buildCommercialDepositStarvationLastMileProximityBlock()
+        : buildCommercialDepositStarvationFullFallbackFactsSection(),
+      "",
+    );
+  }
+
+  lines.push(
     "Write a single client-facing reply email body. Do not mention internal orchestrator, drafts, or approval machinery.",
   );
   return lines.join("\n");
+}
+
+const MISSING_PRICING_DATA_VIOLATION =
+  "MISSING_PRICING_DATA: inbound matches a budget-fit pricing question but active playbook_rules did not yield a verified minimum-investment paragraph for deterministic injection — persona writer skipped.";
+
+async function applyVerifiedMinimumPricingGuardrailBlock(
+  supabase: SupabaseClient,
+  params: {
+    decisionContext: DecisionContext;
+    draftAttempt: OrchestratorDraftAttemptResult;
+    rawMessage: string;
+    playbookRules: PlaybookRuleContextRow[];
+    photographerId: string;
+    replyChannel: "email" | "web";
+    threadId: string | null;
+    budgetPlan: Extract<BudgetStatementInjectionPlan, { mode: "blocked_missing_pricing_data" }>;
+    inquiryReplyPlan: InquiryReplyPlan | null;
+  },
+): Promise<Extract<PersonaDraftRewriteResult, { applied: true }>> {
+  const chosen = params.draftAttempt.chosenCandidate!;
+  const stub = buildOrchestratorStubDraftBody(
+    chosen,
+    params.rawMessage,
+    params.replyChannel,
+    params.playbookRules,
+    params.decisionContext.audience,
+  );
+  const violations = [MISSING_PRICING_DATA_VIOLATION];
+  const body =
+    stub +
+    `\n\n${V3_PRICING_GUARDRAIL_BODY_MARKER} Automated reply blocked: verified minimum-investment policy text is not available in active playbook_rules (${params.budgetPlan.code}). ` +
+    "Draft retained as orchestrator stub for operator review — do not send client-facing studio pricing without playbook grounding.";
+
+  const { data: row, error: fetchErr } = await supabase
+    .from("drafts")
+    .select("instruction_history")
+    .eq("id", params.draftAttempt.draftId)
+    .single();
+
+  if (fetchErr) {
+    return {
+      applied: true,
+      draftId: params.draftAttempt.draftId!,
+      auditPassed: false,
+      violations: [`fetch_instruction_history:${fetchErr.message}`],
+      escalationId: null,
+    };
+  }
+
+  const prior = Array.isArray(row?.instruction_history) ? (row!.instruction_history as unknown[]) : [];
+
+  const guardStep = {
+    step: V3_PRICING_DATA_GUARDRAIL_STEP,
+    source: "planBudgetStatementInjection",
+    code: params.budgetPlan.code,
+    ...(params.inquiryReplyPlan !== null
+      ? {
+          inquiry_reply_plan: {
+            schemaVersion: params.inquiryReplyPlan.schemaVersion,
+            inquiry_motion: params.inquiryReplyPlan.inquiry_motion,
+            confirm_availability: params.inquiryReplyPlan.confirm_availability,
+            mention_booking_terms: params.inquiryReplyPlan.mention_booking_terms,
+            budget_clause_mode: params.inquiryReplyPlan.budget_clause_mode,
+            opening_tone: params.inquiryReplyPlan.opening_tone,
+            cta_type: params.inquiryReplyPlan.cta_type,
+          },
+        }
+      : {}),
+  };
+
+  let escalationId: string | null = null;
+  if (params.threadId) {
+    const esc = await recordV3OutputAuditorEscalation(supabase, {
+      photographerId: params.photographerId,
+      threadId: params.threadId,
+      weddingId: params.decisionContext.weddingId ?? null,
+      violations,
+      draftId: params.draftAttempt.draftId!,
+      variant: "commercial",
+    });
+    escalationId = esc?.id ?? null;
+  }
+
+  const nextHistory = [
+    ...prior,
+    guardStep,
+    {
+      step: "v3_output_auditor_commercial_terms",
+      passed: false,
+      violations,
+      escalation_id: escalationId,
+      reason: params.budgetPlan.code,
+    },
+  ];
+
+  const { error: upErr } = await supabase
+    .from("drafts")
+    .update({
+      body,
+      instruction_history: nextHistory,
+    })
+    .eq("id", params.draftAttempt.draftId);
+
+  if (upErr) {
+    return {
+      applied: true,
+      draftId: params.draftAttempt.draftId!,
+      auditPassed: false,
+      violations: [`draft_update_failed:${upErr.message}`],
+      escalationId,
+    };
+  }
+
+  return {
+    applied: true,
+    draftId: params.draftAttempt.draftId!,
+    auditPassed: false,
+    violations,
+    escalationId,
+  };
 }
 
 export function shouldRewriteOrchestratorDraftWithPersona(): boolean {
@@ -219,18 +401,46 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
   if (!params.draftAttempt.draftCreated || !params.draftAttempt.draftId || !params.draftAttempt.chosenCandidate) {
     return { applied: false, reason: "no_orchestrator_draft" };
   }
+
+  const budgetPlan = planBudgetStatementInjection(params.rawMessage, params.playbookRules);
+  const inquiryReplyPlan = deriveInquiryReplyPlan({
+    decisionContext: params.decisionContext,
+    rawMessage: params.rawMessage,
+    playbookRules: params.playbookRules,
+    budgetPlan,
+  });
+
+  if (budgetPlan.mode === "blocked_missing_pricing_data") {
+    return applyVerifiedMinimumPricingGuardrailBlock(supabase, {
+      decisionContext: params.decisionContext,
+      draftAttempt: params.draftAttempt,
+      rawMessage: params.rawMessage,
+      playbookRules: params.playbookRules,
+      photographerId: params.photographerId,
+      replyChannel: params.replyChannel,
+      threadId: params.threadId,
+      budgetPlan,
+      inquiryReplyPlan,
+    });
+  }
+
   if (!shouldRewriteOrchestratorDraftWithPersona()) {
     return { applied: false, reason: "persona_writer_disabled_or_no_api_key" };
   }
 
   const chosen = params.draftAttempt.chosenCandidate;
   const studioId = await fetchStudioIdentityExcerptForPersonaWriter(supabase, params.photographerId);
-  const facts = buildOrchestratorFactsForPersonaWriter(
-    chosen,
-    params.rawMessage,
-    params.playbookRules,
-    studioId,
-    params.decisionContext,
+  const facts = redactPersonaWriterFactsBlockForAudience(
+    buildOrchestratorFactsForPersonaWriter(
+      chosen,
+      params.rawMessage,
+      params.playbookRules,
+      studioId,
+      params.decisionContext,
+      budgetPlan,
+      inquiryReplyPlan,
+    ),
+    params.decisionContext.audience,
   );
 
   let structured: PersonaWriterStructuredOutput;
@@ -242,8 +452,33 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
     return { applied: false, reason: `persona_error:${msg}` };
   }
 
+  const emailFromModel = structured.email_draft;
+  let emailDraft = emailFromModel;
+  const budgetViolations: string[] = [];
+  if (budgetPlan.mode === "inject") {
+    const missingSlot = auditBudgetStatementPlaceholderPresent(emailDraft);
+    if (missingSlot.length === 0) {
+      emailDraft = applyBudgetStatementPlaceholder(emailDraft, budgetPlan.approvedParagraph);
+    } else {
+      budgetViolations.push(...missingSlot);
+    }
+    budgetViolations.push(...auditBudgetStatementFinalEmail(emailDraft, budgetPlan));
+  }
+  structured = { ...structured, email_draft: emailDraft };
+
   const authoritative = buildAuthoritativeCommercialContext(params.decisionContext, params.playbookRules);
-  const audit = auditDraftTerms(structured.committed_terms, authoritative, structured.email_draft);
+  const baseAudit = auditDraftTerms(structured.committed_terms, authoritative, structured.email_draft);
+  const availabilityViolations = auditAvailabilityRestrictedBookingProse(structured.email_draft, inquiryReplyPlan);
+  const mergedViolations = [
+    ...(baseAudit.isValid ? [] : baseAudit.violations),
+    ...budgetViolations,
+    ...availabilityViolations,
+  ];
+  const audit =
+    mergedViolations.length === 0 ? baseAudit : { isValid: false as const, violations: mergedViolations };
+
+  const enforceClientSafeProse = params.decisionContext.audience.clientVisibleForPrivateCommercialRedaction;
+  const leakAudit = auditPlannerPrivateLeakage(structured.email_draft, enforceClientSafeProse);
 
   const { data: row, error: fetchErr } = await supabase
     .from("drafts")
@@ -256,11 +491,38 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
   }
 
   const prior = Array.isArray(row?.instruction_history) ? (row!.instruction_history as unknown[]) : [];
+  const committedTermsForHistory = redactPersonaCommittedTermsForAudience(
+    structured.committed_terms,
+    params.decisionContext.audience,
+  );
   const personaStep = {
     step: "persona_writer_after_client_orchestrator_v1",
     source: "personaAgent.draftPersonaStructuredResponse",
-    model: "claude-sonnet-4-5-20250929",
-    committed_terms: structured.committed_terms,
+    model: "claude-haiku-4-5",
+    committed_terms: committedTermsForHistory,
+    ...(inquiryReplyPlan !== null
+      ? {
+          inquiry_reply_plan: {
+            schemaVersion: inquiryReplyPlan.schemaVersion,
+            inquiry_motion: inquiryReplyPlan.inquiry_motion,
+            confirm_availability: inquiryReplyPlan.confirm_availability,
+            mention_booking_terms: inquiryReplyPlan.mention_booking_terms,
+            budget_clause_mode: inquiryReplyPlan.budget_clause_mode,
+            opening_tone: inquiryReplyPlan.opening_tone,
+            cta_type: inquiryReplyPlan.cta_type,
+          },
+        }
+      : {}),
+    ...(budgetPlan.mode === "inject"
+      ? {
+          budget_statement_injection: {
+            model_had_placeholder: hasBudgetStatementPlaceholder(emailFromModel),
+            approved_excerpt: params.decisionContext.audience.clientVisibleForPrivateCommercialRedaction
+              ? redactPlannerPrivateCommercialText(budgetPlan.approvedParagraph.slice(0, 160))
+              : budgetPlan.approvedParagraph.slice(0, 160),
+          },
+        }
+      : {}),
   };
 
   if (audit.isValid === false) {
@@ -269,6 +531,7 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
       params.rawMessage,
       params.replyChannel,
       params.playbookRules,
+      params.decisionContext.audience,
     );
     const body =
       stub +
@@ -282,6 +545,7 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
         weddingId: params.decisionContext.weddingId ?? null,
         violations: audit.violations,
         draftId: params.draftAttempt.draftId,
+        variant: "commercial",
       });
       escalationId = esc?.id ?? null;
     }
@@ -318,6 +582,64 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
     };
   }
 
+  if (leakAudit.isValid === false) {
+    const stub = buildOrchestratorStubDraftBody(
+      chosen,
+      params.rawMessage,
+      params.replyChannel,
+      params.playbookRules,
+      params.decisionContext.audience,
+    );
+    const body =
+      stub +
+      "\n\n[V3 output auditor] Persona draft rejected — planner-private commercial language in client-visible audience. Stub restored. Operator escalation filed.";
+
+    let escalationId: string | null = null;
+    if (params.threadId) {
+      const esc = await recordV3OutputAuditorEscalation(supabase, {
+        photographerId: params.photographerId,
+        threadId: params.threadId,
+        weddingId: params.decisionContext.weddingId ?? null,
+        violations: leakAudit.violations,
+        draftId: params.draftAttempt.draftId,
+        variant: "planner_private_leak",
+      });
+      escalationId = esc?.id ?? null;
+    }
+
+    const nextHistory = [
+      ...prior,
+      personaStep,
+      { step: "v3_output_auditor_commercial_terms", passed: true },
+      {
+        step: "v3_output_auditor_planner_private_leakage",
+        passed: false,
+        violations: leakAudit.violations,
+        escalation_id: escalationId,
+      },
+    ];
+
+    const { error: upErr } = await supabase
+      .from("drafts")
+      .update({
+        body,
+        instruction_history: nextHistory,
+      })
+      .eq("id", params.draftAttempt.draftId);
+
+    if (upErr) {
+      return { applied: false, reason: `draft_update_failed:${upErr.message}` };
+    }
+
+    return {
+      applied: true,
+      draftId: params.draftAttempt.draftId,
+      auditPassed: false,
+      violations: leakAudit.violations,
+      escalationId,
+    };
+  }
+
   const nextHistory = [
     ...prior,
     personaStep,
@@ -325,6 +647,7 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
       step: "v3_output_auditor_commercial_terms",
       passed: true,
     },
+    { step: "v3_output_auditor_planner_private_leakage", passed: true },
   ];
 
   const { error: upErr } = await supabase
