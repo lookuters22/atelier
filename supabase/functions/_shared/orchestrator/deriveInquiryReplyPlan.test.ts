@@ -1,7 +1,15 @@
 /**
  * Inquiry reply-plan derivation — hosted QA-shaped scenarios.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../inngest.ts", () => ({
+  ORCHESTRATOR_CLIENT_V1_SCHEMA_VERSION: 1,
+  inngest: { send: vi.fn().mockResolvedValue(undefined), setEnvVars: vi.fn() },
+  OPERATOR_ESCALATION_PENDING_DELIVERY_V1_EVENT: "operator/escalation.pending_delivery.v1",
+  OPERATOR_ESCALATION_PENDING_DELIVERY_V1_SCHEMA_VERSION: 1,
+}));
+import type { InquiryFirstStepStyle } from "../../../../src/lib/inquiryFirstStepStyle.ts";
 import type { DecisionContext, PlaybookRuleContextRow } from "../../../../src/types/decisionContext.types.ts";
 import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
 import {
@@ -9,25 +17,36 @@ import {
   budgetClauseModeFromBudgetPlan,
   deriveInquiryReplyPlan,
   detectAvailabilityAsk,
+  detectClientAsksForCallOrMeeting,
   detectDateOrVenueClarifyAsk,
   buildInquiryReplyStrategyFactsSection,
   INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER,
   INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER,
+  INQUIRY_REPLY_SOFT_CALL_CTA_MARKER,
   INQUIRY_REPLY_STRATEGY_SECTION_TITLE,
   INQUIRY_REPLY_WEAK_AVAILABILITY_ONLY_MARKER,
   isWeakAvailabilityInquiryPlan,
 } from "./deriveInquiryReplyPlan.ts";
 import { PERSONA_WEAK_AVAILABILITY_REALIZATION_SECTION_MARKER } from "../prompts/personaWeakAvailabilityRealization.ts";
 import type { BudgetStatementInjectionPlan } from "./budgetStatementInjection.ts";
+import { buildInquiryClaimPermissions, INQUIRY_CLAIM_PERMISSIONS_SECTION_TITLE } from "./buildInquiryClaimPermissions.ts";
 import { buildOrchestratorFactsForPersonaWriter } from "./maybeRewriteOrchestratorDraftWithPersona.ts";
 import type { OrchestratorProposalCandidate } from "../../../../src/types/decisionContext.types.ts";
 
-function mockDecisionContext(stage: string | undefined): DecisionContext {
+function mockDecisionContext(
+  stage: string | undefined,
+  opts?: {
+    recentMessages?: DecisionContext["recentMessages"];
+    inquiryFirstStepStyle?: InquiryFirstStepStyle;
+  },
+): DecisionContext {
   return {
     crmSnapshot: stage !== undefined ? { ...emptyCrmSnapshot(), stage: stage as never } : emptyCrmSnapshot(),
     rawPlaybookRules: [],
     authorizedCaseExceptions: [],
     playbookRules: [],
+    recentMessages: opts?.recentMessages,
+    inquiryFirstStepStyle: opts?.inquiryFirstStepStyle ?? "proactive_call",
   } as DecisionContext;
 }
 
@@ -75,6 +94,8 @@ describe("deriveInquiryReplyPlan", () => {
     expect(p!.budget_clause_mode).toBe("none");
     expect(p!.opening_tone).toBe("warm");
     expect(p!.cta_type).toBe("call");
+    expect(p!.cta_intensity).toBe("direct");
+    expect(p!.inquiry_first_step_style_effective).toBe("proactive_call");
   });
 
   it("inquiry_date_location_clarify: clarify_only, booking none", () => {
@@ -175,9 +196,10 @@ describe("deriveInquiryReplyPlan", () => {
     })!;
     const block = buildInquiryReplyStrategyFactsSection(plan);
     expect(block).toContain(INQUIRY_REPLY_STRATEGY_SECTION_TITLE);
-    expect(block.split("\n").length).toBeLessThanOrEqual(10);
+    expect(block.split("\n").length).toBeLessThanOrEqual(14);
     expect(block).toContain("motion:");
     expect(block).toContain("cta:");
+    expect(block).toContain("cta_intensity:");
     expect(block).not.toContain(INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER);
     expect(block).toContain(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER);
   });
@@ -195,8 +217,69 @@ describe("deriveInquiryReplyPlan", () => {
     expect(block).toContain(INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER);
     expect(block).toContain(INQUIRY_REPLY_WEAK_AVAILABILITY_ONLY_MARKER);
     expect(block).toContain(PERSONA_WEAK_AVAILABILITY_REALIZATION_SECTION_MARKER);
-    expect(block.split("\n").length).toBeLessThanOrEqual(12);
+    expect(block.split("\n").length).toBeLessThanOrEqual(16);
     expect(block).not.toContain(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER);
+  });
+
+  it("no_call_push first-touch strips proactive call CTA", () => {
+    const raw = "Hi — we're getting married in fall 2026 and love your portfolio. [corr]";
+    const p = deriveInquiryReplyPlan({
+      decisionContext: mockDecisionContext("inquiry", { inquiryFirstStepStyle: "no_call_push" }),
+      rawMessage: raw,
+      playbookRules: [rule("Minimum investment $10,000 local.")],
+      budgetPlan: noneBudget,
+    })!;
+    expect(p.cta_type).toBe("none");
+    expect(p.cta_intensity).toBe("none");
+    expect(p.inquiry_motion).toBe("qualify_first");
+    const facts = buildInquiryReplyStrategyFactsSection(p);
+    expect(facts).not.toContain(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER);
+    expect(facts).not.toContain(INQUIRY_REPLY_SOFT_CALL_CTA_MARKER);
+    expect(facts).toContain("cta_intensity_none");
+  });
+
+  it("soft_call first-touch keeps call CTA with soft intensity", () => {
+    const raw = "Hi — we're getting married in fall 2026 and love your portfolio. [corr]";
+    const p = deriveInquiryReplyPlan({
+      decisionContext: mockDecisionContext("inquiry", { inquiryFirstStepStyle: "soft_call" }),
+      rawMessage: raw,
+      playbookRules: [rule("Minimum investment $10,000 local.")],
+      budgetPlan: noneBudget,
+    })!;
+    expect(p.cta_type).toBe("call");
+    expect(p.cta_intensity).toBe("soft");
+    const facts = buildInquiryReplyStrategyFactsSection(p);
+    expect(facts).toContain(INQUIRY_REPLY_SOFT_CALL_CTA_MARKER);
+    expect(facts).not.toContain(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER);
+  });
+
+  it("no_call_push still allows direct call CTA when client asks to schedule a call", () => {
+    const raw =
+      "Hi there — love your work. Could we set up a short call next week? [corr]";
+    const p = deriveInquiryReplyPlan({
+      decisionContext: mockDecisionContext("inquiry", { inquiryFirstStepStyle: "no_call_push" }),
+      rawMessage: raw,
+      playbookRules: [rule("Minimum investment $10,000 local.")],
+      budgetPlan: noneBudget,
+    })!;
+    expect(p.cta_type).toBe("call");
+    expect(p.cta_intensity).toBe("direct");
+    expect(buildInquiryReplyStrategyFactsSection(p)).toContain(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER);
+  });
+
+  it("after a prior studio outbound, tenant no_call_push does not strip call CTA", () => {
+    const raw = "Hi — one more question about collections [c]";
+    const p = deriveInquiryReplyPlan({
+      decisionContext: mockDecisionContext("inquiry", {
+        inquiryFirstStepStyle: "no_call_push",
+        recentMessages: [{ direction: "out", body: "Thanks for reaching out!" }],
+      }),
+      rawMessage: raw,
+      playbookRules: [rule("Minimum investment $10,000 local.")],
+      budgetPlan: noneBudget,
+    })!;
+    expect(p.cta_type).toBe("call");
+    expect(p.cta_intensity).toBe("direct");
   });
 });
 
@@ -207,6 +290,12 @@ describe("detectors", () => {
 
   it("detectAvailabilityAsk matches availability question", () => {
     expect(detectAvailabilityAsk("Are you available for Saturday")).toBe(true);
+  });
+
+  it("detectClientAsksForCallOrMeeting matches scheduling language", () => {
+    expect(detectClientAsksForCallOrMeeting("Could we set up a short call?")).toBe(true);
+    expect(detectClientAsksForCallOrMeeting("Can we book a time to chat?")).toBe(true);
+    expect(detectClientAsksForCallOrMeeting("Love your portfolio for June")).toBe(false);
   });
 });
 
@@ -228,16 +317,27 @@ describe("buildOrchestratorFactsForPersonaWriter + inquiry plan", () => {
       playbookRules: [],
       budgetPlan: { mode: "none" },
     })!;
+    const raw = "Hi — portfolio question [c]";
+    const dcInq = mockDecisionContext("inquiry");
+    const claimPerms = buildInquiryClaimPermissions({
+      decisionContext: dcInq,
+      playbookRules: [],
+      inquiryReplyPlan: plan,
+      rawMessage: raw,
+    });
     const facts = buildOrchestratorFactsForPersonaWriter(
       minimalSendMessageCandidate,
-      "Hi — portfolio question [c]",
+      raw,
       [],
       null,
-      mockDecisionContext("inquiry"),
+      dcInq,
       { mode: "none" },
       plan,
+      claimPerms,
     );
     expect(facts).toContain(INQUIRY_REPLY_STRATEGY_SECTION_TITLE);
+    expect(facts).toContain(INQUIRY_CLAIM_PERMISSIONS_SECTION_TITLE);
+    expect(facts).toContain("offering_fit:");
     expect(facts).toContain("motion:");
     expect(facts).toContain("cta:");
     const lineCount = facts.split("\n").length;

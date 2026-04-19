@@ -17,6 +17,8 @@ function plan(partial: Partial<InquiryReplyPlan>): InquiryReplyPlan {
     budget_clause_mode: "none",
     opening_tone: "reassuring",
     cta_type: "none",
+    cta_intensity: "none",
+    inquiry_first_step_style_effective: "proactive_call",
     ...partial,
   };
 }

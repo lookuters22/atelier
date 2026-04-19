@@ -68,4 +68,36 @@ describe("sendGmailReplyForApprovedDraft — subject inheritance", () => {
     expect(fnIdx).toBeGreaterThan(-1);
     expect(emptySubjectIdx).toBeGreaterThan(fnIdx);
   });
+
+  it("uses selectReplyableExternalGmailParticipant and preferCallerReplyAnchor (no blind latest-inbound To)", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), "supabase/functions/_shared/gmail/gmailOperatorSend.ts"),
+      "utf-8",
+    );
+    expect(src).toContain("selectReplyableExternalGmailParticipant");
+    expect(src).toContain("preferCallerReplyAnchor: true");
+    expect(src).not.toContain("lastIn");
+  });
+});
+
+describe("sendGmailReplyAndInsertMessage — reply anchor preference", () => {
+  it("documents preferCallerReplyAnchor and bracketed self-send error code", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), "supabase/functions/_shared/gmail/gmailOperatorSend.ts"),
+      "utf-8",
+    );
+    const fnIdx = src.indexOf("export async function sendGmailReplyAndInsertMessage");
+    const nextFn = src.indexOf("\nexport async function sendGmailComposeNewThreadAndInsert", fnIdx);
+    const body = src.slice(fnIdx, nextFn);
+    expect(body).toContain("preferCallerReplyAnchor");
+    expect(body).toContain("useCallerAnchorFirst");
+    expect(body).toContain("[reply_recipient_resolves_to_connected_account]");
+    expect(body).toContain("Send mail as alias");
+    expect(body).toContain("[reply_anchor_missing_provider_message_id]");
+    expect(body).toContain("resolvedSelfMailboxes");
+  });
 });

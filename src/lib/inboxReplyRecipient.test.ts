@@ -26,4 +26,24 @@ describe("findMostRecentReplyableExternalParticipant", () => {
     const messages = [{ direction: "out" as const, sender: connected }];
     expect(findMostRecentReplyableExternalParticipant(messages, connected)).toBeNull();
   });
+
+  it("skips latest inbound when it is the connected mailbox (Gmail dot variant)", () => {
+    const messages = [
+      { direction: "in" as const, sender: "Client <client@example.com>" },
+      { direction: "in" as const, sender: "Me <photo.grapher@gmail.com>" },
+    ];
+    const r = findMostRecentReplyableExternalParticipant(messages, "photographer@gmail.com");
+    expect(r?.normalizedMailbox).toBe("client@example.com");
+  });
+
+  it("treats additionalSelfMailboxes as studio identities", () => {
+    const messages = [
+      { direction: "in" as const, sender: "Client <client@example.com>" },
+      { direction: "in" as const, sender: "Studio <bookings@mybrand.com>" },
+    ];
+    const r = findMostRecentReplyableExternalParticipant(messages, "photographer@gmail.com", [
+      "bookings@mybrand.com",
+    ]);
+    expect(r?.normalizedMailbox).toBe("client@example.com");
+  });
 });

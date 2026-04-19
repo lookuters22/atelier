@@ -4,6 +4,8 @@
  * Factual grounding remains in orchestrator facts + auditors (unchanged).
  */
 
+import type { InquiryFirstStepStyle } from "../lib/inquiryFirstStepStyle.ts";
+
 export type InquiryMotion =
   | "consultation_first"
   | "send_packages_first"
@@ -23,6 +25,9 @@ export type InquiryOpeningTone = "warm" | "crisp" | "reassuring" | "firm";
 
 export type InquiryCtaType = "call" | "packages" | "clarification" | "none";
 
+/** How strongly the writer may steer toward a booking/call CTA (planner-enforced; see tenant `inquiry_first_step_style`). */
+export type InquiryCtaIntensity = "direct" | "soft" | "none";
+
 /** Compact structured plan for inquiry-stage client orchestrator drafts. */
 export type InquiryReplyPlan = {
   schemaVersion: 1;
@@ -32,4 +37,11 @@ export type InquiryReplyPlan = {
   budget_clause_mode: BudgetClauseMode;
   opening_tone: InquiryOpeningTone;
   cta_type: InquiryCtaType;
+  /**
+   * Planner: `direct` = concrete call/booking steer OK; `soft` = call only as optional language;
+   * `none` = no proactive call/calendar push (substance + email-first next step).
+   */
+  cta_intensity: InquiryCtaIntensity;
+  /** Effective first-step style after first-touch / client-intent overrides (runtime observability). */
+  inquiry_first_step_style_effective: InquiryFirstStepStyle;
 };

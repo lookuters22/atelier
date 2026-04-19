@@ -1,5 +1,6 @@
 import type { AgentContext } from "./agent.types.ts";
 import type { Database } from "./database.types.ts";
+import type { InquiryFirstStepStyle } from "../lib/inquiryFirstStepStyle.ts";
 import type {
   InboundSuppressionClassification,
   InboundSuppressionReasonCode,
@@ -354,6 +355,10 @@ export interface DecisionContext extends AgentContext {
    * What was loaded for this decision (ids + counts + global KB gate). Persona inputs unchanged.
    */
   retrievalTrace: DecisionContextRetrievalTrace;
+  /**
+   * From `photographers.settings.inquiry_first_step_style` (normalized). Set in {@link buildDecisionContext}.
+   */
+  inquiryFirstStepStyle: InquiryFirstStepStyle;
 }
 
 // ── Phase 2 Slice A1 — client orchestrator proposal objects (no DB / no sends) ────────────────

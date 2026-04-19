@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   extractFirstMailboxFromRecipientField,
   isLikelyNonReplyableSystemLocalPart,
+  mailboxMatchesAnySelfIdentity,
   mailboxesAreSameMailbox,
+  mergeSelfMailboxList,
   normalizeMailboxForComparison,
 } from "./mailboxNormalize";
 
@@ -10,6 +12,11 @@ describe("normalizeMailboxForComparison", () => {
   it("lowercases and strips Gmail +tag", () => {
     expect(normalizeMailboxForComparison("User+work@gmail.com")).toBe("user@gmail.com");
     expect(normalizeMailboxForComparison("User@Gmail.com")).toBe("user@gmail.com");
+  });
+
+  it("treats Gmail local-part dots as equivalent", () => {
+    expect(normalizeMailboxForComparison("john.smith@gmail.com")).toBe("johnsmith@gmail.com");
+    expect(mailboxesAreSameMailbox("j.o.h.n@gmail.com", "john@gmail.com")).toBe(true);
   });
 
   it("parses angle-addr", () => {
@@ -20,6 +27,23 @@ describe("normalizeMailboxForComparison", () => {
 describe("mailboxesAreSameMailbox", () => {
   it("treats Gmail aliases as same", () => {
     expect(mailboxesAreSameMailbox("me@gmail.com", "me+lists@gmail.com")).toBe(true);
+  });
+});
+
+describe("mergeSelfMailboxList", () => {
+  it("dedupes extras against primary", () => {
+    expect(mergeSelfMailboxList("me@gmail.com", ["me+tag@gmail.com", "alias@brand.com"])).toEqual([
+      "me@gmail.com",
+      "alias@brand.com",
+    ]);
+  });
+});
+
+describe("mailboxMatchesAnySelfIdentity", () => {
+  it("returns true when candidate matches any entry", () => {
+    expect(mailboxMatchesAnySelfIdentity("alias@brand.com", ["me@gmail.com", "alias@brand.com"])).toBe(
+      true,
+    );
   });
 });
 

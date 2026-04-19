@@ -42,6 +42,7 @@ import {
 import { scopeSectorGlassPillBase } from "@/components/onboarding/SectorDonutBubbleField.tsx";
 import { obMotionShell } from "@/components/onboarding/onboardingVisuals.ts";
 import { cn } from "@/lib/utils";
+import { INQUIRY_FIRST_STEP_STYLE_UI, normalizeInquiryFirstStepStyle } from "@/lib/inquiryFirstStepStyle.ts";
 import { useRegisterOnboardingBriefingHeader } from "@/components/onboarding/OnboardingBriefingHeaderContext.tsx";
 
 const REVIEW_CINEMATIC_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
@@ -211,11 +212,16 @@ export function OnboardingBriefingReviewStep({
   const voiceHasAnyContent = useMemo(() => {
     return (
       Object.entries(voiceFacts).some(([, v]) => typeof v === "string" && v.trim().length > 0) ||
-      Boolean(voiceFacts.tone_archetype?.trim())
+      Boolean(voiceFacts.tone_archetype?.trim()) ||
+      id?.inquiry_first_step_style !== undefined
     );
-  }, [voiceFacts]);
+  }, [voiceFacts, id?.inquiry_first_step_style]);
 
   const voiceToneLabel = useMemo(() => toneLabelFromFacts(voiceFacts), [voiceFacts]);
+
+  const inquiryFirstStepEffective = normalizeInquiryFirstStepStyle(id?.inquiry_first_step_style);
+  const inquiryFirstStepReviewLabel = INQUIRY_FIRST_STEP_STYLE_UI[inquiryFirstStepEffective].label;
+  const inquiryFirstStepExplicit = id?.inquiry_first_step_style !== undefined;
 
   const coreServicesHasAny = scope.core_services.length > 0;
   const specializationsHasAny = scope.specializations.length > 0;
@@ -484,6 +490,11 @@ export function OnboardingBriefingReviewStep({
                   <span className={glassPillReadOnly}>{voiceToneLabel}</span>
                 </div>
               ) : null}
+              <CinematicReviewRow
+                label="First reply on new inquiries"
+                value={formatReviewDecision(inquiryFirstStepReviewLabel, inquiryFirstStepExplicit)}
+                muted={!inquiryFirstStepExplicit}
+              />
               {!isBlank(voiceFacts.banned_phrases) ||
               !isBlank(voiceFacts.signature_closing) ||
               !isBlank(voiceFacts.standard_booking_language) ||

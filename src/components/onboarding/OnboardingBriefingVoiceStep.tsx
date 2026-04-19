@@ -14,6 +14,8 @@ import { ScopeSectorCluster } from "@/components/onboarding/ScopeSectorCluster.t
 import { scopeSectorGlassPillBase } from "@/components/onboarding/SectorDonutBubbleField.tsx";
 import { obMotionShell } from "@/components/onboarding/onboardingVisuals.ts";
 import type { SectorDonutLayoutOptions } from "@/lib/onboardingScopeRadialScatter.ts";
+import { INQUIRY_FIRST_STEP_STYLE_UI, type InquiryFirstStepStyle } from "@/lib/inquiryFirstStepStyle.ts";
+import { SelectorChoiceGrid, type SelectorChoiceGridItem } from "@/components/onboarding/selectors/SelectorChoiceGrid.tsx";
 import { cn } from "@/lib/utils";
 
 type VoiceStage = "tone" | "language";
@@ -111,6 +113,17 @@ export function OnboardingBriefingVoiceStep({
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+
+  const inquiryFirstStepStyle: InquiryFirstStepStyle =
+    payload.settings_identity?.inquiry_first_step_style ?? "proactive_call";
+
+  const inquiryStyleItems = useMemo((): readonly SelectorChoiceGridItem[] => {
+    return (["proactive_call", "soft_call", "no_call_push"] as const).map((id) => ({
+      id,
+      label: INQUIRY_FIRST_STEP_STYLE_UI[id].label,
+      description: INQUIRY_FIRST_STEP_STYLE_UI[id].shortHint,
+    }));
+  }, []);
 
   useEffect(() => {
     const el = activeCardRef.current?.querySelector<HTMLElement>("input, button, select");
@@ -230,6 +243,32 @@ export function OnboardingBriefingVoiceStep({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.52, ease: VOICE_CINEMATIC_EASE }}
               >
+                <div className="space-y-2">
+                  <div>
+                    <p className={voiceFieldLabel}>First reply on new inquiries</p>
+                    <p className="mt-1 text-[12px] leading-relaxed text-white/60">
+                      Controls whether Ana steers brand-new inquiries toward a call or keeps the thread email-first.
+                    </p>
+                  </div>
+                  <SelectorChoiceGrid
+                    ariaLabel="First reply on new inquiries"
+                    mode="single"
+                    size="sm"
+                    items={inquiryStyleItems}
+                    value={[inquiryFirstStepStyle]}
+                    onChange={(next) => {
+                      const id = next[0] as InquiryFirstStepStyle | undefined;
+                      if (!id) return;
+                      updatePayload((p) => ({
+                        ...p,
+                        settings_identity: {
+                          ...(p.settings_identity ?? {}),
+                          inquiry_first_step_style: id,
+                        },
+                      }));
+                    }}
+                  />
+                </div>
                 <label className="block space-y-2 text-[13px]">
                   <span className={voiceFieldLabel}>Banned phrases</span>
                   <input

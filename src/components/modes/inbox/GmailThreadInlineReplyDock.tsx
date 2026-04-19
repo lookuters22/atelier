@@ -9,7 +9,8 @@ import { invokeGmailInboxSendReply } from "../../../lib/gmailInboxSend";
 import { findMostRecentReplyableExternalParticipant } from "../../../lib/inboxReplyRecipient";
 import {
   extractFirstMailboxFromRecipientField,
-  mailboxesAreSameMailbox,
+  mailboxMatchesAnySelfIdentity,
+  mergeSelfMailboxList,
   normalizeMailboxForComparison,
 } from "../../../lib/mailboxNormalize";
 import {
@@ -134,6 +135,12 @@ const GmailThreadInlineReplyDockInner = forwardRef<GmailThreadInlineReplyDockHan
   const effectiveLatestProviderMessageId =
     historyLatestProviderMessageId ?? latestProviderMessageIdHint ?? null;
 
+  /** Primary only unless we later surface send-as via API; `gmail-send` resolves full Gmail identities. */
+  const studioSelfMailboxes = useMemo(
+    () => mergeSelfMailboxList(googleAccount?.email ?? "", []),
+    [googleAccount?.email],
+  );
+
   const replyableParticipant = useMemo(
     () => findMostRecentReplyableExternalParticipant(chatMessages, googleAccount?.email ?? null),
     [chatMessages, googleAccount?.email],
@@ -178,7 +185,13 @@ const GmailThreadInlineReplyDockInner = forwardRef<GmailThreadInlineReplyDockHan
       return;
     }
 
-    if (connected && lastAutoReplyTo === null && mailboxesAreSameMailbox(to, connected)) {
+    const toMailbox = extractFirstMailboxFromRecipientField(to);
+    if (
+      connected &&
+      lastAutoReplyTo === null &&
+      toMailbox &&
+      mailboxMatchesAnySelfIdentity(toMailbox, studioSelfMailboxes)
+    ) {
       queueMicrotask(() => {
         setTo(next.displayTo);
         setLastAutoReplyTo(next.normalizedMailbox);
@@ -202,7 +215,7 @@ const GmailThreadInlineReplyDockInner = forwardRef<GmailThreadInlineReplyDockHan
       setTo(next.displayTo);
       setLastAutoReplyTo(next.normalizedMailbox);
     });
-  }, [replyableParticipant, googleAccount?.email, threadId, to, lastAutoReplyTo]);
+  }, [replyableParticipant, googleAccount?.email, threadId, to, lastAutoReplyTo, studioSelfMailboxes]);
 
   const draftPayload = useMemo(
     (): InboxInlineReplyDraftV1 => ({

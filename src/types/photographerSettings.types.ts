@@ -1,4 +1,5 @@
 import type { StudioBaseLocation } from "../lib/studioBaseLocation.ts";
+import type { InquiryFirstStepStyle } from "../lib/inquiryFirstStepStyle.ts";
 
 /**
  * Canonical `photographers.settings` JSON contract (docs/v3/DATABASE_SCHEMA.md §5.1, execute_v3 Step 1A).
@@ -25,6 +26,11 @@ export type PhotographerSettings = {
    * the runtime to bias maps, travel messaging, and directory defaults.
    */
   base_location?: StudioBaseLocation | null;
+  /**
+   * Onboarding/runtime: how strongly first-touch inquiry replies may steer toward a call (or packages).
+   * Defaults to `proactive_call` when unset (legacy behavior).
+   */
+  inquiry_first_step_style?: InquiryFirstStepStyle;
 };
 
 /** Known keys only — use for parsing/merging; unknown keys in JSONB are preserved by merge when merging onto a full object. */
@@ -39,6 +45,7 @@ export const PHOTOGRAPHER_SETTINGS_KEYS = [
   "onboarding_completed_at",
   "playbook_version",
   "base_location",
+  "inquiry_first_step_style",
 ] as const;
 
 export type PhotographerSettingsKey = (typeof PHOTOGRAPHER_SETTINGS_KEYS)[number];

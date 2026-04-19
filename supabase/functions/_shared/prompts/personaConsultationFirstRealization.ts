@@ -7,6 +7,10 @@
 export const PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER =
   "=== Consultation-first inquiry — realization (voice) ===";
 
+/** Must match the heading line in {@link buildSoftCallInquiryUserHintBlock}. */
+export const PERSONA_SOFT_CALL_REALIZATION_SECTION_MARKER =
+  "=== Consultation inquiry — soft optional call (voice) ===";
+
 /** Stable substring for tests — anti-funnel instruction body. */
 export const PERSONA_CONSULTATION_FIRST_ANTI_FUNNEL_BOILERPLATE_SUBSTRING =
   "Avoid stacking stock funnel lines";
@@ -24,5 +28,19 @@ export function buildConsultationFirstInquiryUserHintBlock(): string {
     "- **Wording:** prefer natural alternatives to formulaic \"lead photographer\" (e.g. who you'd work with, our photographer, the team member who handles planning) unless CRM/playbook gives an exact title.",
     "- **Offers:** do not promise a \"customized proposal\" unless verified policy/CRM makes that concrete; otherwise hedge with neutral next-step language.",
     "- **Closing:** skip stock \"in the meantime\" padding; end cleanly with Ana when appropriate.",
+  ].join("\n");
+}
+
+/**
+ * Softer CTA realization when the planner sets `cta_intensity: soft` (tenant prefers optional call language).
+ */
+export function buildSoftCallInquiryUserHintBlock(): string {
+  return [
+    "",
+    PERSONA_SOFT_CALL_REALIZATION_SECTION_MARKER,
+    "**Soft call CTA** (planner: a call is only an **optional** path, not the main push):",
+    "- You may mention a call only as an extra (e.g. happy to hop on a quick call if helpful) — **not** as \"the best next step\", \"I would recommend\", \"the natural next step\", or imperative booking.",
+    "- **Avoid** \"book a time\", \"use the link below\", or calendar-first steering unless the client already asked to schedule.",
+    "- Answer their substance in short, plain sentences first; keep the operational Ana cadence from the system prompt—no luxury-brand or vision-deck filler.",
   ].join("\n");
 }

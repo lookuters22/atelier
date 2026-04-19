@@ -113,6 +113,18 @@ describe("mapOnboardingPayloadToStorage — first completion & re-finalization m
     );
   });
 
+  it("maps inquiry_first_step_style into settingsPatch for runtime planner", () => {
+    const payload: OnboardingPayloadV4 = {
+      settings_identity: {
+        inquiry_first_step_style: "no_call_push",
+      },
+      studio_scope: {},
+      playbook_seeds: [],
+    };
+    const m = mapOnboardingPayloadToStorage(photographerId, payload);
+    expect(m.settingsPatch.inquiry_first_step_style).toBe("no_call_push");
+  });
+
   it("maps only onboarding-owned playbook source_types (replacement cohort safety)", () => {
     const payload: OnboardingPayloadV4 = {
       settings_identity: {},
@@ -431,6 +443,36 @@ describe("finalizeOnboardingBriefingRuntime — RPC payload (mocked client)", ()
     const blob = settings[ONBOARDING_BRIEFING_SNAPSHOT_SETTINGS_KEY] as Record<string, unknown>;
     expect(blob.status).toBe("completed");
     expect(blob.payload).toMatchObject({ settings_identity: { studio_name: "S" } });
+  });
+
+  it("persists settings_identity.inquiry_first_step_style into merged p_settings (finalize path)", async () => {
+    const snap = draftSnapshot();
+    const raw = { [ONBOARDING_BRIEFING_SNAPSHOT_SETTINGS_KEY]: snap, other_key: "keep" };
+    const rpc = vi.fn(async () => ({ error: null }));
+    const client = buildClient(raw, rpc);
+
+    const now = "2026-04-16T15:00:00.000Z";
+    const completedPayload: OnboardingPayloadV4 = {
+      ...snap.payload,
+      settings_identity: {
+        ...snap.payload.settings_identity,
+        inquiry_first_step_style: "no_call_push",
+      },
+      settings_meta: { onboarding_completed_at: now },
+    };
+
+    await finalizeOnboardingBriefingRuntime({
+      supabase: client,
+      photographerId,
+      completedPayload,
+      completedSteps: ["identity"],
+      nowIso: now,
+    });
+
+    const args = rpc.mock.calls[0][1] as Record<string, unknown>;
+    const settings = args.p_settings as Record<string, unknown>;
+    expect(settings.inquiry_first_step_style).toBe("no_call_push");
+    expect(settings.other_key).toBe("keep");
   });
 
   it("rejects finalize when base_location is missing (client-side mirror of SQL guard)", async () => {

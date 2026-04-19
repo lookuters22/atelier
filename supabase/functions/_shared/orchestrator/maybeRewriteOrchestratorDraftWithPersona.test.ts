@@ -1,7 +1,14 @@
 /**
  * Persona writer boundary — numeric commercial policy guardrails (no-playbook / ungrounded %).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../inngest.ts", () => ({
+  ORCHESTRATOR_CLIENT_V1_SCHEMA_VERSION: 1,
+  inngest: { send: vi.fn().mockResolvedValue(undefined), setEnvVars: vi.fn() },
+  OPERATOR_ESCALATION_PENDING_DELIVERY_V1_EVENT: "operator/escalation.pending_delivery.v1",
+  OPERATOR_ESCALATION_PENDING_DELIVERY_V1_SCHEMA_VERSION: 1,
+}));
 import type { DecisionContext } from "../../../../src/types/decisionContext.types.ts";
 import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
 import type { OrchestratorProposalCandidate } from "../../../../src/types/decisionContext.types.ts";

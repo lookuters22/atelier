@@ -17,6 +17,8 @@
  */
 import type { Json } from "../types/database.types.ts";
 import type { PhotographerSettings } from "../types/photographerSettings.types.ts";
+import type { InquiryFirstStepStyle } from "./inquiryFirstStepStyle.ts";
+import { normalizeInquiryFirstStepStyle } from "./inquiryFirstStepStyle.ts";
 import type { StudioBaseLocation } from "./studioBaseLocation.ts";
 import type { EscalationPreferencesCapture } from "./onboardingCaptureEscalationPreferences.ts";
 import type { SchedulingActionPermissionMatrix } from "./onboardingActionPermissionMatrixScheduling.ts";
@@ -71,6 +73,10 @@ export type OnboardingSettingsIdentity = {
    * via the settings patch. `null` means "explicitly cleared".
    */
   base_location?: StudioBaseLocation | null;
+  /**
+   * First-touch inquiry CTA strength — persisted to `photographers.settings.inquiry_first_step_style`.
+   */
+  inquiry_first_step_style?: InquiryFirstStepStyle;
 };
 
 /** Versions / completion markers written to settings JSONB. */
@@ -236,6 +242,9 @@ export function mapOnboardingPayloadToStorage(
   }
   if (id.base_location !== undefined) {
     settingsPatch.base_location = id.base_location;
+  }
+  if (id.inquiry_first_step_style !== undefined) {
+    settingsPatch.inquiry_first_step_style = normalizeInquiryFirstStepStyle(id.inquiry_first_step_style);
   }
 
   const meta = payload.settings_meta;

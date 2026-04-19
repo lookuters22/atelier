@@ -2,7 +2,6 @@
  * Ana voice style anchor — formatter output (non-factual disclaimers + example bodies).
  */
 import { describe, expect, it } from "vitest";
-import { PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER } from "./personaConsultationFirstRealization.ts";
 import {
   buildPersonaStyleExamplesPromptSection,
   PERSONA_STYLE_EXAMPLES_NOT_FACTUAL,
@@ -17,13 +16,17 @@ describe("buildPersonaStyleExamplesPromptSection", () => {
     expect(s).toContain(PERSONA_STYLE_EXAMPLES_NOT_FACTUAL);
     expect(s).toContain("NOT factual sources");
     expect(s).toContain("orchestrator-approved assembly");
-    expect(s).toContain(PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER);
+    expect(s).toContain("Approved inquiry reply strategy");
     expect(s).toContain("[INQUIRY_ONBOARDING]");
   });
 
-  it("includes a distinctive Ana line from the inquiry example", () => {
+  it("inquiry anchor stays short and operational — no universal calendar funnel template", () => {
     const s = buildPersonaStyleExamplesPromptSection();
     expect(s).toContain("My name is Ana");
+    expect(s).toContain("Thank you for reaching out");
+    expect(s).toContain("If helpful, I can send");
+    expect(s).not.toContain("book a time using the link below");
+    expect(s).not.toMatch(/customized offer/i);
   });
 
   it("labels all five scenario keys", () => {

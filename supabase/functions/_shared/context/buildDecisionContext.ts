@@ -39,6 +39,11 @@ import { fetchThreadDraftsSummaryForDecisionContext } from "./fetchThreadDraftsS
 import { buildInboundSenderIdentityFromIngress } from "../identity/inboundSenderIdentity.ts";
 import { deriveInboundSenderAuthority } from "./deriveInboundSenderAuthority.ts";
 import { resolveInboundSenderAuthorityForAudienceLoad } from "./resolveInboundSenderAuthorityForAudienceLoad.ts";
+import {
+  normalizeInquiryFirstStepStyle,
+  type InquiryFirstStepStyle,
+} from "../../../../src/lib/inquiryFirstStepStyle.ts";
+import { readPhotographerSettings } from "../../../../src/lib/photographerSettings.ts";
 
 export type { BuildDecisionContextOptions } from "../../../../src/types/decisionContext.types.ts";
 
@@ -143,6 +148,7 @@ export async function buildDecisionContext(
     selectedMemories,
     threadDraftsSummary,
     globalKnowledge,
+    photographerSettingsRead,
   ] = await Promise.all([
     loadAudienceSnapshot(
       supabase,
@@ -162,6 +168,7 @@ export async function buildDecisionContext(
     selectedMemoriesPromise,
     fetchThreadDraftsSummaryForDecisionContext(supabase, tenantPhotographerId, threadId),
     globalKnowledgePromise,
+    readPhotographerSettings(supabase, tenantPhotographerId),
   ]);
   const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
 
@@ -174,6 +181,10 @@ export async function buildDecisionContext(
     gate: globalKnowledgeGate,
   });
 
+  const inquiryFirstStepStyle = normalizeInquiryFirstStepStyle(
+    photographerSettingsRead?.contract.inquiry_first_step_style,
+  );
+
   const merged = mergeDecisionContextWithoutRedaction(base, tenantPhotographerId, {
     selectedMemories,
     audience,
@@ -185,6 +196,7 @@ export async function buildDecisionContext(
     threadDraftsSummary,
     globalKnowledge,
     retrievalTrace,
+    inquiryFirstStepStyle,
     options,
   });
   return applyAudiencePrivateCommercialRedaction(merged);
@@ -252,6 +264,7 @@ export async function buildDecisionContextQaProofPair(
     selectedMemories,
     threadDraftsSummary,
     globalKnowledge,
+    photographerSettingsRead,
   ] = await Promise.all([
     loadAudienceSnapshot(
       supabase,
@@ -271,6 +284,7 @@ export async function buildDecisionContextQaProofPair(
     selectedMemoriesPromise,
     fetchThreadDraftsSummaryForDecisionContext(supabase, tenantPhotographerId, threadId),
     globalKnowledgePromise,
+    readPhotographerSettings(supabase, tenantPhotographerId),
   ]);
   const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
 
@@ -283,6 +297,10 @@ export async function buildDecisionContextQaProofPair(
     gate: globalKnowledgeGate,
   });
 
+  const inquiryFirstStepStyle = normalizeInquiryFirstStepStyle(
+    photographerSettingsRead?.contract.inquiry_first_step_style,
+  );
+
   const preRedaction = mergeDecisionContextWithoutRedaction(base, tenantPhotographerId, {
     selectedMemories,
     audience,
@@ -294,6 +312,7 @@ export async function buildDecisionContextQaProofPair(
     threadDraftsSummary,
     globalKnowledge,
     retrievalTrace,
+    inquiryFirstStepStyle,
     options,
   });
   return {
@@ -319,6 +338,7 @@ function mergeDecisionContextWithoutRedaction(
     threadDraftsSummary: ThreadDraftsSummary | null;
     globalKnowledge: AgentContext["globalKnowledge"];
     retrievalTrace: DecisionContextRetrievalTrace;
+    inquiryFirstStepStyle: InquiryFirstStepStyle;
     options?: BuildDecisionContextOptions;
   },
 ): DecisionContext {
@@ -360,6 +380,7 @@ function mergeDecisionContextWithoutRedaction(
     retrievalTrace: parts.retrievalTrace,
     inboundSenderIdentity,
     inboundSenderAuthority,
+    inquiryFirstStepStyle: parts.inquiryFirstStepStyle,
   };
 }
 

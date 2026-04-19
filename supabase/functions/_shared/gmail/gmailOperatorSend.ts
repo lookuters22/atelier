@@ -3,7 +3,14 @@
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { ensureValidGoogleAccessToken } from "./ensureGoogleAccess.ts";
-import { extractFirstMailboxFromRecipientField, mailboxesAreSameMailbox } from "./mailboxNormalize.ts";
+import {
+  extractFirstEmailFromAddressString,
+  extractFirstMailboxFromRecipientField,
+  mailboxMatchesAnySelfIdentity,
+  mergeSelfMailboxList,
+} from "./mailboxNormalize.ts";
+import { resolveConnectedGoogleSelfMailboxes } from "./gmailSelfMailboxes.ts";
+import { selectReplyableExternalGmailParticipant } from "./selectReplyableExternalGmailParticipant.ts";
 import {
   buildPlainTextRfc822,
   getGmailMessageHeaderMessageId,
@@ -94,6 +101,17 @@ export async function sendGmailReplyAndInsertMessage(
     subject: string;
     body: string;
     inReplyToProviderMessageId: string;
+    /**
+     * When true, use `inReplyToProviderMessageId` first (non-empty) instead of the latest inbound
+     * row in DB. Approved-draft / server-resolved anchors should set this so threading matches
+     * the same message as the external recipient. UI `gmail-send` keeps the default (false).
+     */
+    preferCallerReplyAnchor?: boolean;
+    /**
+     * When set, merged with `fromEmail` for self-detection (skips live Gmail sendAs fetch).
+     * Omit to call `users.settings.sendAs` and merge with primary (inline replies).
+     */
+    resolvedSelfMailboxes?: string[];
   },
 ): Promise<{ ok: true; messageId: string; gmailMessageId: string } | { ok: false; error: string }> {
   const to = params.to.trim();
@@ -126,15 +144,20 @@ export async function sendGmailReplyAndInsertMessage(
   const tok = await loadGoogleTokens(supabaseAdmin, params.connectedAccountId, params.photographerId);
   if (!tok.ok) return tok;
 
+  const selfMailboxes =
+    params.resolvedSelfMailboxes !== undefined
+      ? mergeSelfMailboxList(tok.fromEmail, params.resolvedSelfMailboxes)
+      : await resolveConnectedGoogleSelfMailboxes(tok.accessToken, tok.fromEmail);
+
   const toMailbox = extractFirstMailboxFromRecipientField(to);
   if (!toMailbox) {
     return { ok: false, error: "To must contain a valid email address" };
   }
-  if (mailboxesAreSameMailbox(toMailbox, tok.fromEmail)) {
+  if (mailboxMatchesAnySelfIdentity(toMailbox, selfMailboxes)) {
     return {
       ok: false,
       error:
-        "Reply cannot be sent to your own mailbox. Fix the To field to the external recipient’s address.",
+        "[reply_recipient_resolves_to_connected_account] Reply cannot be sent to your own mailbox or a connected Send mail as alias. Fix the To field to the external recipient’s address.",
     };
   }
 
@@ -165,12 +188,16 @@ export async function sendGmailReplyAndInsertMessage(
   const anchorAnyPid =
     typeof anchorAny?.provider_message_id === "string" ? anchorAny.provider_message_id.trim() : "";
   const clientPid = params.inReplyToProviderMessageId.trim();
-  const effectiveInReplyTo = anchorInPid || anchorAnyPid || clientPid;
+  const useCallerAnchorFirst =
+    params.preferCallerReplyAnchor === true && clientPid.length > 0;
+  const effectiveInReplyTo = useCallerAnchorFirst
+    ? clientPid
+    : anchorInPid || anchorAnyPid || clientPid;
   if (!effectiveInReplyTo) {
     return {
       ok: false,
       error:
-        "No Gmail message id to reply to (missing provider_message_id on thread messages — sync or backfill required).",
+        "[reply_anchor_missing_provider_message_id] No Gmail message id to reply to (missing provider_message_id on thread messages — sync or backfill required).",
     };
   }
 
@@ -312,6 +339,19 @@ export async function sendGmailComposeNewThreadAndInsert(
   const tok = await loadGoogleTokens(supabaseAdmin, params.connectedAccountId, params.photographerId);
   if (!tok.ok) return tok;
 
+  const composeSelfMailboxes = await resolveConnectedGoogleSelfMailboxes(tok.accessToken, tok.fromEmail);
+  const composeToMailbox = extractFirstMailboxFromRecipientField(to);
+  if (!composeToMailbox) {
+    return { ok: false, error: "To must contain a valid email address" };
+  }
+  if (mailboxMatchesAnySelfIdentity(composeToMailbox, composeSelfMailboxes)) {
+    return {
+      ok: false,
+      error:
+        "[reply_recipient_resolves_to_connected_account] New message cannot be addressed to your own mailbox or a connected Send mail as alias.",
+    };
+  }
+
   const raw = buildPlainTextRfc822({
     from: tok.fromEmail,
     to,
@@ -447,40 +487,63 @@ export async function sendGmailReplyForApprovedDraft(
     return { ok: false, error: "No Google account connected", skip: true };
   }
 
-  const { data: lastIn, error: liErr } = await supabaseAdmin
-    .from("messages")
-    .select("sender, provider_message_id")
-    .eq("thread_id", params.threadId)
-    .eq("direction", "in")
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (liErr || !lastIn?.sender) {
-    return { ok: false, error: "No inbound message to reply to", skip: false };
+  const tok = await loadGoogleTokens(supabaseAdmin, connectedAccountId, params.photographerId);
+  if (!tok.ok) {
+    return { ok: false, error: tok.error, skip: true };
   }
-  const inReplyTo = typeof lastIn.provider_message_id === "string" ? lastIn.provider_message_id : "";
-  if (!inReplyTo) {
+
+  const selfMailboxes = await resolveConnectedGoogleSelfMailboxes(tok.accessToken, tok.fromEmail);
+  if (selfMailboxes.length === 0) {
+    return { ok: false, error: "Connected account has no email address", skip: true };
+  }
+
+  const { data: msgRows, error: msgErr } = await supabaseAdmin
+    .from("messages")
+    .select("id, direction, sender, provider_message_id, sent_at")
+    .eq("thread_id", params.threadId)
+    .eq("photographer_id", params.photographerId)
+    .order("sent_at", { ascending: true });
+
+  if (msgErr || !msgRows?.length) {
     return {
       ok: false,
-      error: "Latest inbound message has no Gmail message id — cannot send Gmail reply (run provider id backfill or re-import)",
+      error: "[no_replyable_external_recipient_found] No messages on thread for recipient resolution",
       skip: false,
     };
   }
 
-  const to = String(lastIn.sender).trim();
+  const pick = selectReplyableExternalGmailParticipant(msgRows, selfMailboxes);
+  if (pick.kind === "error") {
+    return {
+      ok: false,
+      error: `[${pick.code}] ${pick.detail ?? "cannot resolve external Gmail recipient for approved draft"}`,
+      skip: false,
+    };
+  }
+
+  const verifyExtracted = extractFirstEmailFromAddressString(pick.displayTo);
+  if (!verifyExtracted || mailboxMatchesAnySelfIdentity(verifyExtracted, selfMailboxes)) {
+    return {
+      ok: false,
+      error:
+        "[reply_recipient_resolves_to_connected_account] Resolved approved-draft recipient matches the connected mailbox or a Send mail as alias — refusing to send.",
+      skip: false,
+    };
+  }
 
   const out = await sendGmailReplyAndInsertMessage(supabaseAdmin, {
     photographerId: params.photographerId,
     connectedAccountId,
     threadId: params.threadId,
-    to,
+    to: pick.displayTo,
     cc: "",
     bcc: "",
     /** Empty: subject comes from anchor Gmail `Subject` via `sendGmailReplyAndInsertMessage`, then thread.title. */
     subject: "",
     body: params.body,
-    inReplyToProviderMessageId: inReplyTo,
+    inReplyToProviderMessageId: pick.anchorProviderMessageId,
+    preferCallerReplyAnchor: true,
+    resolvedSelfMailboxes: selfMailboxes,
   });
 
   if (!out.ok) return { ok: false, error: out.error };

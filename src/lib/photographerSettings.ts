@@ -10,6 +10,7 @@ import type {
   PhotographerSettingsKey,
 } from "../types/photographerSettings.types.ts";
 import { PHOTOGRAPHER_SETTINGS_KEYS } from "../types/photographerSettings.types.ts";
+import { normalizeInquiryFirstStepStyle } from "./inquiryFirstStepStyle.ts";
 import { parseStudioBaseLocation } from "./studioBaseLocation.ts";
 
 export type { PhotographerSettings, PhotographerSettingsKey };
@@ -66,6 +67,11 @@ export function parsePhotographerSettings(raw: unknown): Partial<PhotographerSet
         }
         break;
       }
+      case "inquiry_first_step_style":
+        if (typeof v === "string") {
+          out[key] = normalizeInquiryFirstStepStyle(v);
+        }
+        break;
       default:
         break;
     }

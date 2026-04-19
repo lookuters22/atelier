@@ -162,7 +162,9 @@ export function formatCompactContinuityForPersonaWriter(
 
   return [
     "=== Continuity (thread memory + recent turns — context only) ===",
-    "Use for tone and thread awareness. Do not override **Authoritative CRM** or **Verified policy: playbook_rules**.",
+    "Use for **conversation continuity**: what was said, preferences stated, corrections (e.g. film vs instant), location names, and tone.",
+    "This block is **not** verified studio policy. Do not treat client or thread wording alone as proof the studio officially offers, always includes, or guarantees those things—check **Authoritative CRM** and **Verified policy: playbook_rules**.",
+    "Do not override **Authoritative CRM** or **Verified policy: playbook_rules** with continuity.",
     "",
     [summaryPart, transcriptPart].filter(Boolean).join("\n\n"),
   ].join("\n");

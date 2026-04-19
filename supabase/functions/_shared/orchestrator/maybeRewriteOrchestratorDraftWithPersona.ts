@@ -15,6 +15,7 @@ import type {
   PlaybookRuleContextRow,
 } from "../../../../src/types/decisionContext.types.ts";
 import { emptyCrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
+import type { InquiryClaimPermissionMap } from "../../../../src/types/inquiryClaimPermissions.types.ts";
 import type { InquiryReplyPlan } from "../../../../src/types/inquiryReplyPlan.types.ts";
 import { parsePhotographerSettings, readPhotographerSettings } from "../../../../src/lib/photographerSettings.ts";
 import { formatCompactContinuityForPersonaWriter } from "../memory/buildPersonaRawFacts.ts";
@@ -42,6 +43,13 @@ import {
   type BudgetStatementInjectionPlan,
 } from "./budgetStatementInjection.ts";
 import { auditAvailabilityRestrictedBookingProse } from "./availabilityInquiryBookingGuard.ts";
+import { auditInquiryClaimPermissionViolations } from "./auditInquiryClaimPermissionViolations.ts";
+import {
+  auditUnsupportedBusinessAssertions,
+  buildPersonaVerifiedGroundingBlob,
+} from "./auditUnsupportedBusinessAssertions.ts";
+import { buildInquiryClaimPermissions, formatClaimPermissionsForPersonaFacts } from "./buildInquiryClaimPermissions.ts";
+import { isFirstStudioOutboundOnThread } from "./personaFirstTouchContext.ts";
 import {
   buildInquiryReplyStrategyFactsSection,
   deriveInquiryReplyPlan,
@@ -56,6 +64,30 @@ import {
 /** Include enough rows for policy coverage; orchestrator rationale alone has no verified numbers. */
 const PLAYBOOK_RULES_MAX = 50;
 const PLAYBOOK_INSTRUCTION_MAX = 400;
+
+/** Stable marker for tests — must match `buildOrchestratorFactsForPersonaWriter` unverified-claims section title. */
+export const PERSONA_FACTS_UNVERIFIED_CLAIMS_SECTION_TITLE =
+  "=== Unverified business claims (mandatory) ===";
+
+function formatBriefingVoiceExcerptFromGlobalKnowledge(dc: DecisionContext): string | null {
+  const rows = dc.globalKnowledge ?? [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    const rec = r as Record<string, unknown>;
+    if (String(rec.document_type ?? "") !== "briefing_voice_v1") continue;
+    const content = String(rec.content ?? "").trim();
+    if (!content) continue;
+    const safe = content.length > 1500 ? `${content.slice(0, 1500)}…` : content;
+    return [
+      "=== Studio voice (onboarding briefing_voice_v1 — phrasing & tone only) ===",
+      "**Precedence:** System prompt style examples + anti–luxury-AI constraints define the **real client-manager** voice (`docs/v3/ANA_OPERATOR_VOICE_PRECEDENCE.md`). Use this excerpt only when it **fits** that target—if onboarding wording pushes generic “friendly marketing” or abstract luxury tone, **ignore it** for phrasing.",
+      "This block is **not** verified commercial policy and not a substitute for playbook_rules. It never overrides grounding.",
+      "",
+      safe,
+    ].join("\n");
+  }
+  return null;
+}
 
 function playbookExcerptsFromRules(rules: PlaybookRuleContextRow[], maxLines: number): string[] {
   return rules
@@ -148,6 +180,7 @@ export function buildOrchestratorFactsForPersonaWriter(
   decisionContext: DecisionContext,
   budgetPlan: BudgetStatementInjectionPlan = { mode: "none" },
   inquiryReplyPlan: InquiryReplyPlan | null = null,
+  inquiryClaimPermissions: InquiryClaimPermissionMap | null = null,
 ): string {
   const safeInbound = sanitizeInboundTextForModelContext(rawMessage);
   const lines: string[] = [
@@ -158,6 +191,9 @@ export function buildOrchestratorFactsForPersonaWriter(
 
   if (inquiryReplyPlan !== null) {
     lines.push(buildInquiryReplyStrategyFactsSection(inquiryReplyPlan), "");
+    if (inquiryClaimPermissions !== null) {
+      lines.push(formatClaimPermissionsForPersonaFacts(inquiryClaimPermissions), "");
+    }
   }
 
   const crmBlock = formatAuthoritativeCrmFromSnapshot(decisionContext.crmSnapshot ?? emptyCrmSnapshot());
@@ -173,10 +209,27 @@ export function buildOrchestratorFactsForPersonaWriter(
     lines.push(continuity, "");
   }
 
+  const voiceExcerpt = formatBriefingVoiceExcerptFromGlobalKnowledge(decisionContext);
+  if (voiceExcerpt) {
+    lines.push(voiceExcerpt, "");
+  }
+
   lines.push("Client inbound (verbatim):", safeInbound.trim());
 
   if (studioIdentityExcerpt && studioIdentityExcerpt.trim().length > 0) {
     lines.push("", "=== Business profile (identity only — not policy) ===", studioIdentityExcerpt);
+  }
+
+  if (inquiryReplyPlan !== null && isFirstStudioOutboundOnThread(decisionContext)) {
+    lines.push(
+      "",
+      "=== First studio reply on this thread (inquiry) ===",
+      "There is **no prior Studio message** in the recent thread context—treat this as the **first human reply** from your side.",
+      "In the **first paragraph**, include a brief, natural introduction, e.g. \"Hi [names], my name is Ana, and I'm the client manager at [studio_name from Business profile above].\"",
+      "Natural variants work (\"Ana here — I'm the client manager at …\" / \"I'm Ana, the client manager here at …\"). Sound like real email, not a chatbot or virtual assistant.",
+      "If Business profile is absent, use the studio name you infer only when it appears in verified identity elsewhere—otherwise a neutral \"here at the studio\" is fine.",
+      "Do **not** repeat this full intro on later replies when Continuity already shows **Studio:** lines.",
+    );
   }
 
   const mem = formatCaseMemoryHeadersForWriterFacts(decisionContext);
@@ -213,6 +266,12 @@ export function buildOrchestratorFactsForPersonaWriter(
     "- **Verified offering context** = **Authoritative CRM** (especially `package_name` when present) + **Verified policy: playbook_rules** + explicit studio lines under Business profile (identity only) / case memory headers—not unverified client labels alone.",
     "- The deterministic orchestrator has already chosen an action (above). Do **not** treat adoption of a client product name as grounded unless it appears in that verified context; when grounding is absent, the reply must stay **non-confirming**: neutral phrasing (e.g. \"the option you're considering\"), brief clarification, or a constrained answer that does **not** restate the client-invented name as a booked or official studio SKU.",
     "- Do not upgrade routing or outcomes here—the Writer only composes prose consistent with the approved action and these rules.",
+    "",
+    PERSONA_FACTS_UNVERIFIED_CLAIMS_SECTION_TITLE,
+    "- **No false certainty:** Do not state or imply that the studio **absolutely** does something, that something is **at the heart of what we do** / **core to how we work** / **standard for us** / **always how we approach…**, or that deliverables or process details are **settled studio fact** unless the **same** fact appears in **Authoritative CRM** or **Verified policy: playbook_rules** above. Thread continuity and the client's own words are **not** enough.",
+    "- **Still be useful:** You may reflect their plans in plain language (\"that sounds aligned with what you described\"), discuss options as **exploration** (\"we can talk through how film could fit the day you're imagining\"), invite a **tailored proposal** or next step, and address logistics in **general** terms (\"for destination work we'd normally shape travel around location and scope\") without claiming preset inclusions.",
+    "- **Respect thread corrections** (e.g. no instant film) in how you respond—do not contradict them—but do not invent studio policy text that isn't in verified sections.",
+    "- **Proposal / process:** Do not assert how the studio **always** shapes proposals, that there is **no preset structure**, or that something is **not an add-on** unless playbook or CRM states it. Prefer \"we can shape that with you\" / \"happy to walk through how we'd approach that in a proposal\".",
     "",
     "=== Verification rules for the reply (mandatory) ===",
     "- **Authoritative CRM** (when present) is the canonical source for wedding_date, location, couple_names, stage, package_name, and contract_value. Prefer it over conflicting casual phrasing in the client inbound.",
@@ -311,6 +370,8 @@ async function applyVerifiedMinimumPricingGuardrailBlock(
             budget_clause_mode: params.inquiryReplyPlan.budget_clause_mode,
             opening_tone: params.inquiryReplyPlan.opening_tone,
             cta_type: params.inquiryReplyPlan.cta_type,
+            cta_intensity: params.inquiryReplyPlan.cta_intensity,
+            inquiry_first_step_style_effective: params.inquiryReplyPlan.inquiry_first_step_style_effective,
           },
         }
       : {}),
@@ -410,6 +471,16 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
     budgetPlan,
   });
 
+  const inquiryClaimPermissions =
+    inquiryReplyPlan !== null
+      ? buildInquiryClaimPermissions({
+          decisionContext: params.decisionContext,
+          playbookRules: params.playbookRules,
+          inquiryReplyPlan,
+          rawMessage: params.rawMessage,
+        })
+      : null;
+
   if (budgetPlan.mode === "blocked_missing_pricing_data") {
     return applyVerifiedMinimumPricingGuardrailBlock(supabase, {
       decisionContext: params.decisionContext,
@@ -439,6 +510,7 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
       params.decisionContext,
       budgetPlan,
       inquiryReplyPlan,
+      inquiryClaimPermissions,
     ),
     params.decisionContext.audience,
   );
@@ -539,10 +611,22 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
   const authoritative = buildAuthoritativeCommercialContext(params.decisionContext, params.playbookRules);
   const baseAudit = auditDraftTerms(structured.committed_terms, authoritative, structured.email_draft);
   const availabilityViolations = auditAvailabilityRestrictedBookingProse(structured.email_draft, inquiryReplyPlan);
+  const verifiedGrounding = buildPersonaVerifiedGroundingBlob(
+    params.decisionContext,
+    params.playbookRules,
+    studioId,
+  );
+  const unsupportedAssertionViolations = auditUnsupportedBusinessAssertions(structured.email_draft, verifiedGrounding);
+  const inquiryClaimPermissionViolations = auditInquiryClaimPermissionViolations(
+    structured.email_draft,
+    inquiryClaimPermissions,
+  );
   const mergedViolations = [
     ...(baseAudit.isValid ? [] : baseAudit.violations),
     ...budgetViolations,
     ...availabilityViolations,
+    ...unsupportedAssertionViolations,
+    ...inquiryClaimPermissionViolations,
   ];
   const audit =
     mergedViolations.length === 0 ? baseAudit : { isValid: false as const, violations: mergedViolations };
@@ -568,7 +652,10 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
             budget_clause_mode: inquiryReplyPlan.budget_clause_mode,
             opening_tone: inquiryReplyPlan.opening_tone,
             cta_type: inquiryReplyPlan.cta_type,
+            cta_intensity: inquiryReplyPlan.cta_intensity,
+            inquiry_first_step_style_effective: inquiryReplyPlan.inquiry_first_step_style_effective,
           },
+          ...(inquiryClaimPermissions !== null ? { inquiry_claim_permissions: inquiryClaimPermissions } : {}),
         }
       : {}),
     ...(budgetPlan.mode === "inject"
@@ -609,12 +696,24 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
       ...prior,
       personaStep,
       {
+        step: "v3_output_auditor_unsupported_business_assertions",
+        passed: unsupportedAssertionViolations.length === 0,
+        ...(unsupportedAssertionViolations.length > 0 ? { violations: unsupportedAssertionViolations } : {}),
+      },
+      {
+        step: "v3_output_auditor_inquiry_claim_permissions",
+        passed: inquiryClaimPermissionViolations.length === 0,
+        ...(inquiryClaimPermissionViolations.length > 0
+          ? { violations: inquiryClaimPermissionViolations }
+          : {}),
+      },
+      {
         step: "v3_output_auditor_commercial_terms",
         passed: false,
         violations: audit.violations,
         escalation_id: escalationId,
         operator_notice:
-          "Persona draft did not pass automated commercial review — body reset to pending placeholder. See violations in this history entry.",
+          "Persona draft did not pass automated commercial / grounding review — body reset to pending placeholder. See violations in this history entry.",
       },
     ];
 
@@ -664,6 +763,8 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
     const nextHistory = [
       ...prior,
       personaStep,
+      { step: "v3_output_auditor_unsupported_business_assertions", passed: true },
+      { step: "v3_output_auditor_inquiry_claim_permissions", passed: true },
       { step: "v3_output_auditor_commercial_terms", passed: true },
       {
         step: "v3_output_auditor_planner_private_leakage",
@@ -699,6 +800,11 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
   const nextHistory = [
     ...prior,
     personaStep,
+    {
+      step: "v3_output_auditor_unsupported_business_assertions",
+      passed: true,
+    },
+    { step: "v3_output_auditor_inquiry_claim_permissions", passed: true },
     {
       step: "v3_output_auditor_commercial_terms",
       passed: true,

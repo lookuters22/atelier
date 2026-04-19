@@ -62,6 +62,7 @@ function minimalDc(
       globalKnowledgeFetch: "skipped_by_gate",
       globalKnowledgeGateDetail: "skipped_no_heuristic_signal",
     },
+    inquiryFirstStepStyle: "proactive_call",
   } as DecisionContext;
 }
 
@@ -185,6 +186,8 @@ const inquiryGenericBooking: InquiryReplyPlan = {
   budget_clause_mode: "none",
   opening_tone: "warm",
   cta_type: "call",
+  cta_intensity: "direct",
+  inquiry_first_step_style_effective: "proactive_call",
 };
 
 describe("commercialDepositStarvationStructuredApplies", () => {

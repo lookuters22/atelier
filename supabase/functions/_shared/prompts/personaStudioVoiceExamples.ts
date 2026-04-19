@@ -3,7 +3,12 @@
  * Not a factual source: do not copy dates, prices, or scenario-specific details from these templates into live drafts.
  *
  * Wired into the persona **system** prompt via `buildPersonaStyleExamplesPromptSection`. Orchestrator-approved
- * facts remain only in the user message; `selectedMemories` / `globalKnowledge` are not passed to the writer.
+ * facts remain only in the user message; `selectedMemories` are not passed to the writer. When present,
+ * `briefing_voice_v1` from `globalKnowledge` may be excerpted into orchestrator facts as **tone-only**
+ * (see `maybeRewriteOrchestratorDraftWithPersona`).
+ *
+ * **Cadence target:** real client-manager operator email (reference corpus: Dana & Matt threads under
+ * `Ana real pdf/1/`). See `docs/v3/ANA_OPERATOR_VOICE_PRECEDENCE.md`.
  */
 import { PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER } from "./personaConsultationFirstRealization.ts";
 
@@ -14,14 +19,17 @@ export const PERSONA_STYLE_EXAMPLES_SECTION_TITLE = "=== Ana voice — STYLE EXA
 export const PERSONA_STYLE_EXAMPLES_NOT_FACTUAL = "These examples are for cadence, tone, and structure only";
 
 export const STUDIO_VOICE_EXAMPLES = {
+  /** First-touch inquiry / onboarding — mirrors real intro + next-step + plain closings (no brochure “thrilled”). */
   INQUIRY_ONBOARDING: `
 Hi [Client Name],
 
-My name is Ana, and I'm the client manager at [Studio Name]. It's lovely to e-meet you! Our team is excited about your upcoming wedding, and we would be thrilled to capture your special memories.
+My name is Ana, and I'm the client manager at [Studio Name]. Thank you for reaching out—it's lovely to e-meet you.
 
-As a next step, I'd like to connect you with our lead photographer over a brief consultation call. During this call, you can share more about your plans and style, and we'll be able to create a customized offer for you. You can book a time slot using the link below.
+[One or two short sentences answering what they asked or acknowledging their date/plans in plain language.]
 
-I'm here to answer all your questions in the meantime. Looking forward to hearing from you!
+If helpful, I can send more detail on how we work / collections, or we can find a time to chat—just let me know what would be easiest on your side.
+
+Please let me know if you have any questions—I'm here to help.
 
 Ana
   `,
@@ -67,9 +75,29 @@ Hi [Client Name],
 
 Thank you so much for your honest feedback. I'm sorry to hear the edits didn’t fully match your expectations. We worked based on the instructions you previously shared, but we completely understand your points.
 
-We can make an exception and prepare a touched-up version of the files to better match your vision. To be sure we’re aligned before moving forward, we’ve created a few sample edits for you to review here: [Link]
+We can make an exception and prepare a touched-up version of the files to better match what you're looking for. To be sure we’re aligned before moving forward, we’ve created a few sample edits for you to review here: [Link]
 
-Does this editing style work better for you?
+Does this editing style work for you?
+
+Ana
+  `,
+
+  /** Short mid-thread ping — payment / confirmation / “keeping you posted” cadence. */
+  SHORT_STATUS_PING: `
+Hi [Client Name],
+
+Thank you for keeping me updated! I'll let you know as soon as we receive the payment. :)
+
+Ana
+  `,
+
+  /** Re-engage + many asks — “Ana here”, thanks, then concrete answers in prose (no bullet list in live client body). */
+  ACTION_ITEMS_REPLY: `
+Hi [Client Name], Ana here—I hope you're doing well! Thank you so much for sending over these detailed notes.
+
+I'll go through each point in order and keep it concrete—what's done, what's next, and if I need anything from you.
+
+Thanks again! Please don't hesitate to reach out if anything is unclear in the meantime.
 
 Ana
   `,
@@ -85,8 +113,8 @@ export function buildPersonaStyleExamplesPromptSection(): string {
     PERSONA_STYLE_EXAMPLES_NOT_FACTUAL + ".",
     "They are NOT factual sources—do not copy specific facts, dates, prices, numbers, or scenario details from these examples into your draft.",
     "Facts for the reply come only from the user message (orchestrator-approved assembly: Authoritative CRM, playbook, client inbound, and guardrails below).",
-    "Mimic warmth, cadence, paragraph structure, sign-offs (e.g. closing with Ana where appropriate), and boundary-setting tone—not the example numbers or story beats.",
-    `[INQUIRY_ONBOARDING] is a cadence anchor only. For live **consultation_first** inquiry replies with a call CTA, when the user message includes ${PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER}, follow that realization block instead of copying its funnel phrasing verbatim.`,
+    "Mimic **real operator** warmth, cadence, paragraph structure, sign-offs (often **Ana**), and how next steps are stated—not the example numbers, names, or story beats.",
+    `[INQUIRY_ONBOARDING] is a cadence anchor only (short intro + substance + optional light next step). For live inquiry replies, follow any **Approved inquiry reply strategy** and appended realization blocks in the user message—do not copy example bracket lines or funnel phrasing verbatim.`,
     "",
     "--- Examples (labels are for reference only) ---",
   ].join("\n");

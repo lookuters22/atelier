@@ -2,7 +2,9 @@ import type { AgentContext } from "../../../../src/types/agent.types.ts";
 import { buildPersonaAntiBrochureConstraintsSection } from "../prompts/personaAntiBrochureConstraints.ts";
 import {
   buildConsultationFirstInquiryUserHintBlock,
+  buildSoftCallInquiryUserHintBlock,
   PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER,
+  PERSONA_SOFT_CALL_REALIZATION_SECTION_MARKER,
 } from "../prompts/personaConsultationFirstRealization.ts";
 import {
   buildWeakAvailabilityInquiryUserHintBlock,
@@ -12,6 +14,7 @@ import { BUDGET_STATEMENT_PLACEHOLDER } from "../orchestrator/budgetStatementInj
 import {
   INQUIRY_REPLY_BOOKING_PROCESS_FORBIDDEN_MARKER,
   INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER,
+  INQUIRY_REPLY_SOFT_CALL_CTA_MARKER,
   INQUIRY_REPLY_STRATEGY_SECTION_TITLE,
   INQUIRY_REPLY_WEAK_AVAILABILITY_ONLY_MARKER,
 } from "../orchestrator/deriveInquiryReplyPlan.ts";
@@ -37,12 +40,12 @@ export const PERSONA_BUDGET_CRITICAL_FORMATTING_USER_HINT_LINE =
  *
  * Upstream may pass a full `AgentContext` for routing; this module sends:
  * - **orchestratorFacts user block** — approved assembly from `maybeRewriteOrchestratorDraftWithPersona` (Authoritative CRM,
- *   compact continuity, client inbound, playbook excerpts). Not raw `AgentContext` dumps.
+ *   compact continuity, optional `briefing_voice_v1` excerpt from `globalKnowledge`, client inbound, playbook excerpts). Not raw `AgentContext` dumps.
  * - **narrow personalization** — CRM mirror for tone (aligns with CRM snapshot on context)
- * - **limited continuity memory** — memory *headers* only, capped (not `selectedMemories` / `globalKnowledge`)
+ * - **limited continuity memory** — memory *headers* only, capped (not `selectedMemories` / full `globalKnowledge`)
  *
  * `rawMessage`, full `recentMessages`, and `threadSummary` are not passed separately—they are embedded in
- * orchestratorFacts when the rewrite path runs. `selectedMemories` and `globalKnowledge` stay excluded.
+ * orchestratorFacts when the rewrite path runs. `selectedMemories` and unexcerpted `globalKnowledge` stay excluded.
  */
 
 /** Max memory header rows for continuity hints — not a substitute for verified facts. */
@@ -194,14 +197,14 @@ export function buildPersonaSystemPrompt(boundary: PersonaWriterInputBoundary): 
   return [
     PERSONA_STRICT_STUDIO_BUSINESS_RULES,
     "",
-    "You are Ana, the client manager for the wedding photography studio—warm, clear, and professional. Factual and policy constraints below always govern what you may claim.",
-    "Use the **style examples in the next section** as the primary reference for cadence, paragraph structure, sign-offs, and boundary-setting tone. Those lines are style anchors only—not a competing generic \"luxury\" voice.",
+    "You are Ana — the studio’s **client manager** on email: simple, direct, lightly warm, **operational** (scheduling, files, payments, clear answers). Sound like the real human who runs the inbox—not a chatbot, abstract luxury brand voice, or generic CRM assistant. Factual and policy constraints below always govern what you may claim.",
+    "**Voice precedence:** (1) Grounding / verified truth in the user message. (2) **CRITICAL STYLE CONSTRAINTS**—bans abstract luxury and generic-AI filler; keeps unverified-offering discipline. (3) **Style examples** next—real operator cadence (see `docs/v3/ANA_OPERATOR_VOICE_PRECEDENCE.md`). (4) If the user message includes a **briefing_voice_v1** excerpt, use it only when it **fits** (2) and (3); never let onboarding wording override real operator tone or facts.",
     "",
     buildPersonaStyleExamplesPromptSection().trimEnd(),
     "",
     buildPersonaAntiBrochureConstraintsSection().trimEnd(),
     "",
-    `Consultation-first inquiry: when the approved user message contains ${PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER} (appended for consultation_first + call strategy), that realization block tightens prose for that turn—prefer a human client-manager invitation over stacked funnel boilerplate; do not quote the [INQUIRY_ONBOARDING] example verbatim.`,
+    `Consultation / call CTA inquiry: when the approved facts include a soft-call marker, follow ${PERSONA_SOFT_CALL_REALIZATION_SECTION_MARKER} in the user message (call as optional only). When they include ${PERSONA_CONSULTATION_FIRST_REALIZATION_SECTION_MARKER} (direct call CTA), that block tightens prose—human invitation, not stacked booking template; do not quote the [INQUIRY_ONBOARDING] example verbatim.`,
     "",
     `Weak availability inquiry: when the approved user message contains ${PERSONA_WEAK_AVAILABILITY_REALIZATION_SECTION_MARKER} (weak playbook support for booking detail), that block is mandatory—availability confirmation only, no retainer/deposit/contract/%/calendar funnel; keep committed_terms empty/null as instructed.`,
     "",
@@ -213,16 +216,21 @@ export function buildPersonaSystemPrompt(boundary: PersonaWriterInputBoundary): 
     "Never treat a distance (miles/km) as a percent: if **UNKNOWN_POLICY_TRAVEL_RADIUS** or the no-playbook snapshot applies, do not invent mileage figures or confuse them with percentages.",
     "**Package & product guardrail:** Do not invent, confirm, or restate collection/package/product names as real studio offerings unless they appear in **Authoritative CRM** (e.g. package_name) or **Verified policy: playbook_rules** in the user message. If the client names an unverified product (e.g. a tier or \"Elite collection\"), do not mirror that label as fact—use neutral phrasing (\"the option you're considering\") and describe only verified offerings; avoid reinforcing the client's name as an official SKU.",
     "NEVER invent pricing, availability, or policy details missing from the user message. If something is not in CRM or playbook, hedge or defer.",
+    "**Claim permission contract (inquiry replies):** When the user message includes **=== Claim permissions (authoritative for this turn) ===**, that block is a **hard contract**. You are **realizing** those permission levels—not deciding what is true from thread vibe. Rules: do **not** upgrade `explore` into settled studio fact; do **not** turn `defer` into a concrete claim; with `soft_confirm`, use cautious fit language only (no brochure certainty); direct factual assertions belong only in domains marked `confirm`. **Voice** (warmth, cadence, Ana tone) affects **how** you phrase **within** a level, **never** the permission level itself.",
+    "**Deterministic post-audit:** After you write, the orchestrator runs **code auditors** on the final email (commercial terms, **inquiry claim permissions**, **unsupported business / availability** heuristics, etc.). Over-permission prose is **rejected** and the draft reverts to a safe placeholder—do not try to slip claims through with synonyms.",
     "",
     "Narrow personalization + memory headers below support tone; if they conflict with Authoritative CRM in the user message, prefer the user message.",
     toneContext || "(No extra tone context—still avoid inventing specifics.)",
   ].join("\n\n");
 }
 
-function buildPersonaUserMessage(approvedFactualOutput: string): string {
+/** Exported for prompt-assembly regression tests. */
+export function buildPersonaUserMessage(approvedFactualOutput: string): string {
   return [
     "Approved factual output — orchestrator-approved assembly (Authoritative CRM, continuity, client inbound, playbook, and orchestrator grounding guardrails as included below).",
     "Do not contradict verified sections or invent facts beyond them. Client-suggested package/collection names are not verified unless they appear in Authoritative CRM or Verified policy.",
+    "When the assembly includes **Studio voice (onboarding briefing_voice_v1)**, use it for optional phrasing hints only—it does **not** authorize factual claims. If it conflicts with the system prompt’s real operator examples or anti–luxury-AI rules, **ignore the excerpt** for tone.",
+    "When the assembly includes **=== Claim permissions (authoritative for this turn) ===**, that section **outranks** continuity and stylistic impulses for what you may assert—follow it exactly.",
     "",
     approvedFactualOutput.trim(),
   ].join("\n");
@@ -476,9 +484,11 @@ export async function draftPersonaStructuredResponse(
           "This turn is **availability-only** per strategy: **booking_process_words: forbidden** — do not write retainer/deposit/contract-sequence/%/payment-milestone language or a heavy consultation-plus-booking funnel; confirm availability in plain language and use at most one light generic next step.",
         ].join("\n")
       : "";
-  const consultationFirstVoiceHint = orchestratorFacts.includes(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER)
-    ? buildConsultationFirstInquiryUserHintBlock()
-    : "";
+  const consultationFirstVoiceHint = orchestratorFacts.includes(INQUIRY_REPLY_SOFT_CALL_CTA_MARKER)
+    ? buildSoftCallInquiryUserHintBlock()
+    : orchestratorFacts.includes(INQUIRY_REPLY_CONSULTATION_FIRST_CALL_MARKER)
+      ? buildConsultationFirstInquiryUserHintBlock()
+      : "";
   const factsForModel = truncatePersonaOrchestratorFactsForModel(orchestratorFacts);
   const userText =
     buildPersonaUserMessage(factsForModel) +

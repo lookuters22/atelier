@@ -60,12 +60,46 @@ export function normalizeMailboxForComparison(email: string): string {
   if (domain === "gmail.com" || domain === "googlemail.com") {
     const plus = local.indexOf("+");
     if (plus >= 0) local = local.slice(0, plus);
+    // Gmail ignores `.` in the local part for delivery identity.
+    local = local.replace(/\./g, "");
   }
   return `${local}@${domain}`;
 }
 
 export function mailboxesAreSameMailbox(a: string, b: string): boolean {
   return normalizeMailboxForComparison(a) === normalizeMailboxForComparison(b);
+}
+
+/** Dedupe raw addresses by normalized mailbox; `primaryEmail` is listed first when present. */
+export function mergeSelfMailboxList(primaryEmail: string, extraAddresses: readonly string[]): string[] {
+  const primary = primaryEmail.trim();
+  const seenNorm = new Set<string>();
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const t = raw.trim();
+    if (!t) return;
+    const k = normalizeMailboxForComparison(t);
+    if (seenNorm.has(k)) return;
+    seenNorm.add(k);
+    out.push(t);
+  };
+  if (primary) push(primary);
+  for (const e of extraAddresses) push(String(e));
+  return out;
+}
+
+/** True if `candidateMailbox` matches any studio-owned identity (after normalization). */
+export function mailboxMatchesAnySelfIdentity(
+  candidateMailbox: string,
+  selfMailboxes: readonly string[],
+): boolean {
+  const c = candidateMailbox.trim();
+  if (!c || selfMailboxes.length === 0) return false;
+  for (const s of selfMailboxes) {
+    if (!String(s).trim()) continue;
+    if (mailboxesAreSameMailbox(c, s)) return true;
+  }
+  return false;
 }
 
 /**
