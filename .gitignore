@@ -84,3 +84,4 @@ supabase/.temp/
 
 # Local agent session state
 .claude/
+.vercel
