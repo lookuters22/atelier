@@ -17,8 +17,13 @@ const MAX_THREADS = 8;
 const MAX_PERSON_PARTICIPANT_THREADS = 24;
 const MAX_AMBIGUOUS_WEDDINGS = 2;
 const RECENT_TENANT_THREADS = 3;
-/** Bounded inbox candidates before in-memory score (deterministic order). */
-const MAX_INBOX_CANDIDATES = 64;
+/** Bounded inbox candidates before in-memory score (normal vs S4 deep search). */
+const MAX_INBOX_CANDIDATES_NORMAL = 64;
+const MAX_INBOX_CANDIDATES_DEEP = 144;
+/** Targeted ilike on latest_sender + title for person-name questions (not full history). */
+const MAX_NAME_HINT_PHRASES = 3;
+const MAX_NAME_HINT_ROWS_PER_PHRASE = 10;
+const MAX_NAME_HINT_ROWS_TOTAL = 18;
 
 const IDLE: AssistantOperatorThreadMessageLookup = {
   didRun: false,
@@ -164,6 +169,73 @@ function activityInRecencyWindow(
   return t >= weekStart && t <= now;
 }
 
+function sanitizeInboxNameIlikeToken(raw: string): string | null {
+  const t = normalizeOperatorInboxMatchText(raw)
+    .replace(/%/g, "")
+    .replace(/_/g, "")
+    .trim();
+  if (t.length < 4 || t.length > 48) return null;
+  return t;
+}
+
+/**
+ * Bounded tenant-scoped rows where **latest_sender** or **thread title** ilike a name token.
+ * Catches threads that fall outside the recent-activity inbox scoring window.
+ */
+async function fetchInboxViewRowsByNameHints(
+  supabase: SupabaseClient,
+  photographerId: string,
+  senderPhrases: string[],
+): Promise<{ rows: InboxViewRow[]; phrasesTried: string[] }> {
+  const tried: string[] = [];
+  const seen = new Set<string>();
+  const out: InboxViewRow[] = [];
+
+  const candidates: string[] = [];
+  const sorted = [...new Set(senderPhrases.map((p) => p.trim()).filter(Boolean))].sort(
+    (a, b) => b.length - a.length || a.localeCompare(b),
+  );
+  for (const ph of sorted) {
+    if (ph.includes("@")) continue;
+    const san = sanitizeInboxNameIlikeToken(ph);
+    if (!san || candidates.includes(san)) continue;
+    candidates.push(san);
+    if (candidates.length >= MAX_NAME_HINT_PHRASES) break;
+  }
+
+  const baseSelect =
+    "id, title, wedding_id, last_activity_at, kind, latest_sender, latest_body" as const;
+
+  for (const san of candidates) {
+    tried.push(san);
+    const pattern = `%${san}%`;
+    for (const col of ["latest_sender", "title"] as const) {
+      let q = supabase
+        .from("v_threads_inbox_latest_message")
+        .select(baseSelect)
+        .eq("photographer_id", photographerId)
+        .neq("kind", "other")
+        .ilike(col, pattern)
+        .order("last_activity_at", { ascending: false })
+        .limit(MAX_NAME_HINT_ROWS_PER_PHRASE);
+      const { data, error } = await q;
+      if (error) {
+        throw new Error(`fetchAssistantThreadMessageLookup inbox name hint: ${error.message}`);
+      }
+      for (const row of (data ?? []) as unknown as InboxViewRow[]) {
+        if (!row?.id || seen.has(row.id)) continue;
+        seen.add(row.id);
+        out.push(row);
+        if (out.length >= MAX_NAME_HINT_ROWS_TOTAL) {
+          return { rows: out, phrasesTried: tried };
+        }
+      }
+    }
+  }
+
+  return { rows: out, phrasesTried: tried };
+}
+
 function scoreInboxRow(
   row: InboxViewRow,
   signals: OperatorInboxThreadLookupSignals,
@@ -244,6 +316,7 @@ async function fetchScoredInboxMatches(
   signals: OperatorInboxThreadLookupSignals,
   now: Date,
   openInboxLookup: boolean,
+  maxCandidates: number,
 ): Promise<ScoredInbox[]> {
   const windows = computeUtcInquiryCountWindows(now);
   let q = supabase
@@ -252,7 +325,7 @@ async function fetchScoredInboxMatches(
     .eq("photographer_id", photographerId)
     .neq("kind", "other")
     .order("last_activity_at", { ascending: false })
-    .limit(MAX_INBOX_CANDIDATES);
+    .limit(maxCandidates);
 
   if (signals.recency === "today") {
     q = q.gte("last_activity_at", windows.today.start).lt("last_activity_at", windows.today.end);
@@ -314,9 +387,17 @@ export async function fetchAssistantThreadMessageLookup(
     force?: boolean;
     /** UTC "now" for recency windows (today/yesterday); defaults to `new Date()`. */
     now?: Date;
+    /**
+     * S4 — Deep search: wider scored-inbox candidate window (still tenant-bounded).
+     * Normal mode keeps the smaller cap so everyday turns stay cheaper.
+     */
+    deepThreadMessageLookup?: boolean;
   },
 ): Promise<AssistantOperatorThreadMessageLookup> {
   const now = input.now ?? new Date();
+  const inboxCandidateCap = input.deepThreadMessageLookup
+    ? MAX_INBOX_CANDIDATES_DEEP
+    : MAX_INBOX_CANDIDATES_NORMAL;
   const { weddingIds, personIds } = collectWeddingAndPersonIds(
     input.weddingIdEffective,
     input.personIdEffective,
@@ -328,6 +409,9 @@ export async function fetchAssistantThreadMessageLookup(
   if (!input.force && !hasIntent) {
     return { ...IDLE, selectionNote: "no thread/message intent" };
   }
+
+  const rawSignals = extractOperatorInboxThreadLookupSignals(input.queryText);
+  const signals = mergeSenderSignals(rawSignals, input.operatorQueryEntityResolution);
 
   const selectColumns =
     "id, title, wedding_id, channel, kind, last_activity_at, last_inbound_at, last_outbound_at";
@@ -425,12 +509,29 @@ export async function fetchAssistantThreadMessageLookup(
       }
       notes.push("no project/person target — recent tenant threads (inbox view order)");
     }
+
+    const nameHintPhrases = signals.senderPhrases.filter((p) => !p.includes("@"));
+    if (nameHintPhrases.length > 0) {
+      const { rows: hintRows, phrasesTried } = await fetchInboxViewRowsByNameHints(
+        supabase,
+        photographerId,
+        nameHintPhrases,
+      );
+      if (hintRows.length > 0) {
+        const hid = hintRows.map((r) => r.id).filter(Boolean);
+        const hydratedHint = await hydrateThreads(supabase, photographerId, hid);
+        for (const r of hydratedHint) {
+          rows.push(r);
+        }
+        notes.push(
+          `inbox_name_ilike (${hintRows.length} hit(s); phrases=${phrasesTried.slice(0, 3).join("|")})`,
+        );
+      }
+    }
   }
 
   let merged = dedupeById(rows);
 
-  const rawSignals = extractOperatorInboxThreadLookupSignals(input.queryText);
-  const signals = mergeSenderSignals(rawSignals, input.operatorQueryEntityResolution);
   const shouldRunInboxScore =
     signals.topicKeywords.length > 0 ||
     signals.senderPhrases.length > 0 ||
@@ -438,7 +539,14 @@ export async function fetchAssistantThreadMessageLookup(
 
   if (shouldRunInboxScore) {
     const openInboxLookup = !hasTarget;
-    const scored = await fetchScoredInboxMatches(supabase, photographerId, signals, now, openInboxLookup);
+    const scored = await fetchScoredInboxMatches(
+      supabase,
+      photographerId,
+      signals,
+      now,
+      openInboxLookup,
+      inboxCandidateCap,
+    );
     const strong = scored.filter((s) => s.strong);
     const weak = scored.filter((s) => !s.strong && s.score >= 8);
     const pickIds = [...strong, ...weak].map((s) => s.row.id);

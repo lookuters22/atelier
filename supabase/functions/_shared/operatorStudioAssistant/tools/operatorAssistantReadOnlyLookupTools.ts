@@ -198,7 +198,7 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     function: {
       name: "operator_lookup_threads",
       description:
-        "Fetch a bounded list of recent threads with last inbound/outbound activity timestamps (**no** message bodies in this tool). Resolves people/projects from the query using the same index as first pass, and respects the operator’s focused wedding/person from context when relevant. Use when thread/email activity is missing from Context and the question is about who emailed, last contact, or a named inquiry/thread. For **what the email says**, follow with **operator_lookup_thread_messages** using a **threadId** from the result.",
+        "Fetch a bounded list of recent threads with last inbound/outbound activity timestamps (**no** message bodies in this tool). Resolves people/projects from the query using the same index as first pass, and respects the operator’s focused wedding/person from context when relevant. Use when thread/email activity is missing from Context and the question is about who emailed, last contact, or a named inquiry/thread — including *did we talk to X* / *messages from X* when the first-pass Context list is empty or clearly not enough. **Deep search** mode still uses a **wider** inbox scoring window than normal; this tool can add another targeted pass. For **what the email says**, follow with **operator_lookup_thread_messages** using a **threadId** from the result.",
       parameters: {
         type: "object",
         properties: {

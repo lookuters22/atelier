@@ -124,6 +124,36 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).toMatch(/no offer-builder projects|No rows returned/i);
   });
 
+  it("adds person-name communication honesty when thread lookup ran and query names someone", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        queryText: "did I talk to Danilo",
+        operatorThreadMessageLookup: {
+          didRun: true,
+          selectionNote: "title contains token (bounded ilike) \"danilo\"",
+          threads: [],
+        },
+      }),
+    );
+    expect(s).toContain("## Recent thread & email activity");
+    expect(s).toContain("Honesty (named person / sender)");
+  });
+
+  it("adds Deep search wider-window note when investigationSpecialistFocus is set", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        queryText: "did Danilo email us",
+        investigationSpecialistFocus: { toolPayload: investigationSpecialistToolPayload() },
+        operatorThreadMessageLookup: {
+          didRun: true,
+          selectionNote: "inbox_scored_preferred (1 strong / 2 scored; keywords=1; recency=none)",
+          threads: [],
+        },
+      }),
+    );
+    expect(s).toContain("Deep search mode");
+  });
+
   it("includes Offer builder specialist (S2) section when offerBuilderSpecialistFocus is set", () => {
     const pid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
     const s = formatAssistantContextForOperatorLlm(

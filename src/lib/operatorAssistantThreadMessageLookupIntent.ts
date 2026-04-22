@@ -12,7 +12,9 @@ phone phones call calls got another other too also did does doing done
 sent send sending email emails thread threads message messages
 regarding question questions quick career student project projects
 maybe perhaps received somebody someone anybody anyone everyone
-today yesterday week recently thing things stuff idea ideas`.split(/\s+/),
+today yesterday week recently thing things stuff idea ideas
+talk talks talking talked speak speaks speaking spoke chat chats chatting chatted
+messaged text texting texted`.split(/\s+/),
 );
 
 /** Max topic keywords scored against inbox rows (title + latest sender + snippet). */
@@ -57,6 +59,37 @@ export function normalizeOperatorInboxMatchText(s: string): string {
 }
 
 /**
+ * Keeps a short leading name span and stops at clause words (e.g. "mira about the venue" → "mira").
+ * Allows a single **and** / **&** between tokens for couple-style names ("rita and james").
+ */
+const SENDER_PHRASE_HARD_STOP = new Set(
+  `about regarding concerning on for if when where which who how why
+today yesterday tomorrow this last next week month year from by to at in
+find show search get pull email thread message messages emails inquiry
+the a an or but`.split(/\s+/),
+);
+
+function leadingSenderNameSpan(frag: string): string {
+  const parts = frag.trim().split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const raw = parts[i]!;
+    const p = raw.toLowerCase();
+    if (SENDER_PHRASE_HARD_STOP.has(p)) break;
+    if (p === "and" || raw === "&") {
+      if (out.length === 0) break;
+      const next = parts[i + 1]?.toLowerCase();
+      if (!next || SENDER_PHRASE_HARD_STOP.has(next)) break;
+      out.push(raw);
+      continue;
+    }
+    out.push(raw);
+    if (out.length >= 5) break;
+  }
+  return out.join(" ").trim();
+}
+
+/**
  * Deterministic cues for inbox-thread retrieval: multi-keyword topic, sender/name/email
  * fragments, and UTC-calendar recency (aligned with inquiry-count windows).
  */
@@ -76,9 +109,16 @@ export function extractOperatorInboxThreadLookupSignals(queryText: string): Oper
     /\bfrom\s+([a-z][a-z\s.'-]{2,60})\b/gi,
     /\bby\s+([a-z][a-z\s.'-]{2,60})\b/gi,
     /\bcalled\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\b(?:talk|talked|speak|spoke|chat|chatted)\s+(?:to|with)\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\b(?:messaged|texted|emailed)\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\b(?:did|do|does|have|has)\s+([a-z][a-z.'-]{1,48})\s+(?:email|emailed|e-mail|message|messaged|text|texted)\b/gi,
+    /\b(?:did|do)\s+i\s+(?:talk|speak|chat)(?:ed|ing)?\s+(?:to|with)\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\bhave\s+we\s+(?:talk|speak|chat)(?:ed|ing)?\s+(?:to|with)\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\bhave\s+we\s+(?:messaged|texted|emailed)\s+([a-z][a-z\s.'-]{2,60})\b/gi,
+    /\bheard\s+from\s+([a-z][a-z\s.'-]{2,60})\b/gi,
   ]) {
     for (const m of lower.matchAll(re)) {
-      const frag = normalizeOperatorInboxMatchText(m[1] ?? "");
+      const frag = leadingSenderNameSpan(normalizeOperatorInboxMatchText(m[1] ?? ""));
       if (frag.length >= 3 && frag.length <= 48) senderPhrases.push(frag);
     }
   }
@@ -139,6 +179,40 @@ export function hasOperatorThreadMessageLookupIntent(queryText: string): boolean
     .trim();
   if (s.length < 3) return false;
 
+  /** Person-then-verb: "did Danilo email us", "has Marco messaged" */
+  if (
+    /\b(did|does|do|has|have|was|is)\s+[a-z][a-z.'-]{1,48}\s+(email|emailed|e-mail|message|messaged|text|texted)\b/.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  /** Operator / studio phrasing: "did I talk to …", "have we messaged …" */
+  if (/\b(did|do|does|have|has)\s+i\s+(talk|speak|chat)(ed|ing)?\s+(to|with)\b/.test(s)) {
+    return true;
+  }
+  if (/\b(have|has)\s+we\s+(talk|speak|chat)(ed|ing)?\s+(to|with)\b/.test(s)) {
+    return true;
+  }
+  if (/\b(have|has)\s+we\s+(messaged|texted|emailed)\b/.test(s)) {
+    return true;
+  }
+  if (/\b(messaged|texted)\b/.test(s)) {
+    return true;
+  }
+  if (/\bheard\s+from\b/.test(s)) {
+    return true;
+  }
+  if (/\b(find|show|search|get|pull up|pull-up)\b.*\b(messages?|emails?|thread|threads)\b/.test(s)) {
+    return true;
+  }
+  if (/\b(any|some)\s+(messages?|emails?)\s+from\b/.test(s)) {
+    return true;
+  }
+  if (/\b(correspondence|communication)\s+(with|from)\b/.test(s)) {
+    return true;
+  }
+
   if (
     /\b(email|emails|e-mail|thread|threads|inquiry|inquiries|inbox|message|messages|sent|send|sending|outbound|inbound|reply|replied|whatsapp|dm|dms)\b/.test(s)
   ) {
@@ -160,6 +234,32 @@ export function hasOperatorThreadMessageLookupIntent(queryText: string): boolean
     return true;
   }
 
+  return false;
+}
+
+/**
+ * True when the operator is likely asking whether the studio communicated with a **named** person/sender
+ * (used for prompt honesty — bounded retrieval vs “never emailed”).
+ */
+export function hasOperatorPersonNameCommunicationLookupIntent(queryText: string): boolean {
+  if (!hasOperatorThreadMessageLookupIntent(queryText)) return false;
+  const s = String(queryText ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/\b(from|to|with)\s+[a-z][a-z.'-]{2,40}\b/.test(s)) return true;
+  if (
+    /\b(did|does|do|has|have|was|is)\s+[a-z][a-z.'-]{2,40}\s+(email|emailed|e-mail|message|messaged|text|texted)\b/.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(did|do)\s+i\s+(talk|speak|chat)/.test(s)) return true;
+  if (/\b(have|has)\s+we\s+(talk|speak|chat|messaged|texted|emailed)/.test(s)) return true;
+  if (/\b(messaged|texted)\s+[a-z]/.test(s)) return true;
+  if (/\bheard\s+from\s+[a-z]/.test(s)) return true;
+  if (/\b(find|show|search|get)\b.*\b(messages?|emails?)\b/.test(s)) return true;
   return false;
 }
 

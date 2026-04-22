@@ -17,10 +17,16 @@ type ThreadMock = {
   threadHydrateRows?: unknown[];
   participantRows: unknown[];
   viewRows: unknown[];
+  /**
+   * When set, `v_threads_inbox_latest_message` returns this on the Nth `then()` (1-based).
+   * Falls back to `viewRows` when a slot is missing.
+   */
+  inboxViewByCallIndex?: Record<number, unknown[]>;
 };
 
 function makeSupabase(mock: ThreadMock): typeof import("npm:@supabase/supabase-js@2").SupabaseClient {
   let threadsThenCount = 0;
+  let inboxViewThenCount = 0;
   return {
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
@@ -34,6 +40,7 @@ function makeSupabase(mock: ThreadMock): typeof import("npm:@supabase/supabase-j
       chain.lt = () => chain;
       chain.order = () => chain;
       chain.limit = () => chain;
+      chain.or = () => chain;
       chain.then = (resolve: (v: unknown) => unknown) => {
         if (tableName === "threads") {
           threadsThenCount += 1;
@@ -47,7 +54,10 @@ function makeSupabase(mock: ThreadMock): typeof import("npm:@supabase/supabase-j
           return resolve({ data: mock.participantRows, error: null });
         }
         if (tableName === "v_threads_inbox_latest_message") {
-          return resolve({ data: mock.viewRows, error: null });
+          inboxViewThenCount += 1;
+          const byIx = mock.inboxViewByCallIndex?.[inboxViewThenCount];
+          const data = byIx ?? mock.viewRows;
+          return resolve({ data, error: null });
         }
         return resolve({ data: [], error: null });
       };
@@ -314,5 +324,94 @@ describe("fetchAssistantThreadMessageLookup", () => {
     expect(r.didRun).toBe(true);
     expect(r.threads.length).toBeGreaterThanOrEqual(1);
     expect(r.threads[0]!.threadId).toBe("t-forced");
+  });
+
+  it("open inbox: name-hint ilike on latest_sender finds threads not in title token search (Danilo-style)", async () => {
+    const daniloHydrated = {
+      id: "th-danilo",
+      title: "Re: availability",
+      wedding_id: null,
+      channel: "email",
+      kind: "client",
+      last_activity_at: "2025-06-01T12:00:00.000Z",
+      last_inbound_at: "2025-06-01T11:00:00.000Z",
+      last_outbound_at: null,
+    };
+    const daniloInbox = {
+      id: "th-danilo",
+      title: "Re: availability",
+      wedding_id: null,
+      last_activity_at: "2025-06-01T12:00:00.000Z",
+      kind: "client",
+      latest_sender: "Danilo Costa <danilo@client.test>",
+      latest_body: "Following up on Saturday.",
+    };
+    const s = makeSupabase({
+      threadRows: [],
+      threadHydrateRows: [daniloHydrated],
+      participantRows: [],
+      viewRows: [],
+      inboxViewByCallIndex: {
+        1: [daniloInbox],
+        2: [],
+        3: [daniloInbox],
+      },
+    });
+    const r = await fetchAssistantThreadMessageLookup(s, "p1", {
+      queryText: "did I talk to Danilo",
+      weddingIdEffective: null,
+      personIdEffective: null,
+      operatorQueryEntityResolution: emptyEntity,
+      now: new Date("2026-04-22T16:00:00.000Z"),
+    });
+    expect(r.didRun).toBe(true);
+    expect(r.selectionNote).toContain("inbox_name_ilike");
+    expect(r.threads.some((t) => t.threadId === "th-danilo")).toBe(true);
+  });
+
+  it("deepThreadMessageLookup still runs inbox_scored path (wider candidate cap in real Supabase)", async () => {
+    const inboxThread = {
+      id: "th-skincare",
+      title: "Brand shoot inquiry for skincare campaign",
+      wedding_id: null,
+      last_activity_at: "2026-04-22T14:00:00.000Z",
+      kind: "client",
+      latest_sender: "miki@brand.test",
+      latest_body: "Skincare campaign inquiry",
+    };
+    const hydrate = {
+      id: "th-skincare",
+      title: "Brand shoot inquiry for skincare campaign",
+      wedding_id: null,
+      channel: "email",
+      kind: "client",
+      last_activity_at: "2026-04-22T14:00:00.000Z",
+      last_inbound_at: "2026-04-22T13:00:00.000Z",
+      last_outbound_at: null,
+    };
+    const s = makeSupabase({
+      threadRows: [],
+      threadHydrateRows: [hydrate],
+      participantRows: [],
+      viewRows: [inboxThread],
+    });
+    const r = await fetchAssistantThreadMessageLookup(s, "p1", {
+      queryText: "Did they email today about the skincare inquiry?",
+      weddingIdEffective: null,
+      personIdEffective: null,
+      operatorQueryEntityResolution: {
+        ...emptyEntity,
+        didRun: true,
+        weddingSignal: "unique",
+        uniqueWeddingId: "w-other",
+        weddingCandidates: [],
+        personMatches: [],
+        queryResolvedProjectFacts: null,
+      },
+      now: new Date("2026-04-22T18:00:00.000Z"),
+      deepThreadMessageLookup: true,
+    });
+    expect(r.didRun).toBe(true);
+    expect(r.selectionNote).toContain("inbox_scored");
   });
 });

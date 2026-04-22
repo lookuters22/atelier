@@ -382,6 +382,7 @@ export async function buildAssistantContext(
             personIdEffective: personIdEffective,
             operatorQueryEntityResolution,
             now: assistantNow,
+            deepThreadMessageLookup: investigationSpecialistRequested,
           })
         : Promise.resolve(IDLE_ASSISTANT_THREAD_MESSAGE_LOOKUP),
       loadInquiryCount

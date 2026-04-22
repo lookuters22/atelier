@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractOperatorInboxThreadLookupSignals,
   extractOperatorThreadTitleSearchToken,
+  hasOperatorPersonNameCommunicationLookupIntent,
   hasOperatorThreadMessageBodyLookupIntent,
   hasOperatorThreadMessageLookupIntent,
   querySuggestsCommercialOrNonWeddingInboundFocus,
@@ -29,6 +30,14 @@ describe("hasOperatorThreadMessageLookupIntent", () => {
     expect(hasOperatorThreadMessageLookupIntent("What is the latest thread activity?")).toBe(true);
   });
 
+  it("is true for person / communication-history phrasing without the word email", () => {
+    expect(hasOperatorThreadMessageLookupIntent("did I talk to Danilo")).toBe(true);
+    expect(hasOperatorThreadMessageLookupIntent("have we messaged Danilo")).toBe(true);
+    expect(hasOperatorThreadMessageLookupIntent("find messages from Danilo")).toBe(true);
+    expect(hasOperatorThreadMessageLookupIntent("did Danilo email us")).toBe(true);
+    expect(hasOperatorThreadMessageLookupIntent("heard from Danilo lately?")).toBe(true);
+  });
+
   it("is true when body-level intent matches (widens thread retrieval)", () => {
     expect(hasOperatorThreadMessageLookupIntent("What did they say in the email?")).toBe(true);
   });
@@ -36,6 +45,17 @@ describe("hasOperatorThreadMessageLookupIntent", () => {
   it("is false for generic CRM that should not load thread rows", () => {
     expect(hasOperatorThreadMessageLookupIntent("What is the package price?")).toBe(false);
     expect(hasOperatorThreadMessageLookupIntent("Where is Settings?")).toBe(false);
+  });
+});
+
+describe("hasOperatorPersonNameCommunicationLookupIntent", () => {
+  it("is true for named communication-history questions", () => {
+    expect(hasOperatorPersonNameCommunicationLookupIntent("did I talk to Danilo")).toBe(true);
+    expect(hasOperatorPersonNameCommunicationLookupIntent("find messages from Danilo")).toBe(true);
+  });
+
+  it("is false when there is no plausible person-name cue", () => {
+    expect(hasOperatorPersonNameCommunicationLookupIntent("What is the latest thread activity?")).toBe(false);
   });
 });
 
@@ -98,5 +118,20 @@ describe("extractOperatorInboxThreadLookupSignals", () => {
     expect(s.topicKeywords).toContain("shoot");
     expect(s.topicKeywords.some((k) => k === "regarding" || k === "question" || k === "project")).toBe(false);
     expect(s.topicKeywords.some((k) => k === "received" || k === "somebody" || k === "maybe")).toBe(false);
+  });
+
+  it("stops sender capture at clause words after from (find messages from Mira about …)", () => {
+    const s = extractOperatorInboxThreadLookupSignals("find messages from Mira about the venue deposit");
+    expect(s.senderPhrases.some((p) => p === "mira" || p.startsWith("mira "))).toBe(true);
+    expect(s.senderPhrases.some((p) => p.includes("venue") || p.includes("deposit"))).toBe(false);
+  });
+
+  it("extracts Danilo as sender phrase for talk-to and name-then-verb questions", () => {
+    expect(extractOperatorInboxThreadLookupSignals("did I talk to Danilo").senderPhrases.some((p) =>
+      p.includes("danilo"),
+    )).toBe(true);
+    expect(extractOperatorInboxThreadLookupSignals("did Danilo email us").senderPhrases.some((p) =>
+      p.includes("danilo"),
+    )).toBe(true);
   });
 });

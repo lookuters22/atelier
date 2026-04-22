@@ -388,6 +388,7 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
   it("thread / email honesty: bounded bodies + title is not a substitute when excerpts absent", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
     expect(p).toMatch(/\*\*Thread & email \(Context — honesty \+ bounded bodies\):\*\*/);
+    expect(p).toContain("Communication history by name");
     expect(p).toMatch(/Thread message excerpts/);
     expect(p).toMatch(/operator_lookup_thread_messages/);
     expect(p).toMatch(/thread title is never a substitute|title is never a substitute/i);

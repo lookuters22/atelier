@@ -16,6 +16,7 @@ import type {
 import { EMPTY_ASSISTANT_PLAYBOOK_COVERAGE_SUMMARY } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
 import { hasOperatorQueueStateIntent } from "../../../../src/lib/operatorAssistantOperatorStateIntent.ts";
 import {
+  hasOperatorPersonNameCommunicationLookupIntent,
   hasOperatorThreadMessageLookupIntent,
   querySuggestsCommercialOrNonWeddingInboundFocus,
 } from "../../../../src/lib/operatorAssistantThreadMessageLookupIntent.ts";
@@ -571,6 +572,24 @@ function formatThreadMessageLookupForOperatorLlm(ctx: AssistantContext): string 
     );
   }
   lines.push("");
+  if (ctx.investigationSpecialistFocus) {
+    lines.push(
+      "- **Deep search mode:** Inbox/thread retrieval used a **wider scored-candidate window** than normal mode (still tenant-bounded). Prefer citing matches here; if still ambiguous, use extra **operator_lookup_** tools this turn.",
+    );
+    lines.push("");
+  }
+  if (hasOperatorPersonNameCommunicationLookupIntent(ctx.queryText)) {
+    lines.push(
+      "- **Honesty (named person / sender):** If the operator asked whether anyone **messaged, emailed, or talked** with a **named** contact, treat **absence from this block** as *not found in this bounded retrieval* — **not** proof they never reached out. Say what was checked (e.g. title / latest_sender hints, row caps) and offer **Deep search** or **operator_lookup_threads** for a wider pass.",
+    );
+    lines.push("");
+  }
+  if (t.selectionNote.includes("recent tenant threads")) {
+    lines.push(
+      "- **Caution:** The thread list included a **generic recent-inbox fallback** — not fully targeted to the question. Do **not** conclude there is **no** older correspondence with a named sender.",
+    );
+    lines.push("");
+  }
   if (
     querySuggestsCommercialOrNonWeddingInboundFocus(ctx.queryText) ||
     t.selectionNote.includes("inbox_scored")
