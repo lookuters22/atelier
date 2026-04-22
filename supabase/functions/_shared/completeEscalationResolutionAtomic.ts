@@ -153,7 +153,10 @@ export async function completeEscalationResolutionAtomic(
   }
 
   const title = `Case decision: ${topicFromAction(p.actionKey)}`.slice(0, 120);
-  const summary = p.resolutionSummary.trim().slice(0, 400);
+  const trimmedResolution = p.resolutionSummary.trim();
+  const summary = trimmedResolution.slice(0, 400);
+  const firstLine = trimmedResolution.split(/\r?\n/)[0]?.trim() ?? "";
+  const outcomeLine = firstLine.slice(0, 360);
   const full = [
     `escalation_request_id: ${p.escalationId}`,
     `action_key: ${p.actionKey}`,
@@ -173,6 +176,7 @@ export async function completeEscalationResolutionAtomic(
     p_summary: summary,
     p_full_content: full.slice(0, 8000),
     p_learning_outcome: p.learningOutcome,
+    p_outcome: outcomeLine.length > 0 ? outcomeLine : null,
   });
 
   if (error || !memoryId) {

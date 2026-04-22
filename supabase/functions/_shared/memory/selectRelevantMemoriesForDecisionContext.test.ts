@@ -17,6 +17,7 @@ function h(partial: Partial<MemoryHeader> & Pick<MemoryHeader, "id">): MemoryHea
   return {
     wedding_id,
     person_id: partial.person_id ?? null,
+    supersedes_memory_id: partial.supersedes_memory_id ?? null,
     scope: partial.scope ?? defaultScope,
     type: partial.type ?? "note",
     title: partial.title ?? "",
@@ -161,7 +162,7 @@ describe("selectRelevantMemoryIdsDeterministic", () => {
     expect(selectRelevantMemoryIdsDeterministic(input)).toEqual(selectRelevantMemoryIdsDeterministic(input));
   });
 
-  it("ranks provisional strong substring above weak exception word when scope equal", () => {
+  it("does not boost memories via legacy provisional magic substrings (keyword + id tie-break only)", () => {
     const headers: MemoryHeader[] = [
       h({
         id: "weak-exception",
@@ -169,7 +170,7 @@ describe("selectRelevantMemoryIdsDeterministic", () => {
         scope: "studio",
         type: "note",
         title: "Something with exception in body",
-        summary: "no strong cue",
+        summary: "no overlap token",
       }),
       h({
         id: "strong-cue",
@@ -186,7 +187,67 @@ describe("selectRelevantMemoryIdsDeterministic", () => {
       rawMessage: "unrelated text",
       memoryHeaders: headers,
     });
+    expect(ids).toContain("strong-cue");
+    expect(ids).toContain("weak-exception");
     expect(ids[0]).toBe("strong-cue");
+  });
+
+  it("excludes a superseded memory when a newer header references it via supersedes_memory_id", () => {
+    const w = "w-a";
+    const oldId = "old-memory";
+    const newId = "new-memory";
+    const headers: MemoryHeader[] = [
+      h({
+        id: oldId,
+        wedding_id: w,
+        scope: "project",
+        title: "Old",
+        summary: "venue venue venue",
+      }),
+      h({
+        id: newId,
+        wedding_id: w,
+        scope: "project",
+        supersedes_memory_id: oldId,
+        title: "New",
+        summary: "venue",
+      }),
+    ];
+    const ids = selectRelevantMemoryIdsDeterministic({
+      ...baseIn,
+      weddingId: w,
+      rawMessage: "venue planning",
+      memoryHeaders: headers,
+    });
+    expect(ids).not.toContain(oldId);
+    expect(ids).toContain(newId);
+  });
+
+  it("non-superseded rows still rank by scopePrimary then keywordScore", () => {
+    const w = "w-a";
+    const headers: MemoryHeader[] = [
+      h({
+        id: "b",
+        wedding_id: w,
+        scope: "project",
+        title: "Low kw",
+        summary: "x",
+      }),
+      h({
+        id: "a",
+        wedding_id: w,
+        scope: "project",
+        title: "High kw",
+        summary: "venue venue",
+      }),
+    ];
+    const ids = selectRelevantMemoryIdsDeterministic({
+      ...baseIn,
+      weddingId: w,
+      rawMessage: "venue question",
+      memoryHeaders: headers,
+    });
+    expect(ids.indexOf("a")).toBeLessThan(ids.indexOf("b"));
   });
 
   it("selects person-scoped memory when person_id is in replyModeParticipantPersonIds", () => {

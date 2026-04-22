@@ -8,6 +8,7 @@ function h(
   return {
     wedding_id: null,
     person_id: null,
+    supersedes_memory_id: null,
     type: "",
     title: "",
     summary: "",
@@ -130,5 +131,29 @@ describe("selectAssistantMemoryIdsDeterministic", () => {
     });
     expect(ids).toContain("m1");
     expect(ids).toContain("s1");
+  });
+
+  it("excludes superseded memory id when another header lists supersedes_memory_id", () => {
+    const wid = "11111111-1111-1111-1111-111111111111";
+    const oldId = "mem-old";
+    const headers: MemoryHeader[] = [
+      h({ id: oldId, scope: "project", wedding_id: wid, title: "old note", summary: "retainer" }),
+      h({
+        id: "mem-new",
+        scope: "project",
+        wedding_id: wid,
+        supersedes_memory_id: oldId,
+        title: "new note",
+        summary: "retainer",
+      }),
+    ];
+    const ids = selectAssistantMemoryIdsDeterministic({
+      queryText: "retainer",
+      memoryHeaders: headers,
+      focusedWeddingId: wid,
+      focusedPersonId: null,
+    });
+    expect(ids).not.toContain(oldId);
+    expect(ids).toContain("mem-new");
   });
 });

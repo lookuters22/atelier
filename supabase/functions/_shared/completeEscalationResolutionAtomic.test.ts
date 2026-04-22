@@ -75,6 +75,37 @@ describe("completeEscalationResolutionAtomic", () => {
 
     expect(r.branch).toBe("memory");
     expect(rpc).toHaveBeenCalledWith("complete_escalation_resolution_memory", expect.any(Object));
+    const memArgs = rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect(memArgs.p_outcome).toBe("ok");
+    expect(memArgs.p_summary).toBe("ok");
+  });
+
+  it("memory path: passes first line as p_outcome when resolution is multi-line", async () => {
+    vi.mocked(extractAuthorizedCaseExceptionPayloadFromOperatorText).mockResolvedValue({
+      ok: true,
+      applies_policy_override: false,
+    } as never);
+
+    const rpc = vi.fn().mockResolvedValue({ data: "m1", error: null });
+    const supabase = { rpc } as never;
+
+    await completeEscalationResolutionAtomic(supabase, {
+      photographerId: "p1",
+      escalationId: "e1",
+      learningOutcome: "one_off_case",
+      reasonCode: "x",
+      actionKey: "send_message",
+      decisionJustification: {},
+      weddingId: "w1",
+      questionBody: "q",
+      resolutionSummary: "Approved fee waiver.\nDetails in thread.",
+      photographerReplyRaw: "plain text",
+      clientThreadId: null,
+    });
+
+    const memArgs = rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect(memArgs.p_outcome).toBe("Approved fee waiver.");
+    expect(memArgs.p_summary).toBe("Approved fee waiver.\nDetails in thread.".trim().slice(0, 400));
   });
 
   it("simulated RPC failure does not apply a separate finalize (single RPC boundary)", async () => {

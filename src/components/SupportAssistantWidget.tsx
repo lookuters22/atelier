@@ -38,6 +38,7 @@ import {
   studioProfileChangeProposalKey,
   taskProposalKey,
 } from "../lib/operatorAnaProposalConsumedState.ts";
+import { composeOperatorAssistantMemorySummaryForStorage } from "../lib/composeOperatorAssistantMemorySummary.ts";
 import { resolveEscalationViaDashboard } from "../lib/escalationResolutionClient.ts";
 import { fireDataChanged } from "../lib/events.ts";
 import { buildInvoiceSetupChangeProposalV1ForConfirm } from "../lib/operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
@@ -407,6 +408,7 @@ export function SupportAssistantWidget() {
         body: {
           memoryScope: p.memoryScope,
           title: p.title,
+          outcome: p.outcome,
           summary: p.summary,
           fullContent: p.fullContent,
           weddingId: p.weddingId ?? null,
@@ -1520,7 +1522,7 @@ export function SupportAssistantWidget() {
                                   </p>
                                   <p className="mt-1 font-['Saans',ui-sans-serif] text-[11px] text-white/90">{p.title}</p>
                                   <p className="mt-0.5 line-clamp-3 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/70">
-                                    {p.summary}
+                                    {composeOperatorAssistantMemorySummaryForStorage(p.outcome, p.summary, 400)}
                                   </p>
                                   <p className="mt-1 font-['SaansMono',ui-monospace,monospace] text-[9px] text-white/50">
                                     {p.memoryScope}

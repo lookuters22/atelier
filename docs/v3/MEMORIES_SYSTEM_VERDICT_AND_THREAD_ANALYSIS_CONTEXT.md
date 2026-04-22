@@ -5,6 +5,16 @@
 
 **Not a slice plan.** This is context, not an execution packet. No code changes should be made from reading this alone. A proper slice plan comes later, after thread analysis.
 
+**Current-repo note:** this document is now historical context only. The repo has moved forward since this memo was drafted. For execution planning, use:
+- `C:\Users\Despot\Desktop\wedding\docs\v3\IMPLEMENTATION_HANDOVER_MEMORIES_AND_ANA.md`
+
+The current execution order should be followed as smaller slices, not one big Phase 1 batch:
+1. memory supersession/access/ranker cleanup
+2. Ana memory-note decision/outcome enforcement
+3. escalation memory decision/outcome upgrade
+4. thread-lookup stop-word + strong-clause cleanup
+5. memory review/supersede operator surface
+
 ---
 
 ## 1. Purpose

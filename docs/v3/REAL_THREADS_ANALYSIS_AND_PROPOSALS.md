@@ -44,6 +44,8 @@ Of the 20 recurring patterns, the Phase 1 memory plan fully covers **4**, partia
 
 Phase 1 memory changes plus these six adjacent systems cover **~85%** of observed issues. The remaining ~15% is email hygiene, attachment/vision processing, and publication rights — lower priority.
 
+**Execution note:** use this document to understand product pressure and prioritization, not to batch implementation into one giant phase. The current execution plan should break memory/lookup work into smaller slices, with the handover doc as the source of truth for slice order and current shipped status.
+
 ---
 
 ## 3. The 20 recurring patterns

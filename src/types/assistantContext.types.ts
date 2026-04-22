@@ -867,6 +867,7 @@ export type AssistantContext = {
     id: string;
     wedding_id: string | null;
     person_id: string | null;
+    supersedes_memory_id: string | null;
     scope: "project" | "person" | "studio";
     type: string;
     title: string;

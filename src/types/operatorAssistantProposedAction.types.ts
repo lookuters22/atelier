@@ -52,6 +52,11 @@ export type OperatorAssistantProposedActionMemoryNote = {
   kind: "memory_note";
   memoryScope: "project" | "studio" | "person";
   title: string;
+  /**
+   * Compact decision / result to remember (required). Stored DB summary is composed from this + `summary` at write/confirm time.
+   */
+  outcome: string;
+  /** Supplementary preview line from the model; composed with `outcome` for storage. */
   summary: string;
   fullContent: string;
   /** Required when `memoryScope` is `project`. */
@@ -203,6 +208,9 @@ export type InsertOperatorAssistantTaskBody = {
 export type InsertOperatorAssistantMemoryBody = {
   memoryScope: "project" | "studio" | "person";
   title: string;
+  /** Explicit decision/outcome line; server composes the stored preview from this + supplementary `summary`. */
+  outcome: string;
+  /** Supplementary preview (same semantics as proposal `summary`); not double-composed client-side. */
   summary: string;
   fullContent: string;
   weddingId?: string | null;

@@ -84,6 +84,24 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     expect(o.proposedActions).toHaveLength(2);
   });
 
+  it("drops memory_note when outcome is missing", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "ok",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "Package default",
+            summary: "Signature includes 10 hours.",
+            fullContent: "Signature includes 10 hours coverage.",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(0);
+  });
+
   it("Slice 8: parses a studio memory_note", () => {
     const o = parseOperatorStudioAssistantLlmResponse(
       JSON.stringify({
@@ -93,6 +111,7 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
             kind: "memory_note",
             memoryScope: "studio",
             title: "Package default",
+            outcome: "Signature package is 10 hours.",
             summary: "Signature includes 10 hours.",
             fullContent: "Signature includes 10 hours coverage.",
           },
@@ -112,6 +131,7 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
             kind: "memory_note",
             memoryScope: "project",
             title: "Venue constraint",
+            outcome: "Ceremony hard end 4pm.",
             summary: "Ceremony ends by 4pm.",
             fullContent: "Ceremony must end by 4pm local time.",
             weddingId: "11111111-1111-1111-1111-111111111111",
@@ -135,6 +155,7 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
             kind: "memory_note",
             memoryScope: "person",
             title: "Contact preference",
+            outcome: "Email only for this contact.",
             summary: "Email only",
             fullContent: "Prefers email over phone",
             personId: "44444444-4444-4444-4444-444444444444",

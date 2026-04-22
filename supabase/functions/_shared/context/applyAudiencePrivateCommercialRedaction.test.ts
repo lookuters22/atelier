@@ -37,6 +37,7 @@ function baseDc(over: Partial<DecisionContext["audience"]> = {}): DecisionContex
         id: "h1",
         wedding_id: null,
         person_id: null,
+        supersedes_memory_id: null,
         scope: "studio",
         type: "note",
         title: "Deal",

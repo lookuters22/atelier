@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { composeOperatorAssistantMemorySummaryForStorage } from "../../../../src/lib/composeOperatorAssistantMemorySummary.ts";
 import { insertMemoryForOperatorAssistant } from "./insertOperatorAssistantMemoryCore.ts";
 
 describe("insertMemoryForOperatorAssistant", () => {
@@ -38,7 +39,8 @@ describe("insertMemoryForOperatorAssistant", () => {
     const out = await insertMemoryForOperatorAssistant(supabase, "photo-1", {
       memoryScope: "studio",
       title: "Studio default",
-      summary: "S".repeat(20),
+      outcome: "Default policy",
+      summary: composeOperatorAssistantMemorySummaryForStorage("Default policy", "S".repeat(20), 400),
       fullContent: "Full body",
       weddingId: null,
     });
@@ -95,7 +97,8 @@ describe("insertMemoryForOperatorAssistant", () => {
     await insertMemoryForOperatorAssistant(supabase, "photo-1", {
       memoryScope: "project",
       title: "On site",
-      summary: "Summary text here",
+      outcome: "Ceremony unplugged",
+      summary: composeOperatorAssistantMemorySummaryForStorage("Ceremony unplugged", "Summary text here", 400),
       fullContent: "Longer content",
       weddingId: "w1",
     });
@@ -150,7 +153,8 @@ describe("insertMemoryForOperatorAssistant", () => {
     await insertMemoryForOperatorAssistant(supabase, "photo-1", {
       memoryScope: "person",
       title: "Planner pref",
-      summary: "Likes email",
+      outcome: "Email-first",
+      summary: composeOperatorAssistantMemorySummaryForStorage("Email-first", "Likes email", 400),
       fullContent: "Likes email summaries",
       weddingId: null,
       personId: "p1",

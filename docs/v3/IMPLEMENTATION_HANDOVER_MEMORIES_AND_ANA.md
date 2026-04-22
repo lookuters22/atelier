@@ -25,14 +25,21 @@ The earlier verdict document `MEMORIES_SYSTEM_VERDICT_AND_THREAD_ANALYSIS_CONTEX
 
 **What is NOT yet shipped (the real remaining work):**
 
-1. `memories.supersedes_memory_id` (self-FK) + `memories.last_accessed_at` — no migration adds these.
-2. Magic-string ranker cues (`PROVISIONAL_STRONG_SUBSTRINGS = ['authorized_exception', 'v3_verify_case_note']` + `\bexception\b`) **still present** in `selectRelevantMemoriesForDecisionContext.ts`. Need removal.
-3. Exclusion of superseded memories from ranking (needs column first).
-4. `last_accessed_at` touch on top-5 hydration (needs column first).
-5. Write-site convention: memory summaries must encode decision/outcome. Not structurally enforced today.
-6. Stop-word additions: `tomorrow`, `inquiry`, `inquiries`.
-7. Strong-clause tightening in `fetchAssistantThreadMessageLookup.ts:226–238`. Current code has `topicHits >= 1 && signals.recency != null && recencyOk`. The diagnosis in the thread analysis recommended `topicHits >= 2`. Still `>= 1`.
-8. All six Phase 2 adjacent systems from the thread analysis (verbal capture, audience tier, inquiry dedup, life-event pause propagation logic, billing separation columns, contract amendment table) — green-field.
+1. Write-site convention: memory summaries must encode decision/outcome. Not structurally enforced today.
+2. Stop-word additions: `tomorrow`, `inquiry`, `inquiries`.
+3. Strong-clause tightening in `fetchAssistantThreadMessageLookup.ts`. The thread analysis recommended `topicHits >= 2`; verify the live clause before changing it.
+4. All six Phase 2 adjacent systems from the thread analysis (verbal capture, audience tier, inquiry dedup, life-event pause propagation logic, billing separation columns, contract amendment table) remain green-field.
+
+**What landed after the original draft and should now be treated as DONE:**
+
+1. `supabase/migrations/20260701120000_memories_supersession_and_access.sql`
+   - adds `memories.supersedes_memory_id`
+   - adds `memories.last_accessed_at`
+   - adds `idx_memories_superseded_source`
+2. `fetchMemoryHeaders` now selects and returns `supersedes_memory_id`.
+3. `selectRelevantMemoriesForDecisionContext.ts` no longer uses the provisional magic-string rank boost.
+4. Superseded memories are excluded from deterministic ranking (v1 direct-reference behavior).
+5. `fetchSelectedMemoriesFull.ts` now touches `last_accessed_at` after successful hydration in a non-blocking path.
 
 ---
 
@@ -100,7 +107,7 @@ CHECK (
 
 **RLS:** `photographer_id = (SELECT auth.uid())` on both USING and WITH CHECK.
 
-**Columns NOT present (to be added in the remaining Phase 1 slice):**
+**Columns now present (landed after the original draft of this handover):**
 - `supersedes_memory_id uuid NULL REFERENCES memories(id) ON DELETE SET NULL`
 - `last_accessed_at timestamptz NULL`
 
@@ -161,142 +168,97 @@ Do not collapse any of these into each other.
 
 ---
 
-## 4. Phase 1 remaining work — narrow, concrete, and well-scoped
+## 4. Execution roadmap — smaller slices (current recommendation)
 
-### 4.1 New migration: `supersedes_memory_id` + `last_accessed_at`
+The original Phase 1 list was directionally right but too coarse for Composer. Use the smaller slices below.
 
-**Naming:** `supabase/migrations/YYYYMMDDhhmmss_memories_supersession_and_access.sql`.
+### 4.1 Slice A — memory supersession + access tracking + ranker cleanup
 
-**Proposed DDL (draft — operator must confirm):**
+**Status:** DONE in the current repo.
 
-```sql
--- Phase 1 completion: memory supersession + last-accessed tracking.
--- Mirrors the `playbook_rule_candidates.superseded_by_id` pattern (20260421120000).
--- Additive only; existing rows unaffected; rollback is a column drop + index drop.
+Landed work:
+- migration `20260701120000_memories_supersession_and_access.sql`
+- `supersedes_memory_id` header plumbing
+- superseded-id exclusion in deterministic rankers
+- removal of provisional magic-string boosts
+- non-blocking `last_accessed_at` touch on hydration
 
-ALTER TABLE public.memories
-  ADD COLUMN supersedes_memory_id UUID NULL REFERENCES public.memories(id) ON DELETE SET NULL,
-  ADD COLUMN last_accessed_at TIMESTAMPTZ NULL;
+Do not re-propose this slice unless fixing a bug in the landed implementation.
 
-COMMENT ON COLUMN public.memories.supersedes_memory_id IS
-  'When set, this row supersedes the referenced older memory. Older row is filtered from ranking.';
+### 4.2 Slice B — Ana memory-note decision/outcome enforcement
 
-COMMENT ON COLUMN public.memories.last_accessed_at IS
-  'Touched when this memory reaches top-5 hydration. Foundation for future decay/hygiene; not a freshness gate today.';
+**Status:** still open.
 
--- Finds the set of IDs that have been superseded (for exclusion during ranking).
-CREATE INDEX idx_memories_superseded_source
-  ON public.memories (supersedes_memory_id)
-  WHERE supersedes_memory_id IS NOT NULL;
-```
+Scope:
+- `memory_note` proposal shape gets one explicit decision/outcome field
+- validator/parser requires it
+- insert path composes a stronger stored summary from it
+- prompt instructs Ana to provide it
 
-**RLS:** unchanged — existing tenant policy covers the new columns.
+Keep this slice limited to the Ana memory-note path only.
 
-**Rollback (comment in migration):**
-```sql
--- ROLLBACK:
--- DROP INDEX IF EXISTS idx_memories_superseded_source;
--- ALTER TABLE public.memories DROP COLUMN IF EXISTS last_accessed_at;
--- ALTER TABLE public.memories DROP COLUMN IF EXISTS supersedes_memory_id;
-```
+### 4.3 Slice C — escalation memory write-path decision/outcome upgrade
 
-### 4.2 Ranker cleanup in `selectRelevantMemoriesForDecisionContext.ts`
+**Status:** still open.
 
-**Changes:**
+Scope:
+- backward-compatible improvement to `complete_escalation_resolution_memory`
+- optional new parameter such as `p_decision` / `p_outcome`
+- deterministic summary composition when present
+- preserve old callers when omitted
 
-1. **Remove `PROVISIONAL_STRONG_SUBSTRINGS` constant and `provisionalTextCueRank` function.** Remove the call site. Update the sort to two tiers: `(scopePrimary, keywordScore, id)`.
+Keep this separate from Slice B so the Ana path and escalation RPC path can be tested independently.
 
-2. **Exclude superseded memories.** Extend `MemoryHeader` in `fetchMemoryHeaders.ts` to include `supersedes_memory_id: string | null`. In the ranker, compute the set of IDs that appear as `supersedes_memory_id` on any header in the input set, and filter them out before ranking. Pure logic, unit-testable.
+### 4.4 Slice D — thread-lookup stop-word completion + strong-clause tightening
 
-3. **`fetchMemoryHeaders` query must include the new column.** Change the select to `"id, wedding_id, scope, person_id, type, title, summary, supersedes_memory_id"` and surface it in the returned shape.
+**Status:** still open.
 
-4. **Touch `last_accessed_at` after hydration.** After `fetchSelectedMemoriesFull` returns, fire-and-forget an `UPDATE memories SET last_accessed_at = now() WHERE id = ANY(ids) AND photographer_id = ...`. Do not block context assembly on the update. Add a small helper `touchMemoryLastAccessed(supabase, photographerId, ids)` next to `fetchSelectedMemoriesFull`.
+Scope:
+- add `tomorrow`, `inquiry`, `inquiries` to `TOPIC_STOP`
+- tighten the recency/topic strong clause in `fetchAssistantThreadMessageLookup.ts`
+- add/update the small targeted tests for the known false-positive class
 
-5. **Note on `archived_at`:** already filtered in `fetchMemoryHeaders`. No change needed there; verify the test for it exists.
+This should ship alone. It is not a memory slice, but it is part of the same workstream.
 
-### 4.3 Stop-word fix completion
+### 4.5 Slice E — memory review / supersede operator surface
 
-**File:** `src/lib/operatorAssistantThreadMessageLookupIntent.ts`, the `TOPIC_STOP` set.
+**Status:** still open.
 
-**Already present (from a prior commit):** `regarding received somebody someone anybody anyone everyone maybe perhaps today yesterday week recently quick question questions career student project projects thing things stuff idea ideas` (and many more).
+Scope:
+- read-only memory list/review surface first if needed
+- bounded operator action to mark one memory as superseding another
+- no embeddings, no auto-consolidation
 
-**Still missing:** `tomorrow`, `inquiry`, `inquiries`.
+This is the first slice that makes `supersedes_memory_id` truly operator-usable.
 
-**Also tighten** the `strong` clause in `fetchAssistantThreadMessageLookup.ts` (around lines 226–238). Current live code:
+### 4.6 Slice F — optional observability / hygiene follow-up
 
-```ts
-const recencyTopicStrong =
-  topicHits >= 1 &&
-  signals.recency != null &&
-  recencyOk &&
-  (!openInboxLookup || score >= 12);
-```
+**Status:** optional follow-up.
 
-The thread analysis recommends `topicHits >= 2` here. Operator-confirm which; recommendation is the tighter form because the looser form is what produced the skincare-vs-student-project miss that motivated the stop-word list in the first place.
+Scope:
+- retrieval telemetry
+- simple admin/debug visibility into superseded and recently accessed rows
+- no decay worker, no embeddings
 
-### 4.4 Write-site convention enforcement
+Only do this if the operator wants better inspection before moving to Phase 2 systems.
 
-Memory summaries should encode the **decision/outcome**, not just the topic. This is the fix for the writer-starvation concern without lifting the persona firewall.
+### 4.7 Phase 2 adjacent systems
 
-**Enforcement points:**
-
-1. `complete_escalation_resolution_memory` RPC: operator confirms whether to accept a new optional `p_decision TEXT` parameter that the RPC composes into summary with a deterministic prefix. Backward-compatible: if omitted, summary flows through as today. Log a warning when missing.
-
-2. `insert-operator-assistant-memory` edge function: same change. Ana's memory-note proposal must include a decision/outcome field.
-
-3. Ana system prompt update: when Ana proposes `memory_note`, she must include the decision. Validate in the JSON parser.
-
-4. **Do not** enforce a natural-language CHECK constraint on summary text in SQL — brittle.
-
-### 4.5 Types to update
-
-- `MemoryHeader` in `fetchMemoryHeaders.ts` — add `supersedes_memory_id: string | null`.
-- `src/types/database.types.ts` — regenerate after the migration lands.
-- Tests/fixtures that construct `MemoryHeader` — add the new field.
-
-### 4.6 Tests required
-
-In `selectRelevantMemoriesForDecisionContext.test.ts`:
-
-- Superseded chain: `memA` ← `memB.supersedes_memory_id = memA`. Ranking returns only `memB`.
-- Deep chain: A ← B ← C. Only C appears.
-- Broken chain: if the referenced ancestor is deleted, ON DELETE SET NULL clears the pointer, reverts to tip.
-- Removal of magic-string boost: a memory whose title contains `"authorized_exception"` does not outrank a more-matching memory on substring alone.
-
-In the `fetchMemoryHeaders.test.ts` (if exists, else add):
-
-- `archived_at IS NOT NULL` rows are excluded.
-- New `supersedes_memory_id` field surfaces correctly.
-
-### 4.7 Feature flags and rollout
-
-Phase 1 remaining work is additive and low-risk. **No feature flag needed for the migration.** If you want belt-and-braces, wrap the "exclude superseded" filter in an env-gated flag (e.g. `MEMORY_SUPERSEDE_FILTER_ENABLED = "true"`) for 48h after deploy.
-
-### 4.8 Observability
-
-Extend the existing memory-retrieval telemetry JSON line (or add one if not present) to include:
-
-```json
-{
-  "type": "memory_retrieval",
-  "photographer_id": "...",
-  "wedding_id": "...",
-  "headersScanned": N,
-  "archivedFiltered": N,
-  "supersededFiltered": N,
-  "selectedIds": [...],
-  "studioPickedCount": N,
-  "maxScopePrimaryRank": 2
-}
-```
+These remain separate workstreams. Do not batch them into the memory slices above:
+- verbal / offline capture workflow
+- thread participant + audience / visibility model
+- inquiry dedup / entity resolution
+- life-event pause propagation logic
+- billing-contact separation workflow
+- contract amendment / scope-change data model
 
 ---
 
-## 5. Phase 0 remaining items (narrow)
+## 5. Phase 0 / nearby remaining items (narrow)
 
 ### 5.1 Thread-lookup fix completion
 
-Already described in §4.3. Three stop-words + one clause tightening + tests. ~10 LOC + ~25 LOC tests. **Ship alone.**
+Already described in Section 4.4. Three stop-words + one clause tightening + tests. Small, isolated slice. **Ship alone.**
 
 ### 5.2 (All other Phase 0 items from earlier handover are DONE)
 

@@ -1201,12 +1201,14 @@ export type Database = {
           archived_at: string | null
           full_content: string
           id: string
+          last_accessed_at: string | null
           learning_loop_artifact_key: string | null
           person_id: string | null
           photographer_id: string
           scope: Database["public"]["Enums"]["memory_scope"]
           source_escalation_id: string | null
           summary: string
+          supersedes_memory_id: string | null
           title: string
           type: string
           wedding_id: string | null
@@ -1215,12 +1217,14 @@ export type Database = {
           archived_at?: string | null
           full_content: string
           id?: string
+          last_accessed_at?: string | null
           learning_loop_artifact_key?: string | null
           person_id?: string | null
           photographer_id: string
           scope?: Database["public"]["Enums"]["memory_scope"]
           source_escalation_id?: string | null
           summary: string
+          supersedes_memory_id?: string | null
           title: string
           type: string
           wedding_id?: string | null
@@ -1229,12 +1233,14 @@ export type Database = {
           archived_at?: string | null
           full_content?: string
           id?: string
+          last_accessed_at?: string | null
           learning_loop_artifact_key?: string | null
           person_id?: string | null
           photographer_id?: string
           scope?: Database["public"]["Enums"]["memory_scope"]
           source_escalation_id?: string | null
           summary?: string
+          supersedes_memory_id?: string | null
           title?: string
           type?: string
           wedding_id?: string | null
@@ -1259,6 +1265,13 @@ export type Database = {
             columns: ["source_escalation_id"]
             isOneToOne: false
             referencedRelation: "escalation_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memories_supersedes_memory_id_fkey"
+            columns: ["supersedes_memory_id"]
+            isOneToOne: false
+            referencedRelation: "memories"
             referencedColumns: ["id"]
           },
           {
@@ -2698,6 +2711,8 @@ export type Database = {
           p_escalation_id: string
           p_full_content: string
           p_learning_outcome: Database["public"]["Enums"]["escalation_learning_outcome"]
+          /** Optional; when set, composed with `p_summary` for stored `memories.summary` (backward-compatible). */
+          p_outcome?: string
           p_photographer_id: string
           p_summary: string
           p_title: string

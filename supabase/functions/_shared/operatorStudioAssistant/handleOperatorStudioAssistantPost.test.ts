@@ -208,6 +208,7 @@ describe("handleOperatorStudioAssistantPost", () => {
           kind: "memory_note",
           memoryScope: "studio",
           title: "Note",
+          outcome: "Remember this",
           summary: "S",
           fullContent: "Full",
           weddingId: null,
@@ -1018,7 +1019,14 @@ describe("applyBulkTriageSpecialistProposalGate", () => {
     });
     const actions = [
       { kind: "task" as const, title: "A", dueDate: "2026-04-01" },
-      { kind: "memory_note" as const, memoryScope: "studio" as const, title: "m", summary: "s", fullContent: "c" },
+      {
+        kind: "memory_note" as const,
+        memoryScope: "studio" as const,
+        title: "m",
+        outcome: "o",
+        summary: "s",
+        fullContent: "c",
+      },
     ];
     const out = applyBulkTriageSpecialistProposalGate(ctx, actions);
     expect(out).toHaveLength(1);
@@ -1049,6 +1057,7 @@ describe("applyPlaybookAuditSpecialistProposalGate", () => {
         kind: "memory_note" as const,
         memoryScope: "studio" as const,
         title: "m",
+        outcome: "o",
         summary: "s",
         fullContent: "c",
       },

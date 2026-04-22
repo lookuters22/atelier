@@ -68,6 +68,7 @@ export async function insertMemoryForOperatorAssistant(
     detail: {
       memoryScope: body.memoryScope,
       title: body.title,
+      outcome: body.outcome,
       weddingId: body.weddingId ?? null,
       personId: body.personId ?? null,
     },

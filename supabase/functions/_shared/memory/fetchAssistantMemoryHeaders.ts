@@ -45,7 +45,7 @@ export async function fetchAssistantMemoryHeaders(
 
   const { data, error } = await supabase
     .from("memories")
-    .select("id, wedding_id, scope, person_id, type, title, summary, weddings(project_type)")
+    .select("id, wedding_id, scope, person_id, supersedes_memory_id, type, title, summary, weddings(project_type)")
     .eq("photographer_id", photographerId)
     .is("archived_at", null)
     .or(orExpr);
@@ -67,6 +67,10 @@ export async function fetchAssistantMemoryHeaders(
         r.wedding_id != null && String(r.wedding_id).trim() !== "" ? String(r.wedding_id).trim() : null,
       person_id:
         r.person_id != null && String(r.person_id).trim() !== "" ? String(r.person_id).trim() : null,
+      supersedes_memory_id:
+        r.supersedes_memory_id != null && String(r.supersedes_memory_id).trim() !== ""
+          ? String(r.supersedes_memory_id).trim()
+          : null,
       weddingProjectType,
       scope: parseScope(r.scope),
       type: String(r.type ?? ""),

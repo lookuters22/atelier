@@ -19,6 +19,7 @@ import type {
   OperatorAssistantProposedActionTask,
 } from "../types/operatorAssistantProposedAction.types.ts";
 import { normalizeInvoiceSetupChangeProposalsForWidget } from "./operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
+import { MAX_OPERATOR_MEMORY_OUTCOME_CHARS } from "./composeOperatorAssistantMemorySummary.ts";
 
 export type OperatorStudioAssistantInvokePayload = {
   reply?: unknown;
@@ -199,11 +200,14 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
     if (o.memoryScope !== "project" && o.memoryScope !== "studio" && o.memoryScope !== "person") continue;
     if (typeof o.title !== "string" || o.title.trim().length === 0) continue;
     const title = o.title.trim().slice(0, 120);
+    const outcomeRaw = typeof o.outcome === "string" ? o.outcome.trim() : "";
+    if (!outcomeRaw) continue;
+    const outcome = outcomeRaw.slice(0, MAX_OPERATOR_MEMORY_OUTCOME_CHARS);
     const summ = typeof o.summary === "string" ? o.summary.trim() : "";
     const full = typeof o.fullContent === "string" ? o.fullContent.trim() : "";
     const long = full || summ;
     if (!long) continue;
-    const summary = (summ || long).slice(0, 400);
+    const summary = (summ.length > 0 ? summ : long.length > 400 ? long.slice(0, 400) : long).slice(0, 400);
     const fullContent = (full || long).slice(0, 8000);
     let weddingId: string | null = null;
     if (typeof o.weddingId === "string" && o.weddingId.trim().length > 0) {
@@ -222,6 +226,7 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
       kind: "memory_note",
       memoryScope: o.memoryScope,
       title,
+      outcome,
       summary,
       fullContent,
       weddingId: o.memoryScope === "project" ? weddingId : null,

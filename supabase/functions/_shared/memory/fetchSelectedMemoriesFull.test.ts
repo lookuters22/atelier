@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { describe, expect, it } from "vitest";
-import { fetchSelectedMemoriesFull } from "./fetchSelectedMemoriesFull.ts";
+import { describe, expect, it, vi } from "vitest";
+import { fetchSelectedMemoriesFull, touchMemoryLastAccessed } from "./fetchSelectedMemoriesFull.ts";
 
 /**
  * execute_v3 Step 5E — focused verification: header scan stays light; promotion fills
@@ -37,6 +37,17 @@ describe("fetchSelectedMemoriesFull — selectedMemories promotion", () => {
               },
             };
           },
+          update() {
+            return {
+              eq() {
+                return {
+                  in() {
+                    return Promise.resolve({ error: null });
+                  },
+                };
+              },
+            };
+          },
         };
       },
     };
@@ -53,5 +64,73 @@ describe("fetchSelectedMemoriesFull — selectedMemories promotion", () => {
     expect(rows[0].full_content).toBe(
       "LONG DURABLE BODY ONLY AFTER PROMOTION",
     );
+  });
+
+  it("schedules last_accessed touch without blocking (update chain)", async () => {
+    let updateCalls = 0;
+    const supabase = {
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  in() {
+                    return Promise.resolve({
+                      data: [{ id: "x", type: "t", title: "", summary: "", full_content: "c" }],
+                      error: null,
+                    });
+                  },
+                };
+              },
+            };
+          },
+          update() {
+            updateCalls += 1;
+            return {
+              eq() {
+                return {
+                  in() {
+                    return Promise.resolve({ error: null });
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await fetchSelectedMemoriesFull(supabase as unknown as SupabaseClient, "p", ["x"]);
+    await vi.waitFor(() => expect(updateCalls).toBe(1));
+  });
+});
+
+describe("touchMemoryLastAccessed", () => {
+  it("runs update for tenant-scoped ids and swallows errors", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const inIds: string[][] = [];
+    const supabase = {
+      from() {
+        return {
+          update() {
+            return {
+              eq() {
+                return {
+                  in(_c: string, ids: string[]) {
+                    inIds.push(ids);
+                    return Promise.resolve({ error: { message: "fail" } });
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    touchMemoryLastAccessed(supabase as unknown as SupabaseClient, "photo", ["a", "b"]);
+    await vi.waitFor(() => expect(inIds.length).toBe(1));
+    expect(inIds[0]?.sort()).toEqual(["a", "b"]);
+    vi.restoreAllMocks();
   });
 });

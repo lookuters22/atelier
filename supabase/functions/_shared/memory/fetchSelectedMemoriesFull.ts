@@ -2,6 +2,32 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
 
 /**
+ * Fire-and-forget: bump `last_accessed_at` for hydrated memory rows. Does not block callers;
+ * errors are logged only. Tenant-scoped via `photographer_id`.
+ */
+export function touchMemoryLastAccessed(
+  supabase: SupabaseClient,
+  photographerId: string,
+  memoryIds: string[],
+): void {
+  const ids = [...new Set(memoryIds.filter((id) => id.length > 0))];
+  if (ids.length === 0) return;
+
+  void (async () => {
+    try {
+      const { error } = await supabase
+        .from("memories")
+        .update({ last_accessed_at: new Date().toISOString() })
+        .eq("photographer_id", photographerId)
+        .in("id", ids);
+      if (error) console.error(`touchMemoryLastAccessed: ${error.message}`);
+    } catch {
+      /* ignore */
+    }
+  })();
+}
+
+/**
  * Step 5C — second stage after `fetchMemoryHeaders`: load full durable memory for selected IDs only.
  * Tenant-safe: `.eq("photographer_id")` plus `.in("id", ...)`.
  * Preserves caller ID order; omits IDs not found or not owned.
@@ -42,5 +68,14 @@ export async function fetchSelectedMemoriesFull(
     const row = byId.get(id);
     if (row) out.push(row);
   }
+
+  if (out.length > 0) {
+    touchMemoryLastAccessed(
+      supabase,
+      photographerId,
+      out.map((r) => r.id),
+    );
+  }
+
   return out;
 }

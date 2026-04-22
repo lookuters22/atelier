@@ -20,6 +20,8 @@ export type AgentContext = {
     wedding_id: string | null;
     /** Set when `scope === 'person'` (`memories.person_id`). */
     person_id: string | null;
+    /** Replaced-memory pointer for ranking exclusion (`memories.supersedes_memory_id` on the newer row). */
+    supersedes_memory_id: string | null;
     /** Production memory scope (`memories.scope`). */
     scope: "project" | "person" | "studio";
     type: string;

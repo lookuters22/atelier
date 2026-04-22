@@ -295,6 +295,7 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/remember that|Save memory|memory_note/i);
     expect(p).toMatch(/nothing is written to memories until|Save memory on the proposal card/i);
     expect(p).toMatch(/\*\*personId\*\*/);
+    expect(p).toMatch(/\*\*outcome\*\*/);
   });
 
   it("safe case exception write promotion — manager phrasing + confirm + project scope in system prompt", () => {
@@ -772,6 +773,7 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
                       kind: "memory_note",
                       memoryScope: "studio",
                       title: "Travel policy",
+                      outcome: "No travel-only bookings outside EU.",
                       summary: "We do not book travel-only outside EU.",
                       fullContent: "We do not book travel-only outside EU.",
                     },
@@ -789,6 +791,7 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     if (out.proposedActions[0]!.kind === "memory_note") {
       expect(out.proposedActions[0].memoryScope).toBe("studio");
       expect(out.proposedActions[0].title).toBe("Travel policy");
+      expect(out.proposedActions[0].outcome).toBe("No travel-only bookings outside EU.");
     }
   });
 

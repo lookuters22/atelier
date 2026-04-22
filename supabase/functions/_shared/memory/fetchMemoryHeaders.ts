@@ -13,6 +13,8 @@ export type MemoryHeader = {
   wedding_id: string | null;
   /** `memories.person_id`; meaningful when `scope='person'`. */
   person_id: string | null;
+  /** When set, this header's row replaces `memories.id = supersedes_memory_id` for ranking. */
+  supersedes_memory_id: string | null;
   /** `weddings.project_type` for `scope=project` (assistant path join); used for type anti-bleed. */
   weddingProjectType?: string | null;
   scope: MemoryScope;
@@ -20,6 +22,21 @@ export type MemoryHeader = {
   title: string;
   summary: string;
 };
+
+/**
+ * Direct supersession targets present in the current header candidate set (v1: no transitive chains).
+ * Used to drop older memory ids from deterministic rankers.
+ */
+export function supersededMemoryIdsInHeaderSet(
+  headers: readonly Pick<MemoryHeader, "supersedes_memory_id">[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const h of headers) {
+    const sid = h.supersedes_memory_id;
+    if (sid != null && String(sid).trim() !== "") out.add(String(sid).trim());
+  }
+  return out;
+}
 
 export type FetchMemoryHeadersOptions = {
   /** Reply-mode: allow `scope='person'` rows only for these `people.id` values (thread participants). */
@@ -88,7 +105,7 @@ export async function fetchMemoryHeaders(
 
   let query = supabase
     .from("memories")
-    .select("id, wedding_id, scope, person_id, type, title, summary")
+    .select("id, wedding_id, scope, person_id, supersedes_memory_id, type, title, summary")
     .eq("photographer_id", photographerId)
     .is("archived_at", null);
 
@@ -113,6 +130,10 @@ export async function fetchMemoryHeaders(
       r.wedding_id != null && String(r.wedding_id).trim() !== "" ? String(r.wedding_id).trim() : null,
     person_id:
       r.person_id != null && String(r.person_id).trim() !== "" ? String(r.person_id).trim() : null,
+    supersedes_memory_id:
+      r.supersedes_memory_id != null && String(r.supersedes_memory_id).trim() !== ""
+        ? String(r.supersedes_memory_id).trim()
+        : null,
     scope: parseScope(r.scope),
     type: String(r.type ?? ""),
     title: String(r.title ?? ""),

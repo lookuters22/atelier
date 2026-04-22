@@ -2,7 +2,7 @@
  * Deterministic assistant-mode memory promotion (V3 memory plan §3 Mode B).
  * Separate from reply-mode {@link selectRelevantMemoryIdsDeterministic} — different caps and gates.
  */
-import type { MemoryHeader } from "./fetchMemoryHeaders.ts";
+import { supersededMemoryIdsInHeaderSet, type MemoryHeader } from "./fetchMemoryHeaders.ts";
 
 const MIN_TOKEN_LEN = 3;
 
@@ -131,10 +131,13 @@ export function selectAssistantMemoryIdsDeterministic(input: SelectAssistantMemo
   const personRows: { id: string; keywordScore: number }[] = [];
   const studioRows: { id: string; keywordScore: number }[] = [];
 
+  const supersededIds = supersededMemoryIdsInHeaderSet(input.memoryHeaders);
+
   const seen = new Set<string>();
   for (const h of input.memoryHeaders) {
     const id = String(h.id ?? "").trim();
     if (!id || seen.has(id)) continue;
+    if (supersededIds.has(id)) continue;
     if (!isAssistantSelectableHeader(h, effectiveWeddingId, effectivePersonId)) continue;
     if (!projectMemoryMatchesFocusedProjectType(h, focusedProjectType)) continue;
     seen.add(id);

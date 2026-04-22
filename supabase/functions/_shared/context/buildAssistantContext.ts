@@ -516,6 +516,7 @@ export async function buildAssistantContext(
     id: h.id,
     wedding_id: h.wedding_id,
     person_id: h.person_id,
+    supersedes_memory_id: h.supersedes_memory_id,
     scope: h.scope,
     type: h.type,
     title: h.title,

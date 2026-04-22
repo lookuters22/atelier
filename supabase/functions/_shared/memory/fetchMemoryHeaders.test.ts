@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   fetchMemoryHeaders,
   replyModeMemoriesOrFilter,
+  supersededMemoryIdsInHeaderSet,
   unscopedReplyModeMemoriesOrFilter,
 } from "./fetchMemoryHeaders.ts";
 
@@ -29,6 +30,19 @@ describe("unscopedReplyModeMemoriesOrFilter", () => {
     expect(unscopedReplyModeMemoriesOrFilter([p1])).toBe(
       `and(scope.eq.person,person_id.in.(${p1})),scope.eq.project,scope.eq.studio`,
     );
+  });
+});
+
+describe("supersededMemoryIdsInHeaderSet", () => {
+  it("collects non-null supersedes_memory_id targets", () => {
+    const s = supersededMemoryIdsInHeaderSet([
+      { supersedes_memory_id: "a" },
+      { supersedes_memory_id: null },
+      { supersedes_memory_id: "  b " },
+    ]);
+    expect(s.has("a")).toBe(true);
+    expect(s.has("b")).toBe(true);
+    expect(s.size).toBe(2);
   });
 });
 
@@ -130,5 +144,38 @@ describe("fetchMemoryHeaders query shape", () => {
     await fetchMemoryHeaders({ from: () => builder } as never, "photo-1", null);
 
     expect(calls).toContain("neq:scope:person");
+  });
+
+  it("select list includes supersedes_memory_id", async () => {
+    const selects: string[] = [];
+    const builder: Record<string, unknown> = {};
+    builder.from = () => builder;
+    builder.select = (cols: string) => {
+      selects.push(cols);
+      return builder;
+    };
+    builder.eq = () => builder;
+    builder.is = () => builder;
+    builder.neq = () => builder;
+    builder.then = (resolve: (v: unknown) => unknown) =>
+      resolve({
+        data: [
+          {
+            id: "m1",
+            wedding_id: "w",
+            scope: "project",
+            person_id: null,
+            supersedes_memory_id: null,
+            type: "t",
+            title: "",
+            summary: "",
+          },
+        ],
+        error: null,
+      });
+
+    const rows = await fetchMemoryHeaders({ from: () => builder } as never, "photo-1", null);
+    expect(selects.some((s) => s.includes("supersedes_memory_id"))).toBe(true);
+    expect(rows[0]?.supersedes_memory_id).toBeNull();
   });
 });

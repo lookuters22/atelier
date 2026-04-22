@@ -5,14 +5,14 @@
  * **Truth hierarchy:** `selectedMemories` support orchestrator/verifier reasoning; they do **not** override
  * `playbook_rules`. Only future schema-backed authorized-exception machinery may narrow policy for a case.
  *
- * **Provisional text cues (Tier B):** substring matches for `authorized_exception` / `v3_verify_case_note` / `exception`
- * are **retrieval hints only** — not durable policy semantics. Do not treat them as a full exception system.
- *
  * **Reply-mode scope:** `scope='project'` memories from another project are **never** candidates (hard filter).
  * `scope='person'` is allowed only when `memories.person_id` is in `replyModeParticipantPersonIds` (Slice 4).
  * `scope='studio'` rows are fallback with a sub-cap when a wedding is in scope (Slice 2).
+ *
+ * **Supersession (v1):** If any header has `supersedes_memory_id = X`, id `X` is excluded from output; the
+ * newer row remains eligible. No transitive chain resolution.
  */
-import type { MemoryHeader, MemoryScope } from "./fetchMemoryHeaders.ts";
+import { supersededMemoryIdsInHeaderSet, type MemoryHeader, type MemoryScope } from "./fetchMemoryHeaders.ts";
 
 /** Hard cap on promoted full memory rows per turn (keep orchestrator payload bounded). */
 export const MAX_SELECTED_MEMORIES = 5;
@@ -21,9 +21,6 @@ export const MAX_SELECTED_MEMORIES = 5;
 export const MAX_STUDIO_MEMORIES_IN_REPLY = 3;
 
 const MIN_TOKEN_LEN = 3;
-
-/** Strong provisional cues (secondary to scope + keywords). Not policy. */
-const PROVISIONAL_STRONG_SUBSTRINGS = ["authorized_exception", "v3_verify_case_note"] as const;
 
 function normalizeHeaderWeddingId(h: MemoryHeader): string | null {
   const w = h.wedding_id;
@@ -101,21 +98,6 @@ function scopePrimaryRank(
   return 0;
 }
 
-/**
- * Provisional text-only ranking boost — not authorized-exception policy (requires schema later).
- */
-function provisionalTextCueRank(combinedLc: string): number {
-  for (const s of PROVISIONAL_STRONG_SUBSTRINGS) {
-    if (combinedLc.includes(s)) {
-      return 2;
-    }
-  }
-  if (/\bexception\b/.test(combinedLc)) {
-    return 1;
-  }
-  return 0;
-}
-
 function tokenizeForOverlap(text: string): Set<string> {
   const raw = text.toLowerCase().split(/[^a-z0-9]+/g);
   const set = new Set<string>();
@@ -156,7 +138,6 @@ type RankedRow = {
   id: string;
   scope: MemoryScope;
   scopePrimary: number;
-  provisionalCue: number;
   keywordScore: number;
 };
 
@@ -177,28 +158,28 @@ export function selectRelevantMemoryIdsDeterministic(input: SelectRelevantMemori
 
   const turnBlob = `${input.rawMessage}\n${input.threadSummary ?? ""}`;
 
+  const supersededIds = supersededMemoryIdsInHeaderSet(input.memoryHeaders);
+
   const seen = new Set<string>();
   const rows: RankedRow[] = [];
 
   for (const h of input.memoryHeaders) {
     const id = String(h.id ?? "").trim();
     if (!id || seen.has(id)) continue;
+    if (supersededIds.has(id)) continue;
     if (!isReplyModeSelectableHeader(h, effectiveWeddingId, allowedPersonIds)) {
       continue;
     }
     seen.add(id);
 
     const scopePrimary = scopePrimaryRank(effectiveWeddingId, h, allowedPersonIds);
-    const combined = `${h.type}\n${h.title}\n${h.summary}`.toLowerCase();
-    const provisionalCue = provisionalTextCueRank(combined);
     const keywordScore = keywordOverlapScore(`${h.type} ${h.title} ${h.summary}`, turnBlob);
 
-    rows.push({ id, scope: h.scope, scopePrimary, provisionalCue, keywordScore });
+    rows.push({ id, scope: h.scope, scopePrimary, keywordScore });
   }
 
   rows.sort((a, b) => {
     if (b.scopePrimary !== a.scopePrimary) return b.scopePrimary - a.scopePrimary;
-    if (b.provisionalCue !== a.provisionalCue) return b.provisionalCue - a.provisionalCue;
     if (b.keywordScore !== a.keywordScore) return b.keywordScore - a.keywordScore;
     return a.id.localeCompare(b.id);
   });

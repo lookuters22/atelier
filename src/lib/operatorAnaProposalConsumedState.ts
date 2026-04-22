@@ -21,7 +21,7 @@ export function taskProposalKey(p: OperatorAssistantProposedActionTask): string 
 }
 
 export function memoryProposalKey(p: OperatorAssistantProposedActionMemoryNote): string {
-  return `memory:${p.memoryScope}:${p.title}:${p.weddingId ?? ""}:${p.personId ?? ""}`;
+  return `memory:${p.memoryScope}:${p.title}:${p.outcome}:${p.weddingId ?? ""}:${p.personId ?? ""}`;
 }
 
 export function caseExceptionProposalKey(p: OperatorAssistantProposedActionAuthorizedCaseException): string {
