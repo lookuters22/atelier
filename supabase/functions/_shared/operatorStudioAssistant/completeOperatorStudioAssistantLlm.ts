@@ -226,7 +226,6 @@ function streamToolsToMessageCalls(
 function applyStreamDelta(
   d: StreamChunkDelta | undefined,
   onContent: (s: string) => void,
-  canEmit: { v: boolean },
   fullText: { s: string },
   byIndex: Map<number, { id: string; type: string; name: string; arguments: string }>,
   /** When set, every `delta.content` is recorded here and never forwarded to `onToken` (tool-enabled first pass). */
@@ -236,28 +235,26 @@ function applyStreamDelta(
   const hadTools = d.tool_calls != null && d.tool_calls.length > 0;
   if (d.content) {
     fullText.s += d.content;
-    if (firstPassContentDeltas) {
+    if (firstPassContentDeltas != null) {
       firstPassContentDeltas.push(d.content);
-    } else if (canEmit.v) {
+    } else {
       onContent(d.content);
     }
   }
   if (hadTools) {
-    canEmit.v = false;
     mergeStreamToolDeltas(byIndex, d.tool_calls);
   }
 }
 
 /**
  * Consumes an OpenAI Chat Completions streaming response. Appends all content to `fullText.s`. When
- * `firstPassContentDeltas` is null, forwards each `delta.content` through `onContent` while `canEmit.v`
- * (stops for `tool_calls` if not buffering). When `firstPassContentDeltas` is set, never calls `onContent`
- * and records every content chunk in that array.
+ * `firstPassContentDeltas` is not null, records every `delta.content` in that array and does not call
+ * `onContent` (tool-enabled first pass). When `firstPassContentDeltas` is null, forwards each
+ * `delta.content` to `onContent` (streaming tokens). Tool deltas are still merged for validation.
  */
 async function readOpenAiChatCompletionStream(
   res: Response,
   onContent: (s: string) => void,
-  canEmit: { v: boolean },
   fullText: { s: string },
   byIndex: Map<number, { id: string; type: string; name: string; arguments: string }>,
   firstPassContentDeltas: string[] | null,
@@ -293,7 +290,7 @@ async function readOpenAiChatCompletionStream(
           choices?: Array<{ finish_reason?: string | null; delta?: StreamChunkDelta }>;
         };
         const ch0 = j.choices?.[0];
-        applyStreamDelta(ch0?.delta, onContent, canEmit, fullText, byIndex, firstPassContentDeltas);
+        applyStreamDelta(ch0?.delta, onContent, fullText, byIndex, firstPassContentDeltas);
       } catch {
         /* ignore malformed */
       }
@@ -306,7 +303,7 @@ async function readOpenAiChatCompletionStream(
             const j = JSON.parse(line.slice(6)) as {
               choices?: Array<{ finish_reason?: string | null; delta?: StreamChunkDelta }>;
             };
-            applyStreamDelta(j.choices?.[0]?.delta, onContent, canEmit, fullText, byIndex, firstPassContentDeltas);
+            applyStreamDelta(j.choices?.[0]?.delta, onContent, fullText, byIndex, firstPassContentDeltas);
           } catch {
             /* ignore */
           }
@@ -321,7 +318,6 @@ async function postOpenAiChatCompletionsStream(
   apiKey: string,
   body: Record<string, unknown>,
   onContent: (s: string) => void,
-  canEmit: { v: boolean },
   fullText: { s: string },
   byIndex: Map<number, { id: string; type: string; name: string; arguments: string }>,
   firstPassContentDeltas: string[] | null,
@@ -340,7 +336,7 @@ async function postOpenAiChatCompletionsStream(
     const errText = await res.text();
     throw new Error(`OpenAI API error ${res.status}: ${errText}`);
   }
-  await readOpenAiChatCompletionStream(res, onContent, canEmit, fullText, byIndex, firstPassContentDeltas);
+  await readOpenAiChatCompletionStream(res, onContent, fullText, byIndex, firstPassContentDeltas);
 }
 
 function feedExtractor(
@@ -400,7 +396,6 @@ export async function completeOperatorStudioAssistantLlmStreaming(
         messages: baseMessages,
       },
       (d) => feedExtractor(ex, d, onToken),
-      { v: true },
       fullText,
       byIndex,
       null,
@@ -430,7 +425,6 @@ export async function completeOperatorStudioAssistantLlmStreaming(
       messages: baseMessages,
     },
     () => {},
-    { v: true },
     t1,
     by1,
     firstPassContentDeltas,
@@ -538,7 +532,6 @@ export async function completeOperatorStudioAssistantLlmStreaming(
       messages,
     },
     (d) => feedExtractor(ex2, d, onToken),
-    { v: true },
     t2,
     by2,
     null,

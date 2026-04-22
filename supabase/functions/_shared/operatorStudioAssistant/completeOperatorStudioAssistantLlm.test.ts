@@ -1450,6 +1450,39 @@ describe("completeOperatorStudioAssistantLlmStreaming (mocked OpenAI stream)", (
     expect(joined).not.toContain("ignored");
   });
 
+  it("2b. final json pass: tool_calls with only null parts (placeholders) must not block streaming later content to onToken", async () => {
+    const finalJson = { reply: "Recovered from placeholder tool row", proposedActions: [] as unknown[] };
+    const full = JSON.stringify(finalJson);
+    const mid = Math.max(1, Math.floor(full.length * 0.4));
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return openAiSseFromLines([
+          deltaLineTools([
+            { index: 0, id: "call_1", type: "function", function: { name: "operator_lookup_projects", arguments: "" } },
+          ]),
+          deltaLineTools([{ index: 0, function: { arguments: JSON.stringify({ query: "C" }) } }]),
+        ]);
+      }
+      return openAiSseFromLines([
+        dataLineFromObj({ choices: [{ index: 0, delta: { tool_calls: [null] } }] }),
+        deltaLine(full.slice(0, mid)),
+        deltaLine(full.slice(mid)),
+      ]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const toks: string[] = [];
+    const out = await completeOperatorStudioAssistantLlmStreaming(
+      minimalAssistantContext({ queryText: "Which project is Como?" }),
+      { supabase: fakeSupabase },
+      (d) => toks.push(d),
+    );
+    expect(out.reply).toBe("Recovered from placeholder tool row");
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(1);
+    expect(toks.length).toBeGreaterThan(0);
+    const joined = toks.join("");
+    expect(joined).toContain("Recovered from placeholder");
+  });
+
   it("3. first pass: zero content before tools — no onToken during pass one", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => {
       if (fetchMock.mock.calls.length === 1) {
