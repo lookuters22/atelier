@@ -17,6 +17,26 @@ import { fetchAssistantInquiryCountSnapshot } from "../../context/fetchAssistant
 import {
   readAssistantProjectDetailById,
 } from "../../context/fetchAssistantFocusedProjectFacts.ts";
+import {
+  draftProvenanceToolPayload,
+  fetchAssistantDraftProvenance,
+} from "../../context/fetchAssistantDraftProvenance.ts";
+import {
+  fetchAssistantThreadQueueExplanation,
+  threadQueueExplanationToolPayload,
+} from "../../context/fetchAssistantThreadQueueExplanation.ts";
+import {
+  escalationProvenanceToolPayload,
+  fetchAssistantEscalationProvenance,
+} from "../../context/fetchAssistantEscalationProvenance.ts";
+import { getOfferProjectRemote } from "../../../../../src/lib/offerProjectsRemote.ts";
+import {
+  listOfferPuckBlockTypesForAssistant,
+  MAX_OFFER_PUCK_ASSISTANT_SUMMARY_DETAILED_CHARS,
+  summarizeOfferPuckDataForAssistant,
+} from "../../../../../src/lib/offerPuckAssistantSummary.ts";
+import { fetchInvoiceSetupRemote } from "../../../../../src/lib/invoiceSetupRemote.ts";
+import { mapInvoiceTemplateToAssistantRead, MAX_INVOICE_FOOTER_TOOL_CHARS } from "../../../../../src/lib/invoiceAssistantSummary.ts";
 
 export const MAX_LOOKUP_TOOL_QUERY_CHARS = 200;
 export const MAX_LOOKUP_TOOL_CALLS_PER_TURN = 3;
@@ -165,6 +185,95 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
       parameters: {
         type: "object",
         properties: {},
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_draft",
+      description:
+        "Read-only **draft inspection** for one `drafts.id` UUID. Returns **grounded** row fields: **status**, **decision_mode**, **source_action_key**, **created_at**, thread **title** / **wedding_id** / **kind**, a **body** text preview, and **instruction_history** (JSON, may be truncated) — the stored orchestrator / persona trace when present. **Does not** explain hidden model reasoning. Use when the operator asks *why* a draft exists, *what* triggered it, or *what* it is based on and you have a **draft id** (from **Operator queue** / Today draft samples, Context, or pasted).",
+      parameters: {
+        type: "object",
+        properties: {
+          draftId: {
+            type: "string",
+            description: "Required. The `drafts.id` UUID (this tenant).",
+          },
+        },
+        required: ["draftId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_thread_queue",
+      description:
+        "Read-only **queue / Review explanation** for **one** thread (**threads.id** UUID). Returns grounded **threads** flags (needs_human, automation_mode, v3_operator_automation_hold, etc.), **derivedInboxBucket** (same metadata rules as Today), **openEscalation_requests** rows, **pending_approval drafts** on this thread, optional **v3_thread_workflow_state.workflow** JSON (bounded), and **zenTabHints** aligned with Zen / Today tab mapping. Use when the operator asks *why this is in review*, *what is blocking this thread*, *why it is waiting for me*, or *why it landed in operator review* and you have a **thread id** (from Recent thread activity, **operator_lookup_threads**, Today samples, or pasted).",
+      parameters: {
+        type: "object",
+        properties: {
+          threadId: {
+            type: "string",
+            description: "Required. The threads.id UUID (this tenant).",
+          },
+        },
+        required: ["threadId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_escalation",
+      description:
+        "Read-only **escalation inspection** for one **escalation_requests.id** UUID. Returns **grounded** row fields: **status**, **action_key**, **reason_code**, **question_body** (the recorded blocker/decision text, may be clipped), **decision_justification** JSON (may be truncated), **operator_delivery**, **learning_outcome**, resolution fields when present, **thread** / **wedding** envelope snippets, and optional **playbook_rules** row (topic, **action_key**, **decision_mode**, instruction preview) when **playbook_rule_id** is set. **Does not** reveal hidden model reasoning. Use when the operator asks **why** something **escalated**, **what** this escalation is **asking**, or **what** **triggered** it and you have an **escalation id** (from **Operator queue** / Today escalation **samples**, **operator_lookup_thread_queue** open escalations, Context, or pasted).",
+      parameters: {
+        type: "object",
+        properties: {
+          escalationId: {
+            type: "string",
+            description: "Required. The escalation_requests.id UUID (this tenant).",
+          },
+        },
+        required: ["escalationId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_offer_builder",
+      description:
+        "Read-only **offer-builder project** (investment guide / Puck document) for **one** row in `studio_offer_builder_projects` by **UUID** (`id`). **Not** CRM wedding packages — use `operator_lookup_project_details` for wedding **project** economics. Returns **displayName**, **updatedAt**, a **longer compactSummary** outline (package tiers, cover title, block types), and **blockTypes** — all from stored `puck_data`. Use when the operator asks what is *in* a named offer / premium package / destination offer and the **Offer projects (grounded)** list in Context is not enough; **offerProjectId** must match a row from that list (or a pasted id).",
+      parameters: {
+        type: "object",
+        properties: {
+          offerProjectId: {
+            type: "string",
+            description: "Required. The `studio_offer_builder_projects.id` UUID (this tenant).",
+          },
+        },
+        required: ["offerProjectId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_invoice_setup",
+      description:
+        "Read-only **invoice PDF template** for this tenant (`studio_invoice_setup` — **one** row): **legalName**, **invoicePrefix**, **paymentTerms**, **accentColor**, **footerNote** (longer cap than Context when clipped), **updatedAt**, and **logo** summary (**hasLogo**, MIME, data-URL length) — **never** raw image data. **Not** CRM project invoice amounts or line items — use **operator_lookup_project_details** for booking money. Use when the operator needs a **longer** footer or the same fields repeated for trust; normally **Invoice setup (grounded)** in Context is enough. Pass an **empty** JSON object **{}**.",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
       },
     },
   },
@@ -362,6 +471,122 @@ export async function executeOperatorReadOnlyLookupTool(
         messages: snap.messages,
       },
     });
+  }
+
+  if (name === "operator_lookup_draft") {
+    const extraKeys = Object.keys(args).filter(
+      (k) => k !== "draftId" && args[k] !== undefined && args[k] !== null,
+    );
+    if (extraKeys.length > 0) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "extra_properties",
+        onlyAllowed: ["draftId"],
+        disallowed: extraKeys,
+      });
+    }
+    const snap = await fetchAssistantDraftProvenance(supabase, photographerId, args.draftId);
+    return JSON.stringify({ tool: name, result: draftProvenanceToolPayload(snap) });
+  }
+
+  if (name === "operator_lookup_thread_queue") {
+    const extraKeys = Object.keys(args).filter(
+      (k) => k !== "threadId" && args[k] !== undefined && args[k] !== null,
+    );
+    if (extraKeys.length > 0) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "extra_properties",
+        onlyAllowed: ["threadId"],
+        disallowed: extraKeys,
+      });
+    }
+    const snap = await fetchAssistantThreadQueueExplanation(supabase, photographerId, args.threadId);
+    return JSON.stringify({ tool: name, result: threadQueueExplanationToolPayload(snap) });
+  }
+
+  if (name === "operator_lookup_escalation") {
+    const extraKeys = Object.keys(args).filter(
+      (k) => k !== "escalationId" && args[k] !== undefined && args[k] !== null,
+    );
+    if (extraKeys.length > 0) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "extra_properties",
+        onlyAllowed: ["escalationId"],
+        disallowed: extraKeys,
+      });
+    }
+    const snap = await fetchAssistantEscalationProvenance(supabase, photographerId, args.escalationId);
+    return JSON.stringify({ tool: name, result: escalationProvenanceToolPayload(snap) });
+  }
+
+  if (name === "operator_lookup_offer_builder") {
+    const extraKeys = Object.keys(args).filter(
+      (k) => k !== "offerProjectId" && args[k] !== undefined && args[k] !== null,
+    );
+    if (extraKeys.length > 0) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "extra_properties",
+        onlyAllowed: ["offerProjectId"],
+        disallowed: extraKeys,
+      });
+    }
+    const id = typeof args.offerProjectId === "string" ? args.offerProjectId.trim() : "";
+    if (!id) {
+      return JSON.stringify({ tool: name, error: "validation_error", code: "missing_offer_project_id" });
+    }
+    const rec = await getOfferProjectRemote(supabase, photographerId, id);
+    if (!rec) {
+      return JSON.stringify({
+        tool: name,
+        error: "not_found",
+        message: "No offer-builder project with this id for this tenant.",
+      });
+    }
+    return JSON.stringify({
+      tool: name,
+      result: {
+        offerProjectId: rec.id,
+        displayName: rec.name,
+        updatedAt: rec.updatedAt,
+        blockTypes: listOfferPuckBlockTypesForAssistant(rec.data as unknown),
+        detailedSummary: summarizeOfferPuckDataForAssistant(rec.data as unknown, MAX_OFFER_PUCK_ASSISTANT_SUMMARY_DETAILED_CHARS),
+        note:
+          "Factual: derived from stored Puck JSON only. Not a client-facing PDF; headings/package lines may be edited in Offer builder (Workspace).",
+      },
+    });
+  }
+
+  if (name === "operator_lookup_invoice_setup") {
+    const extraKeys = Object.keys(args).filter((k) => args[k] !== undefined && args[k] !== null);
+    if (extraKeys.length > 0) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "extra_properties",
+        onlyAllowed: [],
+        disallowed: extraKeys,
+        note: "This tool takes no properties; pass {}.",
+      });
+    }
+    const row = await fetchInvoiceSetupRemote(supabase, photographerId);
+    if (!row) {
+      return JSON.stringify({
+        tool: name,
+        result: {
+          hasRow: false,
+          note: "No studio_invoice_setup row for this tenant.",
+        },
+      });
+    }
+    const mapped = mapInvoiceTemplateToAssistantRead(row.template, row.updatedAt, MAX_INVOICE_FOOTER_TOOL_CHARS);
+    return JSON.stringify({ tool: name, result: mapped });
   }
 
   return JSON.stringify({ error: "unknown_tool", name });

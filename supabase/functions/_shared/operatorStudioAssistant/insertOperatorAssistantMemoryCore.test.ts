@@ -75,4 +75,48 @@ describe("insertMemoryForOperatorAssistant", () => {
     });
     expect(order).toEqual(["weddings", "memories"]);
   });
+
+  it("verifies people ownership before insert when memoryScope is person", async () => {
+    const order: string[] = [];
+    const fromMock = vi.fn().mockImplementation((table: string) => {
+      if (table === "people") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () => {
+                  order.push("people");
+                  return Promise.resolve({ data: { id: "p1" }, error: null });
+                },
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "memories") {
+        return {
+          insert: () => ({
+            select: () => ({
+              single: () => {
+                order.push("memories");
+                return Promise.resolve({ data: { id: "m3" }, error: null });
+              },
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+
+    const supabase = { from: fromMock } as never;
+    await insertMemoryForOperatorAssistant(supabase, "photo-1", {
+      memoryScope: "person",
+      title: "Planner pref",
+      summary: "Likes email",
+      fullContent: "Likes email summaries",
+      weddingId: null,
+      personId: "p1",
+    });
+    expect(order).toEqual(["people", "memories"]);
+  });
 });

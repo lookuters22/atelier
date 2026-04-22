@@ -9,6 +9,7 @@ import {
   Package,
   Receipt,
   BookMarked,
+  Building2,
 } from "lucide-react";
 import {
   ContextPaneRoot,
@@ -79,6 +80,7 @@ function resolveActiveIndex(ctxIndex: WorkspaceIndex, pathname: string): Workspa
   if (pathname.startsWith("/workspace/offer-builder")) return "offer-builder";
   if (pathname.startsWith("/workspace/invoices")) return "invoice-pdf";
   if (pathname.startsWith("/workspace/playbook-rule-candidates")) return "playbook-rule-candidates";
+  if (pathname.startsWith("/workspace/studio-profile-review")) return "studio-profile-review";
   return ctxIndex;
 }
 

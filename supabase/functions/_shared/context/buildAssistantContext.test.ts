@@ -160,8 +160,14 @@ describe("buildAssistantContext", () => {
     expect(ctx.retrievalLog.queryTextScopeExpansion).toBe("none");
     expect(ctx.retrievalLog.focus.weddingIdEffective).toBeNull();
     expect(ctx.retrievalLog.scopesQueried).toContain("studio_profile");
+    expect(ctx.retrievalLog.scopesQueried).toContain("offer_builder");
+    expect(ctx.retrievalLog.scopesQueried).toContain("invoice_setup");
     expect(ctx.retrievalLog.studioBusinessProfileRowPresent).toBe(false);
     expect(ctx.studioProfile.hasBusinessProfileRow).toBe(false);
+    expect(ctx.studioOfferBuilder.totalListed).toBe(0);
+    expect(ctx.retrievalLog.offerBuilder).toEqual({ projectCount: 0, listTruncated: false });
+    expect(ctx.retrievalLog.invoiceSetup).toEqual({ hasRow: false });
+    expect(ctx.studioInvoiceSetup.hasRow).toBe(false);
     expect(ctx.retrievalLog.scopesQueried).toContain("studio_memory");
     expect(ctx.retrievalLog.scopesQueried).not.toContain("crm_digest");
     expect(ctx.retrievalLog.scopesQueried).not.toContain("project_memory");

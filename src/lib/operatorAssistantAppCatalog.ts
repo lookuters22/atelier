@@ -91,9 +91,11 @@ export const APP_ROUTES: AppRouteEntry[] = [
   { path: "/workspace", title: "Workspace", purpose: "Hub" },
   { path: "/workspace/pricing-calculator", title: "Pricing calc", purpose: "Prc" },
   { path: "/workspace/invoices", title: "Invoices PDF", purpose: "Inv" },
+  { path: "/workspace/invoice-setup/proposals", title: "Invoice setup proposals (review)", purpose: "Q" },
   { path: "/workspace/offer-builder", title: "Offer hub", purpose: "Off" },
   { path: "/workspace/offer-builder/edit/:projectId", title: "Offer edit", purpose: "1 offer" },
   { path: "/workspace/playbook-rule-candidates", title: "Rule candidates", purpose: "Review" },
+  { path: "/workspace/studio-profile-review", title: "Studio profile (review)", purpose: "Prof" },
   { path: "/directory", title: "Directory", purpose: "Ppl" },
   { path: "/settings", title: "Settings", purpose: "Hub" },
   { path: "/settings/onboarding", title: "Settings (onboarding)", purpose: "→ /onboarding" },
@@ -233,6 +235,7 @@ export const APP_MODE_LEFT_RAILS: Record<string, LeftRailSection[]> = {
       { label: "Offer Builder", description: "/w/offer" },
       { label: "Invoice PDF Setup", description: "/w/inv" },
       { label: "Rule candidates (review)", description: "/w/candidates" },
+      { label: "Studio profile (review)", description: "/w/profile" },
     ] },
   ],
   settings: [
@@ -397,9 +400,22 @@ export const APP_PROCEDURAL_WORKFLOWS: readonly OperatorAppProceduralWorkflow[] 
     entryPoints: ["Dock **Projects** → `/workspace`"],
     steps: [
       "Go to **Workspace** / **Projects** (`/workspace`).",
-      "In the left rail under **Studio Tools**, open **Pricing Calculator** (`/workspace/pricing-calculator`), **Offer Builder** (`/workspace/offer-builder`), **Invoice PDF Setup** (`/workspace/invoices`), or **Rule candidates (review)** (`/workspace/playbook-rule-candidates`).",
+      "In the left rail under **Studio Tools**, open **Pricing Calculator** (`/workspace/pricing-calculator`), **Offer Builder** (`/workspace/offer-builder`), **Invoice PDF Setup** (`/workspace/invoices`), **Rule candidates (review)** (`/workspace/playbook-rule-candidates`), or **Studio profile (review)** (`/workspace/studio-profile-review`).",
     ],
     notes: "Labels/routes are mirrored in `APP_MODE_LEFT_RAILS.workspace` and `WorkspaceContextList.tsx`.",
+    groundingConfidence: "high",
+  },
+  {
+    id: "open_studio_profile_review",
+    title: "Review studio profile / capability (read-only; not playbook)",
+    primaryRoute: "/workspace/studio-profile-review",
+    entryPoints: ["Dock **Projects** → **Studio profile (review)**"],
+    steps: [
+      "Go to **Workspace** (`/workspace`).",
+      "Under **Studio tools**, open **Studio profile (review)** or go to `/workspace/studio-profile-review`.",
+      "Inspect **identity** (from settings), **geographic coverage** (derived from contract helpers), and **`studio_business_profiles`** summaries. This is **not** the message playbook; rules and case exceptions are separate.",
+    ],
+    notes: "Read-only v1; editing stays in onboarding / settings paths. Parity: `APP_ROUTES`, `WorkspaceContextList` Studio Tools.",
     groundingConfidence: "high",
   },
   {
@@ -410,9 +426,9 @@ export const APP_PROCEDURAL_WORKFLOWS: readonly OperatorAppProceduralWorkflow[] 
     steps: [
       "Go to **Workspace** (`/workspace`).",
       "Under **Studio tools**, click **Rule candidates (review)** or open `/workspace/playbook-rule-candidates` directly.",
-      "Read the list: each row shows topic, proposed instruction, decision mode, scope/channel, review status, and source. **Candidates are not live playbook rules** until promoted.",
+      "Read the list, then for **Pending review** rows use **Approve** (promotes to your playbook) or **Reject**. **Candidates are not live playbook rules** until approved.",
     ],
-    notes: "v1 is a read-only list; approve/reject in-app is deferred — see honesty `ne2_no_rule_candidate_dashboard`.",
+    notes: "Approve/reject call the `review-playbook-rule-candidate` edge; see `ne2_no_rule_candidate_dashboard` for supersede and overrides (not in this UI yet).",
     groundingConfidence: "high",
   },
   {
@@ -467,9 +483,9 @@ export const APP_WORKFLOW_HONESTY_NOTES: readonly OperatorAppWorkflowHonestyNote
   },
   {
     id: "ne2_no_rule_candidate_dashboard",
-    title: "Rule candidates — list only in v1 (promotion UI later)",
+    title: "Rule candidates — workspace does not expose supersede or overrides (v1)",
     shortGuidance:
-      "Workspace **Rule candidates (review)** (`/workspace/playbook-rule-candidates`) lists staged rows and status; they are **not** active rules until promoted. In-app approve/reject buttons are not wired yet — backend `review_playbook_rule_candidate` exists for a follow-up slice.",
+      "Workspace **Rule candidates (review)** supports **Approve** and **Reject** for pending rows via `review_playbook_rule_candidate` (edge: `review-playbook-rule-candidate`). **Supersede** and instruction/field overrides are only for API/scripts — not the dashboard in v1.",
   },
   {
     id: "ne3_onboarding_reentry",
@@ -495,6 +511,24 @@ export const APP_WORKFLOW_HONESTY_NOTES: readonly OperatorAppWorkflowHonestyNote
     shortGuidance:
       "Open `/today` and describe the hub at a high level — internal Zen tab names may still shift.",
   },
+  {
+    id: "ne7_studio_profile_proposals_not_stored",
+    title: "Studio profile proposals — queue + review (Ana enqueues; apply from review page only)",
+    shortGuidance:
+      "Queue table `studio_profile_change_proposals` + `StudioProfileChangeProposalV1` (schema 1). Ana can **propose** bounded patches (`proposedActions` kind `studio_profile_change_proposal`); **enqueue** only after **Enqueue for review (confirm)** — not automatic. `settings_patch` allowlist only — not WhatsApp/playbook/onboarding keys. **Live apply** is **not** from Ana: operators use **Studio profile (review)** with `apply_studio_profile_change_proposal_v1` after review.",
+  },
+  {
+    id: "ne8_offer_builder_proposals_enqueue_only",
+    title: "Offer builder rename/title — Ana enqueues; reviewed apply from proposals page only",
+    shortGuidance:
+      "Table `offer_builder_change_proposals` + `OfferBuilderChangeProposalV1` (name / root_title in metadata only). `proposedActions` kind `offer_builder_change_proposal` **enqueue** after **Enqueue for review (confirm)** only — not automatic. **No** raw Puck or layout from Ana in v1. **Live apply** is **not** from Ana: operators use **Change proposals (review)** with `apply_offer_builder_change_proposal_v1` (name + `puck_data.root.props.title` only) after review.",
+  },
+  {
+    id: "ne9_invoice_setup_proposals_review_only",
+    title: "Invoice setup change proposals — queue + reviewed apply; not Ana auto-apply",
+    shortGuidance:
+      "Table `invoice_setup_change_proposals` + `InvoiceSetupChangeProposalV1` (allowlisted `template_patch` only; **no** logo). Ana **enqueue** after confirm only. **Apply to live invoice PDF** on `/workspace/invoice-setup/proposals` uses `apply_invoice_setup_change_proposal_v1` (bounded merge into `studio_invoice_setup.template`). **Reject** / **Withdraw** use `review_invoice_setup_change_proposal`. Not the widget; reviewed operator path only.",
+  },
 ];
 
 /** Short route hints; detailed steps live in `APP_PROCEDURAL_WORKFLOWS`. */
@@ -503,7 +537,22 @@ export const APP_WORKFLOW_POINTERS: WorkflowPointer[] = [
   {
     id: "rule-candidate-honest",
     pointer:
-      "Playbook rule candidates: **Workspace → Studio tools → Rule candidates (review)** (`/workspace/playbook-rule-candidates`) — list + fields; see `APP_WORKFLOW_HONESTY_NOTES.ne2_no_rule_candidate_dashboard` for promotion limits. Ana propose-confirm still creates rows.",
+      "Playbook rule candidates: **Workspace → Studio tools → Rule candidates (review)** (`/workspace/playbook-rule-candidates`) — list, **Approve** / **Reject** for pending rows; see `ne2` for supersede/override limits. Ana propose-confirm still creates rows.",
+  },
+  {
+    id: "studio-profile-review",
+    pointer:
+      "Studio profile / capability: **Workspace → Studio tools → Studio profile (review)** (`/workspace/studio-profile-review`) — capability layer Ana reads (`studio_business_profiles` + settings identity); not playbook. Bounded proposals enqueue after **Ana confirm**; **reviewed apply** uses RPC on that page, not the widget. Honesty `ne7_studio_profile_proposals_not_stored`. Workflow `open_studio_profile_review`.",
+  },
+  {
+    id: "offer-builder-proposals-review",
+    pointer:
+      "Offer change proposals: **Workspace → Studio tools → Offer builder** → **Change proposals (review)** — `/workspace/offer-builder/proposals` — queue for `offer_builder_change_proposals`; **Apply to live offer** uses RPC `apply_offer_builder_change_proposal_v1` on that page, not the widget. Honesty `ne8_offer_builder_proposals_enqueue_only`.",
+  },
+  {
+    id: "invoice-setup-proposals-review",
+    pointer:
+      "Invoice setup change proposals: **Workspace → Studio tools → Invoice PDF Setup** → **Change proposals (review)** — `/workspace/invoice-setup/proposals` — **Apply to live invoice PDF** uses `apply_invoice_setup_change_proposal_v1`; **Reject** / **Withdraw** use `review_invoice_setup_change_proposal` (not Ana auto-apply). Honesty `ne9_invoice_setup_proposals_review_only`.",
   },
   {
     id: "automation-mode",

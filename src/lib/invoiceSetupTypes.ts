@@ -4,6 +4,7 @@ export type InvoiceSetupState = {
   paymentTerms: string;
   accentColor: string;
   footerNote: string;
+  /** Binary-heavy; v1 **proposal** contract excludes this — see `InvoiceSetupChangeProposalV1` / `validateInvoiceSetupChangeProposalV1`. */
   logoDataUrl: string | null;
 };
 
@@ -19,7 +20,7 @@ export {
   INVOICE_SETUP_LOCAL_ANONYMOUS_KEY,
   INVOICE_STORAGE_KEY,
   invoiceSetupLocalStorageKey,
-} from "./invoiceSetupLocalKey";
+} from "./invoiceSetupLocalKey.ts";
 
 export function defaultInvoiceSetup(): InvoiceSetupState {
   return {

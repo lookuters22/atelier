@@ -6,6 +6,7 @@ import {
   fetchPlaybookRuleCandidates,
   type PlaybookRuleCandidateListRow,
 } from "@/lib/fetchPlaybookRuleCandidates";
+import { reviewPlaybookRuleCandidate } from "@/lib/reviewPlaybookRuleCandidate";
 import { cn } from "@/lib/utils";
 
 function formatWhen(iso: string): string {
@@ -35,10 +36,22 @@ function reviewStatusPill(status: string): string {
   return "border-border bg-muted/80 text-muted-foreground";
 }
 
+/** Human label: pending vs reviewed (non-candidate) states. */
+function reviewStatusDisplayLabel(status: string): string {
+  const s = status.toLowerCase();
+  if (s === "candidate") return "Pending review";
+  return s.replace(/_/g, " ");
+}
+
 export function PlaybookRuleCandidatesPage() {
   const [rows, setRows] = useState<PlaybookRuleCandidateListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingReview, setPendingReview] = useState<{
+    id: string;
+    action: "approve" | "reject";
+  } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,6 +69,18 @@ export function PlaybookRuleCandidatesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function runReview(candidateId: string, action: "approve" | "reject") {
+    setActionError(null);
+    setPendingReview({ id: candidateId, action });
+    const result = await reviewPlaybookRuleCandidate(supabase, { candidateId, action });
+    setPendingReview(null);
+    if (result.error) {
+      setActionError(result.error);
+      return;
+    }
+    await load();
+  }
 
   return (
     <div className="space-y-6">
@@ -76,12 +101,19 @@ export function PlaybookRuleCandidatesPage() {
         >
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
           <span>
-            This screen is a <strong className="font-medium text-foreground/85">read-only list</strong> for v1. Approve
-            / reject flows may call the existing <code className="rounded bg-muted px-1 py-0.5 text-[10px]">review_playbook_rule_candidate</code>{" "}
-            RPC in a follow-up slice.
+            Use <strong className="font-medium text-foreground/85">Approve</strong> or{" "}
+            <strong className="font-medium text-foreground/85">Reject</strong> on each pending row. The server runs{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">review_playbook_rule_candidate</code> (via a secure
+            edge function) — this updates status and, on approve, promotes to your playbook.
           </span>
         </div>
       </header>
+
+      {actionError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+          {actionError}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
@@ -115,7 +147,7 @@ export function PlaybookRuleCandidatesPage() {
                     reviewStatusPill(r.review_status),
                   )}
                 >
-                  {r.review_status.replace(/_/g, " ")}
+                  {reviewStatusDisplayLabel(r.review_status)}
                 </span>
               </div>
               <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-foreground/90">
@@ -168,6 +200,32 @@ export function PlaybookRuleCandidatesPage() {
                   </div>
                 ) : null}
               </dl>
+              {r.review_status === "candidate" ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center rounded-md border border-emerald-200/80 bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-950 hover:bg-emerald-100/80 disabled:opacity-50"
+                    disabled={pendingReview !== null}
+                    aria-busy={pendingReview?.id === r.id && pendingReview.action === "approve"}
+                    onClick={() => void runReview(r.id, "approve")}
+                  >
+                    {pendingReview?.id === r.id && pendingReview.action === "approve" ? "Approving…" : "Approve"}
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center rounded-md border border-rose-200/80 bg-rose-50 px-2.5 text-[11px] font-medium text-rose-950 hover:bg-rose-100/80 disabled:opacity-50"
+                    disabled={pendingReview !== null}
+                    aria-busy={pendingReview?.id === r.id && pendingReview.action === "reject"}
+                    onClick={() => void runReview(r.id, "reject")}
+                  >
+                    {pendingReview?.id === r.id && pendingReview.action === "reject" ? "Rejecting…" : "Reject"}
+                  </button>
+                </div>
+              ) : (
+                <p className="mt-3 text-[11px] text-muted-foreground">
+                  Reviewed — no further actions on this row.
+                </p>
+              )}
             </li>
           ))}
         </ul>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
 } from "../../../../../src/types/assistantContext.types.ts";
@@ -40,6 +42,8 @@ function minimalCtx(): AssistantContext {
     focusedProjectRowHints: null,
     operatorStateSummary: IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY,
     studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+    studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+    studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
     appCatalog: getAssistantAppCatalogForContext(),
     includeAppCatalogInOperatorPrompt: false,
     studioAnalysisSnapshot: null,
@@ -78,9 +82,14 @@ function minimalCtx(): AssistantContext {
 }
 
 describe("executeOperatorReadOnlyLookupTool", () => {
-  it("exposes operator_lookup_thread_messages in the tool list", () => {
+  it("exposes operator_lookup_thread_messages and operator_lookup_draft in the tool list", () => {
     expect(TOOL_NAMES).toContain("operator_lookup_thread_messages");
-    expect(TOOL_NAMES.length).toBe(5);
+    expect(TOOL_NAMES).toContain("operator_lookup_draft");
+    expect(TOOL_NAMES).toContain("operator_lookup_thread_queue");
+    expect(TOOL_NAMES).toContain("operator_lookup_escalation");
+    expect(TOOL_NAMES).toContain("operator_lookup_offer_builder");
+    expect(TOOL_NAMES).toContain("operator_lookup_invoice_setup");
+    expect(TOOL_NAMES.length).toBe(10);
   });
 
   it("operator_lookup_projects returns JSON from entity index", async () => {
@@ -545,5 +554,350 @@ describe("executeOperatorReadOnlyLookupTool — operator_lookup_project_details"
     expect(j.error).toBe("not_found");
     expect(j.code).toBe("not_found");
     expect(j.message).toMatch(/No project|not visible|studio/i);
+  });
+});
+
+describe("executeOperatorReadOnlyLookupTool — operator_lookup_draft", () => {
+  const D_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+  it("registry: draftId-only schema", () => {
+    const t = OPERATOR_READ_ONLY_LOOKUP_TOOLS.find((x) => x.function.name === "operator_lookup_draft")!;
+    expect(t.function.parameters?.additionalProperties).toBe(false);
+    expect(t.function.parameters?.required).toEqual(["draftId"]);
+    const props = t.function.parameters?.properties as Record<string, unknown> | undefined;
+    expect(Object.keys(props ?? {})).toEqual(["draftId"]);
+  });
+
+  it("returns draft provenance JSON for a tenant row", async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table !== "drafts") return {} as never;
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: {
+                      id: D_ID,
+                      thread_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                      status: "pending_approval",
+                      created_at: "2026-01-15T00:00:00Z",
+                      decision_mode: "ask_first",
+                      source_action_key: "followup_milestone",
+                      body: "Body text",
+                      instruction_history: null,
+                      threads: { title: "Subj", wedding_id: null, kind: "email" },
+                    },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        } as never;
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_draft",
+      JSON.stringify({ draftId: D_ID }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      result: { draft: { sourceActionKey: string | null; instructionHistoryJson: null } };
+    };
+    expect(j.tool).toBe("operator_lookup_draft");
+    expect(j.result.draft.sourceActionKey).toBe("followup_milestone");
+    expect(j.result.draft.instructionHistoryJson).toBeNull();
+  });
+
+  it("rejects extra properties on args", async () => {
+    const supabase = { from: () => ({}) } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "p",
+      minimalCtx(),
+      "operator_lookup_draft",
+      JSON.stringify({ draftId: D_ID, projectId: "x" }),
+    );
+    const j = JSON.parse(raw) as { error: string; onlyAllowed: string[] };
+    expect(j.error).toBe("invalid_arguments");
+    expect(j.onlyAllowed).toEqual(["draftId"]);
+  });
+});
+
+describe("executeOperatorReadOnlyLookupTool — operator_lookup_thread_queue", () => {
+  const TID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+
+  it("registry: threadId-only schema", () => {
+    const t = OPERATOR_READ_ONLY_LOOKUP_TOOLS.find((x) => x.function.name === "operator_lookup_thread_queue")!;
+    expect(t.function.parameters?.additionalProperties).toBe(false);
+    expect(t.function.parameters?.required).toEqual(["threadId"]);
+    const props = t.function.parameters?.properties as Record<string, unknown> | undefined;
+    expect(Object.keys(props ?? {})).toEqual(["threadId"]);
+  });
+
+  it("returns queue explanation JSON", async () => {
+    const meta = { sender_role: "customer_lead" };
+    const supabase = {
+      from: (table: string) => {
+        if (table === "threads") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () =>
+                    Promise.resolve({
+                      data: {
+                        id: TID,
+                        title: "Hi",
+                        kind: "email",
+                        channel: "email",
+                        wedding_id: null,
+                        needs_human: false,
+                        automation_mode: "auto",
+                        v3_operator_automation_hold: false,
+                        v3_operator_hold_escalation_id: null,
+                        ai_routing_metadata: meta,
+                        last_activity_at: "2026-01-01T00:00:00Z",
+                        status: "open",
+                      },
+                      error: null,
+                    }),
+                }),
+              }),
+            }),
+          } as never;
+        }
+        if (table === "escalation_requests") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    order: () => ({
+                      limit: () => Promise.resolve({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          } as never;
+        }
+        if (table === "drafts") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    order: () => ({
+                      limit: () => Promise.resolve({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          } as never;
+        }
+        if (table === "v3_thread_workflow_state") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+          } as never;
+        }
+        return {} as never;
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_thread_queue",
+      JSON.stringify({ threadId: TID }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      result: { thread: { derivedInboxBucket: string } };
+    };
+    expect(j.tool).toBe("operator_lookup_thread_queue");
+    expect(j.result.thread.derivedInboxBucket).toBe("inquiry");
+  });
+});
+
+describe("executeOperatorReadOnlyLookupTool — operator_lookup_escalation", () => {
+  const EID = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+
+  it("registry: escalationId-only schema", () => {
+    const t = OPERATOR_READ_ONLY_LOOKUP_TOOLS.find((x) => x.function.name === "operator_lookup_escalation")!;
+    expect(t.function.parameters?.additionalProperties).toBe(false);
+    expect(t.function.parameters?.required).toEqual(["escalationId"]);
+    const props = t.function.parameters?.properties as Record<string, unknown> | undefined;
+    expect(Object.keys(props ?? {})).toEqual(["escalationId"]);
+  });
+
+  it("returns escalation provenance JSON", async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table !== "escalation_requests") return {} as never;
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: {
+                      id: EID,
+                      created_at: "2026-01-01T00:00:00Z",
+                      status: "open",
+                      action_key: "ak",
+                      reason_code: "rc",
+                      question_body: "Q?",
+                      decision_justification: { a: 1 },
+                      operator_delivery: "batch_later",
+                      learning_outcome: null,
+                      playbook_rule_id: null,
+                      promote_to_playbook: false,
+                      recommended_resolution: null,
+                      resolution_storage_target: null,
+                      resolution_text: null,
+                      resolved_at: null,
+                      resolved_decision_mode: null,
+                      thread_id: null,
+                      wedding_id: null,
+                      threads: null,
+                      weddings: null,
+                      playbook_rules: null,
+                    },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        } as never;
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_escalation",
+      JSON.stringify({ escalationId: EID }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      result: { escalation: { actionKey: string; reasonCode: string } };
+    };
+    expect(j.tool).toBe("operator_lookup_escalation");
+    expect(j.result.escalation.actionKey).toBe("ak");
+    expect(j.result.escalation.reasonCode).toBe("rc");
+  });
+
+  it("operator_lookup_offer_builder returns bounded detailed summary for one offer project", async () => {
+    const OID = "550e8400-e29b-41d4-a716-446655440000";
+    const supabase = {
+      from: (table: string) => {
+        if (table !== "studio_offer_builder_projects") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: {
+                      id: OID,
+                      name: "Destination pack",
+                      updated_at: "2026-04-01T12:00:00.000Z",
+                      puck_data: {
+                        root: { props: { title: "Island guide" } },
+                        content: [
+                          {
+                            type: "PricingTier",
+                            props: {
+                              tierName: "Elite",
+                              price: "5000",
+                              features: [{ text: "Full day coverage" }],
+                            },
+                          },
+                        ],
+                      },
+                    },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        };
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_offer_builder",
+      JSON.stringify({ offerProjectId: OID }),
+    );
+    const j = JSON.parse(raw) as { tool: string; result: { displayName: string; detailedSummary: string } };
+    expect(j.tool).toBe("operator_lookup_offer_builder");
+    expect(j.result.displayName).toBe("Destination pack");
+    expect(j.result.detailedSummary).toMatch(/Elite/);
+  });
+
+  it("operator_lookup_invoice_setup returns template fields without raw logo", async () => {
+    const supabase = {
+      from: (table: string) => {
+        expect(table).toBe("studio_invoice_setup");
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: {
+                    template: {
+                      legalName: "Co",
+                      invoicePrefix: "X",
+                      paymentTerms: "Due",
+                      accentColor: "#fff",
+                      footerNote: "Line",
+                      logoDataUrl: "data:image/png;base64,QUFBQQ==",
+                    },
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                  },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_invoice_setup",
+      "{}",
+    );
+    const j = JSON.parse(raw) as { tool: string; result: { hasRow: boolean; invoicePrefix: string; logo: { hasLogo: boolean } } };
+    expect(j.tool).toBe("operator_lookup_invoice_setup");
+    expect(j.result.hasRow).toBe(true);
+    expect(j.result.invoicePrefix).toBe("X");
+    expect(j.result.logo.hasLogo).toBe(true);
+    expect(JSON.stringify(j)).not.toMatch(/data:image\//);
   });
 });

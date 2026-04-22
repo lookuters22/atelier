@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
   type AssistantOperatorStateSummary,
@@ -56,6 +58,8 @@ function fakeCtx(overrides: Partial<AssistantContext> = {}): AssistantContext {
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
     studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+    studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+    studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],

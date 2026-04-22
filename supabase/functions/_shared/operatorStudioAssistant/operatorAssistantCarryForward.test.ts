@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
 } from "../../../../src/types/assistantContext.types.ts";
@@ -44,6 +46,8 @@ const emptyCtxBase = {
     fetchedAt: "2020-01-01T00:00:00.000Z",
   },
   studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+  studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+  studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   memoryHeaders: [] as never[],
   selectedMemories: [] as never[],
   globalKnowledge: [] as never[],

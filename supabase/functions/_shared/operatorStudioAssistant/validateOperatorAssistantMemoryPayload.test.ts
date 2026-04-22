@@ -4,8 +4,8 @@ import {
   validateOperatorAssistantMemoryPayload,
 } from "./validateOperatorAssistantMemoryPayload.ts";
 
-describe("validateOperatorAssistantMemoryPayload (Slice 8)", () => {
-  it("accepts studio scope without wedding", () => {
+describe("validateOperatorAssistantMemoryPayload", () => {
+  it("accepts studio scope without wedding or person", () => {
     const v = validateOperatorAssistantMemoryPayload({
       memoryScope: "studio",
       title: "Pref",
@@ -16,6 +16,7 @@ describe("validateOperatorAssistantMemoryPayload (Slice 8)", () => {
     if (v.ok) {
       expect(v.value.memoryScope).toBe("studio");
       expect(v.value.weddingId).toBeNull();
+      expect(v.value.personId).toBeNull();
     }
   });
 
@@ -39,17 +40,45 @@ describe("validateOperatorAssistantMemoryPayload (Slice 8)", () => {
     });
     expect(v.ok).toBe(false);
   });
+
+  it("requires personId for person scope and rejects weddingId", () => {
+    const bad = validateOperatorAssistantMemoryPayload({
+      memoryScope: "person",
+      title: "T",
+      summary: "S",
+      fullContent: "F",
+    });
+    expect(bad.ok).toBe(false);
+
+    const v = validateOperatorAssistantMemoryPayload({
+      memoryScope: "person",
+      title: "T",
+      summary: "S",
+      fullContent: "F",
+      personId: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.value.personId).toBe("22222222-2222-2222-2222-222222222222");
+      expect(v.value.weddingId).toBeNull();
+    }
+  });
 });
 
 describe("tryParseLlmProposedMemoryNote", () => {
-  it("rejects person scope in proposal JSON", () => {
+  it("accepts person scope when personId is set", () => {
     const r = tryParseLlmProposedMemoryNote({
       kind: "memory_note",
       memoryScope: "person",
       title: "x",
       summary: "y",
       fullContent: "z",
+      personId: "33333333-3333-3333-3333-333333333333",
     });
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.memoryScope).toBe("person");
+      expect(r.value.personId).toBe("33333333-3333-3333-3333-333333333333");
+    }
   });
 });

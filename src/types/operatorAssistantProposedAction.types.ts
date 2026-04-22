@@ -1,5 +1,11 @@
 import type { Database } from "./database.types.ts";
 import type { AuthorizedCaseExceptionOverridePayload } from "./decisionContext.types.ts";
+import type {
+  StudioBusinessProfilePatchV1,
+  StudioProfileSettingsPatchV1,
+} from "./studioProfileChangeProposal.types.ts";
+import type { OfferBuilderMetadataPatchV1 } from "./offerBuilderChangeProposal.types.ts";
+import type { InvoiceSetupTemplatePatchV1 } from "./invoiceSetupChangeProposal.types.ts";
 
 /**
  * Slice 6 — staged rule row; promotion via `review_playbook_rule_candidate` only (not direct `playbook_rules`).
@@ -37,17 +43,21 @@ export type OperatorAssistantProposedActionTask = {
 };
 
 /**
- * Slice 8 — durable memory; confirm inserts `memories` with `scope` project | studio only (CHECK-safe).
- * `project` requires tenant-owned `weddingId`; `studio` is tenant-wide (no wedding/person FKs).
+ * Durable memory; confirm inserts `memories` with `scope` project | person | studio (CHECK-safe).
+ * - `project`: tenant-owned `weddingId` required; no `personId`.
+ * - `person`: tenant-owned `personId` required; no `weddingId`.
+ * - `studio`: neither FK.
  */
 export type OperatorAssistantProposedActionMemoryNote = {
   kind: "memory_note";
-  memoryScope: "project" | "studio";
+  memoryScope: "project" | "studio" | "person";
   title: string;
   summary: string;
   fullContent: string;
   /** Required when `memoryScope` is `project`. */
   weddingId?: string | null;
+  /** Required when `memoryScope` is `person` (UUID from tenant `people`). */
+  personId?: string | null;
 };
 
 /**
@@ -70,11 +80,47 @@ export type OperatorAssistantProposedActionAuthorizedCaseException = {
   notes?: string | null;
 };
 
+/**
+ * Bounded studio profile / capability change — confirm enqueues `studio_profile_change_proposals` only (no apply).
+ * Patches are allowlisted: `STUDIO_PROFILE_PROPOSAL_SETTINGS_KEYS` and `STUDIO_BIZ_PROFILE_PROPOSAL_KEYS` only.
+ */
+export type OperatorAssistantProposedActionStudioProfileChangeProposal = {
+  kind: "studio_profile_change_proposal";
+  rationale: string;
+  settings_patch?: StudioProfileSettingsPatchV1;
+  studio_business_profile_patch?: StudioBusinessProfilePatchV1;
+};
+
+/**
+ * Bounded offer-document metadata change — confirm enqueues `offer_builder_change_proposals`; live apply is on the proposals review page via RPC (not auto from the widget).
+ * `metadata_patch` allowlist: **name** (hub label) and **root_title** (document title string) only.
+ */
+export type OperatorAssistantProposedActionOfferBuilderChangeProposal = {
+  kind: "offer_builder_change_proposal";
+  rationale: string;
+  /** `studio_offer_builder_projects.id` — must appear in Context **Offer projects** list. */
+  project_id: string;
+  metadata_patch: OfferBuilderMetadataPatchV1;
+};
+
+/**
+ * Bounded PDF invoice template fields — confirm enqueues `invoice_setup_change_proposals` only (no live apply).
+ * `template_patch` allowlist: **legalName**, **invoicePrefix**, **paymentTerms**, **accentColor**, **footerNote** — **not** `logoDataUrl` or raw template JSON.
+ */
+export type OperatorAssistantProposedActionInvoiceSetupChangeProposal = {
+  kind: "invoice_setup_change_proposal";
+  rationale: string;
+  template_patch: InvoiceSetupTemplatePatchV1;
+};
+
 export type OperatorAssistantProposedAction =
   | OperatorAssistantProposedActionPlaybookRuleCandidate
   | OperatorAssistantProposedActionTask
   | OperatorAssistantProposedActionMemoryNote
-  | OperatorAssistantProposedActionAuthorizedCaseException;
+  | OperatorAssistantProposedActionAuthorizedCaseException
+  | OperatorAssistantProposedActionStudioProfileChangeProposal
+  | OperatorAssistantProposedActionOfferBuilderChangeProposal
+  | OperatorAssistantProposedActionInvoiceSetupChangeProposal;
 
 /**
  * API body for `insert-operator-assistant-playbook-rule-candidate` (confirm step).
@@ -100,11 +146,12 @@ export type InsertOperatorAssistantTaskBody = {
 
 /** API body for `insert-operator-assistant-memory` (confirm step). */
 export type InsertOperatorAssistantMemoryBody = {
-  memoryScope: "project" | "studio";
+  memoryScope: "project" | "studio" | "person";
   title: string;
   summary: string;
   fullContent: string;
   weddingId?: string | null;
+  personId?: string | null;
 };
 
 /** API body for `insert-operator-assistant-authorized-case-exception` (confirm step). */

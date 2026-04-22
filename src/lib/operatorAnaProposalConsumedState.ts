@@ -1,7 +1,10 @@
 import type {
   OperatorAssistantProposedActionAuthorizedCaseException,
+  OperatorAssistantProposedActionInvoiceSetupChangeProposal,
   OperatorAssistantProposedActionMemoryNote,
+  OperatorAssistantProposedActionOfferBuilderChangeProposal,
   OperatorAssistantProposedActionPlaybookRuleCandidate,
+  OperatorAssistantProposedActionStudioProfileChangeProposal,
   OperatorAssistantProposedActionTask,
 } from "../types/operatorAssistantProposedAction.types.ts";
 
@@ -15,11 +18,23 @@ export function taskProposalKey(p: OperatorAssistantProposedActionTask): string 
 }
 
 export function memoryProposalKey(p: OperatorAssistantProposedActionMemoryNote): string {
-  return `memory:${p.memoryScope}:${p.title}:${p.weddingId ?? ""}`;
+  return `memory:${p.memoryScope}:${p.title}:${p.weddingId ?? ""}:${p.personId ?? ""}`;
 }
 
 export function caseExceptionProposalKey(p: OperatorAssistantProposedActionAuthorizedCaseException): string {
   return `case_exc:${p.weddingId}:${p.overridesActionKey}:${p.clientThreadId ?? ""}`;
+}
+
+export function studioProfileChangeProposalKey(p: OperatorAssistantProposedActionStudioProfileChangeProposal): string {
+  return `studio_prof:${p.rationale.slice(0, 120)}:${JSON.stringify(p.settings_patch ?? {})}:${JSON.stringify(p.studio_business_profile_patch ?? {})}`;
+}
+
+export function offerBuilderChangeProposalKey(p: OperatorAssistantProposedActionOfferBuilderChangeProposal): string {
+  return `offer_bldr:${p.project_id}:${JSON.stringify(p.metadata_patch)}`;
+}
+
+export function invoiceSetupChangeProposalKey(p: OperatorAssistantProposedActionInvoiceSetupChangeProposal): string {
+  return `inv_setup:${p.rationale.slice(0, 80)}:${JSON.stringify(p.template_patch)}`;
 }
 
 /**

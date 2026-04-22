@@ -25,7 +25,11 @@ import type {
   AssistantFocusedProjectFacts,
   AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
-import { IDLE_ASSISTANT_STUDIO_PROFILE } from "../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+} from "../../../../src/types/assistantContext.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
 import { IDLE_ASSISTANT_THREAD_MESSAGE_BODIES } from "../context/fetchAssistantThreadMessageBodies.ts";
@@ -73,6 +77,8 @@ function minimalAssistantContext(overrides: Partial<AssistantContext> = {}): Ass
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
     studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+    studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+    studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
@@ -257,7 +263,9 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/optional.*dueDate|dueDate.*optional/i);
     expect(p).toContain('**"memory_note"**');
     expect(p).toContain("**memoryScope**");
-    expect(p).toMatch(/[Nn]ever claim a rule, task, memory, or exception|proposes/);
+    expect(p).toMatch(
+      /[Nn]ever claim a rule, task, memory, exception, profile field, offer document, or invoice template|proposes what they can confirm/,
+    );
   });
 
   it("safe task write promotion — manager phrasing + confirm-before-save in system prompt", () => {
@@ -265,6 +273,22 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/\*\*Tasks \(manager/);
     expect(p).toMatch(/remind me|follow up|to-do|Create task/i);
     expect(p).toMatch(/nothing is saved until|Create task under your message/i);
+  });
+
+  it("safe memory write promotion — manager phrasing + memory_note + confirm-before-save in system prompt", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Memories \(manager/);
+    expect(p).toMatch(/remember that|Save memory|memory_note/i);
+    expect(p).toMatch(/nothing is written to memories until|Save memory on the proposal card/i);
+    expect(p).toMatch(/\*\*personId\*\*/);
+  });
+
+  it("safe case exception write promotion — manager phrasing + confirm + project scope in system prompt", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Case exceptions \(manager/);
+    expect(p).toMatch(/one-off|split the deposit|pay later|authorized_case_exception/i);
+    expect(p).toMatch(/Save case exception \(confirm\)|authorized_case_exceptions/i);
+    expect(p).toMatch(/weddingId|Focused project/);
   });
 
   it("Slice 11 — authorized_case_exception in JSON response format (case-scoped, not a global rule)", () => {
@@ -276,6 +300,22 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/one-off|one booking|this-project|not.*global|case/i);
   });
 
+  it("Offer builder — offer_builder_change_proposal bounded metadata in system prompt (enqueue, no live apply)", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Offer builder — document label \/ title/);
+    expect(p).toContain("offer_builder_change_proposal");
+    expect(p).toMatch(/metadata_patch|name.*root_title|root_title/);
+    expect(p).toMatch(/Offer projects \(grounded\)|Offer projects/);
+  });
+
+  it("Invoice setup — invoice_setup_change_proposal bounded template_patch in system prompt (enqueue, no live apply)", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Invoice setup — PDF template/);
+    expect(p).toContain("invoice_setup_change_proposal");
+    expect(p).toMatch(/template_patch|legalName|invoicePrefix/);
+    expect(p).toMatch(/logoDataUrl|never.*logo|no.*logo/i);
+  });
+
   it("Recovery slice — read-only lookup tools named in prompt (bounded second pass)", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
     expect(p).toContain("operator_lookup_projects");
@@ -283,6 +323,11 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toContain("operator_lookup_threads");
     expect(p).toContain("operator_lookup_thread_messages");
     expect(p).toContain("operator_lookup_inquiry_counts");
+    expect(p).toContain("operator_lookup_draft");
+    expect(p).toContain("operator_lookup_thread_queue");
+    expect(p).toContain("operator_lookup_escalation");
+    expect(p).toContain("operator_lookup_offer_builder");
+    expect(p).toContain("operator_lookup_invoice_setup");
     expect(p).toMatch(/read-only lookup tools|Read-only lookup tools/i);
     expect(p).toMatch(/Project CRM|resolver vs detail|Slice 3/);
     expect(p).toMatch(/never more than three|more than three/i);
@@ -343,6 +388,32 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/\*\*Operator queue \/ Today \(read-only — Slice 3 refinement\):\*\*/);
     expect(p).toContain("operator_queue");
     expect(p).toMatch(/Snapshot-derived|Zen tab totals/i);
+  });
+
+  it("draft inspection — operator_lookup_draft + evidence vs inference in system prompt", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Draft inspection \(read-only/);
+    expect(p).toContain("operator_lookup_draft");
+    expect(p).toMatch(/instruction_history|provenance/);
+    expect(p).toMatch(/Inference|inference/);
+    expect(p).toMatch(/source_action_key/);
+  });
+
+  it("review queue explanation — operator_lookup_thread_queue + grounded vs derived hints in system prompt", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Review queue explanation \(read-only/);
+    expect(p).toContain("operator_lookup_thread_queue");
+    expect(p).toContain("derivedInboxBucket");
+    expect(p).toContain("zenTabHints");
+    expect(p).toMatch(/escalation_requests/);
+  });
+
+  it("escalation inspection — operator_lookup_escalation + evidence in system prompt", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Escalation inspection \(read-only/);
+    expect(p).toContain("operator_lookup_escalation");
+    expect(p).toMatch(/question_body|decision_justification/);
+    expect(p).toMatch(/playbook_rules|playbookRule/);
   });
 });
 

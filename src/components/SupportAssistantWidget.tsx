@@ -29,13 +29,25 @@ import {
   caseExceptionProposalKey,
   isProposalKeyConsumed,
   memoryProposalKey,
+  invoiceSetupChangeProposalKey,
+  offerBuilderChangeProposalKey,
   ruleProposalKey,
+  studioProfileChangeProposalKey,
   taskProposalKey,
 } from "../lib/operatorAnaProposalConsumedState.ts";
+import { buildInvoiceSetupChangeProposalV1ForConfirm } from "../lib/operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
+import { buildOfferBuilderChangeProposalV1ForConfirm } from "../lib/operatorAssistantOfferBuilderChangeProposalFromLlm.ts";
+import { buildStudioProfileChangeProposalV1ForConfirm } from "../lib/operatorAssistantStudioProfileChangeProposalFromLlm.ts";
+import { insertInvoiceSetupChangeProposal } from "../lib/insertInvoiceSetupChangeProposal.ts";
+import { insertOfferBuilderChangeProposal } from "../lib/insertOfferBuilderChangeProposal.ts";
+import { insertStudioProfileChangeProposal } from "../lib/insertStudioProfileChangeProposal.ts";
 import type {
   OperatorAssistantProposedActionAuthorizedCaseException,
+  OperatorAssistantProposedActionInvoiceSetupChangeProposal,
   OperatorAssistantProposedActionMemoryNote,
+  OperatorAssistantProposedActionOfferBuilderChangeProposal,
   OperatorAssistantProposedActionPlaybookRuleCandidate,
+  OperatorAssistantProposedActionStudioProfileChangeProposal,
   OperatorAssistantProposedActionTask,
 } from "../types/operatorAssistantProposedAction.types.ts";
 import type { OperatorAnaCarryForwardClientState } from "../types/operatorAnaCarryForward.types.ts";
@@ -117,6 +129,66 @@ export function openAnaWithQuery(query: string) {
 }
 
 type PanelDir = { v: "above" | "below"; h: "alignRight" | "alignLeft" };
+
+/** One-line summary of override payload for the confirm card (matches server validation). */
+function studioProfileChangeProposalSummaryLine(p: OperatorAssistantProposedActionStudioProfileChangeProposal): string {
+  const parts: string[] = [];
+  if (p.settings_patch && Object.keys(p.settings_patch).length > 0) {
+    parts.push(`Settings keys: ${Object.keys(p.settings_patch).join(", ")}`);
+  }
+  if (p.studio_business_profile_patch && Object.keys(p.studio_business_profile_patch).length > 0) {
+    parts.push(`Business profile keys: ${Object.keys(p.studio_business_profile_patch).join(", ")}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "Studio profile change (bounded patch)";
+}
+
+function offerBuilderChangeProposalSummaryLine(p: OperatorAssistantProposedActionOfferBuilderChangeProposal): string {
+  const parts: string[] = [];
+  if (p.metadata_patch.name != null && p.metadata_patch.name.trim()) {
+    parts.push(`Name (hub): ${p.metadata_patch.name.trim()}`);
+  }
+  if (p.metadata_patch.root_title != null && p.metadata_patch.root_title.trim()) {
+    parts.push(`Document title: ${p.metadata_patch.root_title.trim()}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "Offer metadata change (bounded)";
+}
+
+function invoiceSetupChangeProposalSummaryLine(p: OperatorAssistantProposedActionInvoiceSetupChangeProposal): string {
+  const t = p.template_patch;
+  const parts: string[] = [];
+  if (t.legalName != null && t.legalName.trim()) parts.push(`Legal name: ${t.legalName.trim()}`);
+  if (t.invoicePrefix != null && t.invoicePrefix.trim()) parts.push(`Prefix: ${t.invoicePrefix.trim()}`);
+  if (t.paymentTerms != null && t.paymentTerms.trim()) {
+    const pt = t.paymentTerms.trim();
+    parts.push(`Payment terms: ${pt.slice(0, 80)}${pt.length > 80 ? "…" : ""}`);
+  }
+  if (t.accentColor != null) parts.push(`Accent: ${t.accentColor}`);
+  if (t.footerNote !== undefined) {
+    const fn = t.footerNote;
+    parts.push(
+      fn.trim().length === 0
+        ? "Footer: (clear)"
+        : `Footer: ${fn.trim().slice(0, 80)}${fn.length > 80 ? "…" : ""}`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : "Invoice template change (bounded)";
+}
+
+function caseExceptionOverrideSummaryLine(p: OperatorAssistantProposedActionAuthorizedCaseException): string {
+  const o = p.overridePayload;
+  const parts: string[] = [];
+  if (o.decision_mode) parts.push(`Decision: ${o.decision_mode}`);
+  if (o.instruction_append && o.instruction_append.trim()) {
+    const t = o.instruction_append.trim();
+    parts.push(t.length > 140 ? `Append: ${t.slice(0, 137)}…` : `Append: ${t}`);
+  }
+  if ("instruction_override" in o) {
+    parts.push(
+      o.instruction_override === null ? "Instruction override: cleared" : "Instruction override: set",
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : "Policy override (details in row on save)";
+}
 
 export function SupportAssistantWidget() {
   const { pathname } = useLocation();
@@ -266,6 +338,7 @@ export function SupportAssistantWidget() {
           summary: p.summary,
           fullContent: p.fullContent,
           weddingId: p.weddingId ?? null,
+          personId: p.personId ?? null,
         },
       });
       if (error) {
@@ -278,6 +351,105 @@ export function SupportAssistantWidget() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       alert(`Could not save memory: ${msg}`);
+    } finally {
+      setConfirmingProposalKey(null);
+    }
+  }
+
+  async function confirmStudioProfileChangeProposal(
+    assistantMessageId: string,
+    p: OperatorAssistantProposedActionStudioProfileChangeProposal,
+  ) {
+    const key = studioProfileChangeProposalKey(p);
+    if (confirmingProposalKey || isProposalKeyConsumed(consumedProposalKeysByMessageId, assistantMessageId, key)) {
+      return;
+    }
+    setConfirmingProposalKey(key);
+    try {
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userData.user?.id) {
+        throw new Error("Not signed in");
+      }
+      const payload = buildStudioProfileChangeProposalV1ForConfirm(p);
+      const { id, error } = await insertStudioProfileChangeProposal(supabase, userData.user.id, payload);
+      if (error) {
+        throw new Error(error);
+      }
+      setConsumedProposalKeysByMessageId((prev) => addConsumedProposalKey(prev, assistantMessageId, key));
+      alert(
+        id
+          ? `Proposal queued for review. Open Projects → Workspace → Studio profile (review) to inspect. Row id: ${id}`
+          : "Proposal queued for review.",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Could not enqueue proposal: ${msg}`);
+    } finally {
+      setConfirmingProposalKey(null);
+    }
+  }
+
+  async function confirmOfferBuilderChangeProposal(
+    assistantMessageId: string,
+    p: OperatorAssistantProposedActionOfferBuilderChangeProposal,
+  ) {
+    const key = offerBuilderChangeProposalKey(p);
+    if (confirmingProposalKey || isProposalKeyConsumed(consumedProposalKeysByMessageId, assistantMessageId, key)) {
+      return;
+    }
+    setConfirmingProposalKey(key);
+    try {
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userData.user?.id) {
+        throw new Error("Not signed in");
+      }
+      const payload = buildOfferBuilderChangeProposalV1ForConfirm(p);
+      const { id, error } = await insertOfferBuilderChangeProposal(supabase, userData.user.id, payload);
+      if (error) {
+        throw new Error(error);
+      }
+      setConsumedProposalKeysByMessageId((prev) => addConsumedProposalKey(prev, assistantMessageId, key));
+      alert(
+        id
+          ? `Offer change proposal queued for review (project ${p.project_id}). Row id: ${id} — apply from Offer builder when that flow ships.`
+          : "Offer change proposal queued for review.",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Could not enqueue offer proposal: ${msg}`);
+    } finally {
+      setConfirmingProposalKey(null);
+    }
+  }
+
+  async function confirmInvoiceSetupChangeProposal(
+    assistantMessageId: string,
+    p: OperatorAssistantProposedActionInvoiceSetupChangeProposal,
+  ) {
+    const key = invoiceSetupChangeProposalKey(p);
+    if (confirmingProposalKey || isProposalKeyConsumed(consumedProposalKeysByMessageId, assistantMessageId, key)) {
+      return;
+    }
+    setConfirmingProposalKey(key);
+    try {
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userData.user?.id) {
+        throw new Error("Not signed in");
+      }
+      const payload = buildInvoiceSetupChangeProposalV1ForConfirm(p);
+      const { id, error } = await insertInvoiceSetupChangeProposal(supabase, userData.user.id, payload);
+      if (error) {
+        throw new Error(error);
+      }
+      setConsumedProposalKeysByMessageId((prev) => addConsumedProposalKey(prev, assistantMessageId, key));
+      alert(
+        id
+          ? `Invoice setup proposal queued for review. Row id: ${id} — live apply is not from this chat.`
+          : "Invoice setup proposal queued for review.",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      alert(`Could not enqueue invoice proposal: ${msg}`);
     } finally {
       setConfirmingProposalKey(null);
     }
@@ -887,7 +1059,11 @@ export function SupportAssistantWidget() {
                                   </p>
                                   <p className="mt-1 font-['SaansMono',ui-monospace,monospace] text-[9px] text-white/50">
                                     {p.memoryScope}
-                                    {p.weddingId ? ` · ${p.weddingId}` : ""}
+                                    {p.weddingId ? ` · wedding ${p.weddingId}` : ""}
+                                    {p.personId ? ` · person ${p.personId}` : ""}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/50">
+                                    Not saved until you confirm — adds a studio/project/person memory you can use in future context.
                                   </p>
                                   {consumed && (
                                     <p className="mt-1.5 font-['Saans',ui-sans-serif] text-[10px] text-emerald-200/90">Memory saved.</p>
@@ -898,7 +1074,7 @@ export function SupportAssistantWidget() {
                                     onClick={() => void confirmMemoryNoteProposal(m.id, p)}
                                     className="mt-2 rounded border border-violet-400/40 bg-violet-500/20 px-2 py-1 font-['Saans',ui-sans-serif] text-[10px] text-violet-100 hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    {consumed ? "Saved" : busy ? "Saving…" : "Save memory"}
+                                    {consumed ? "Saved" : busy ? "Saving…" : "Save memory (confirm)"}
                                   </button>
                                 </li>
                               );
@@ -925,9 +1101,21 @@ export function SupportAssistantWidget() {
                                   <p className="mt-0.5 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/65">
                                     One-off override for this project (not a global playbook change).
                                   </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-fuchsia-100/90">
+                                    {caseExceptionOverrideSummaryLine(p)}
+                                  </p>
+                                  {p.notes && (
+                                    <p className="mt-1 line-clamp-3 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/60">
+                                      Note: {p.notes}
+                                    </p>
+                                  )}
                                   <p className="mt-1 font-['SaansMono',ui-monospace,monospace] text-[9px] text-white/50">
                                     wedding {p.weddingId}
                                     {p.clientThreadId ? ` · thread ${p.clientThreadId}` : ""}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/50">
+                                    Not saved until you confirm — inserts one authorized_case_exceptions row for this
+                                    project only (no global playbook edit).
                                   </p>
                                   {consumed && (
                                     <p className="mt-1.5 font-['Saans',ui-sans-serif] text-[10px] text-emerald-200/90">
@@ -940,7 +1128,136 @@ export function SupportAssistantWidget() {
                                     onClick={() => void confirmAuthorizedCaseExceptionProposal(m.id, p)}
                                     className="mt-2 rounded border border-fuchsia-400/40 bg-fuchsia-500/20 px-2 py-1 font-['Saans',ui-sans-serif] text-[10px] text-fuchsia-100 hover:bg-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    {consumed ? "Saved" : busy ? "Saving…" : "Save case exception"}
+                                    {consumed ? "Saved" : busy ? "Saving…" : "Save case exception (confirm)"}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                        {m.display.studioProfileChangeProposals.length > 0 && (
+                          <ul className="mt-2 space-y-2">
+                            {m.display.studioProfileChangeProposals.map((p) => {
+                              const pk = studioProfileChangeProposalKey(p);
+                              const busy = confirmingProposalKey === pk;
+                              const consumed = isProposalKeyConsumed(consumedProposalKeysByMessageId, m.id, pk);
+                              return (
+                                <li
+                                  key={pk}
+                                  className="rounded-md border border-teal-400/30 bg-teal-500/[0.08] px-2.5 py-2 text-left"
+                                >
+                                  <p className="font-['Saans',ui-sans-serif] text-[10px] font-semibold uppercase tracking-wide text-teal-200/90">
+                                    Proposed studio profile change
+                                  </p>
+                                  <p className="mt-1 line-clamp-4 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/80">
+                                    {p.rationale}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-teal-100/90">
+                                    {studioProfileChangeProposalSummaryLine(p)}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/50">
+                                    Queues a review row only — does not change live profile or settings until a future
+                                    apply step. Nothing is saved until you confirm below.
+                                  </p>
+                                  {consumed && (
+                                    <p className="mt-1.5 font-['Saans',ui-sans-serif] text-[10px] text-emerald-200/90">
+                                      Enqueued for review.
+                                    </p>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={busy || consumed}
+                                    onClick={() => void confirmStudioProfileChangeProposal(m.id, p)}
+                                    className="mt-2 rounded border border-teal-400/40 bg-teal-600/25 px-2 py-1 font-['Saans',ui-sans-serif] text-[10px] text-teal-100 hover:bg-teal-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {consumed ? "Enqueued" : busy ? "Enqueueing…" : "Enqueue for review (confirm)"}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                        {m.display.offerBuilderChangeProposals.length > 0 && (
+                          <ul className="mt-2 space-y-2">
+                            {m.display.offerBuilderChangeProposals.map((p) => {
+                              const pk = offerBuilderChangeProposalKey(p);
+                              const busy = confirmingProposalKey === pk;
+                              const consumed = isProposalKeyConsumed(consumedProposalKeysByMessageId, m.id, pk);
+                              return (
+                                <li
+                                  key={pk}
+                                  className="rounded-md border border-amber-400/30 bg-amber-500/[0.08] px-2.5 py-2 text-left"
+                                >
+                                  <p className="font-['Saans',ui-sans-serif] text-[10px] font-semibold uppercase tracking-wide text-amber-200/90">
+                                    Proposed offer document change
+                                  </p>
+                                  <p className="mt-1 line-clamp-4 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/80">
+                                    {p.rationale}
+                                  </p>
+                                  <p className="mt-1 font-['SaansMono',ui-monospace,monospace] text-[9px] text-white/55">
+                                    project {p.project_id}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-amber-100/90">
+                                    {offerBuilderChangeProposalSummaryLine(p)}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/50">
+                                    Name / title only (no layout or pricing blocks). Queues one review row — does not edit
+                                    the live offer until a future apply step. Nothing is saved until you confirm below.
+                                  </p>
+                                  {consumed && (
+                                    <p className="mt-1.5 font-['Saans',ui-sans-serif] text-[10px] text-emerald-200/90">
+                                      Enqueued for review.
+                                    </p>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={busy || consumed}
+                                    onClick={() => void confirmOfferBuilderChangeProposal(m.id, p)}
+                                    className="mt-2 rounded border border-amber-400/40 bg-amber-600/25 px-2 py-1 font-['Saans',ui-sans-serif] text-[10px] text-amber-100 hover:bg-amber-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {consumed ? "Enqueued" : busy ? "Enqueueing…" : "Enqueue for review (confirm)"}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                        {m.display.invoiceSetupChangeProposals.length > 0 && (
+                          <ul className="mt-2 space-y-2">
+                            {m.display.invoiceSetupChangeProposals.map((p) => {
+                              const pk = invoiceSetupChangeProposalKey(p);
+                              const busy = confirmingProposalKey === pk;
+                              const consumed = isProposalKeyConsumed(consumedProposalKeysByMessageId, m.id, pk);
+                              return (
+                                <li
+                                  key={pk}
+                                  className="rounded-md border border-sky-400/30 bg-sky-500/[0.08] px-2.5 py-2 text-left"
+                                >
+                                  <p className="font-['Saans',ui-sans-serif] text-[10px] font-semibold uppercase tracking-wide text-sky-200/90">
+                                    Proposed invoice template change
+                                  </p>
+                                  <p className="mt-1 line-clamp-4 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/80">
+                                    {p.rationale}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-sky-100/90">
+                                    {invoiceSetupChangeProposalSummaryLine(p)}
+                                  </p>
+                                  <p className="mt-1 font-['Saans',ui-sans-serif] text-[9px] leading-snug text-white/50">
+                                    Text / branding fields only (no logo data). Queues one review row — does not edit live
+                                    invoice template until a future apply step. Nothing is saved until you confirm below.
+                                  </p>
+                                  {consumed && (
+                                    <p className="mt-1.5 font-['Saans',ui-sans-serif] text-[10px] text-emerald-200/90">
+                                      Enqueued for review.
+                                    </p>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={busy || consumed}
+                                    onClick={() => void confirmInvoiceSetupChangeProposal(m.id, p)}
+                                    className="mt-2 rounded border border-sky-400/40 bg-sky-600/25 px-2 py-1 font-['Saans',ui-sans-serif] text-[10px] text-sky-100 hover:bg-sky-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {consumed ? "Enqueued" : busy ? "Enqueueing…" : "Enqueue for review (confirm)"}
                                   </button>
                                 </li>
                               );

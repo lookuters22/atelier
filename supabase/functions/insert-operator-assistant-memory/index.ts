@@ -1,6 +1,6 @@
 /**
  * JWT-authenticated: create a `memories` row from an operator-confirmed assistant memory_note proposal.
- * Scope `project` | `studio` only; satisfies `memories_scope_shape_check`.
+ * Scope `project` | `person` | `studio`; satisfies `memories_scope_shape_check`.
  */
 import { requirePhotographerIdFromJwt } from "../_shared/authPhotographer.ts";
 import { insertMemoryForOperatorAssistant } from "../_shared/operatorStudioAssistant/insertOperatorAssistantMemoryCore.ts";
@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     if (msg === "Unauthorized" || msg.includes("Missing or invalid Authorization")) {
       return json({ error: "Unauthorized" }, 401);
     }
-    if (msg.includes("wedding not found")) {
+    if (msg.includes("wedding not found") || msg.includes("person not found")) {
       return json({ error: msg }, 404);
     }
     console.error(JSON.stringify({ type: "insert_operator_assistant_memory_failed", message: msg }));

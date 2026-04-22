@@ -5,6 +5,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      /** Match Vite `vite.config` — some `src/lib` files use `@/…` imports in Vitest. */
+      "@": path.resolve(__dirname, "./src"),
       "npm:@supabase/supabase-js@2": path.resolve(
         "node_modules/@supabase/supabase-js",
       ),

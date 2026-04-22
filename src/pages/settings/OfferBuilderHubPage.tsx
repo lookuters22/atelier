@@ -2,7 +2,7 @@ import type { Data } from "@measured/puck";
 import Lenis from "lenis";
 import { ExternalLink, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   createOfferProject,
@@ -114,6 +114,14 @@ export function OfferBuilderHubPage() {
           <Plus className="h-4 w-4" strokeWidth={2} />
           Create new project
         </button>
+        {photographerId && (
+          <Link
+            to="/workspace/offer-builder/proposals"
+            className="text-[13px] text-primary underline underline-offset-2 hover:text-foreground/90"
+          >
+            Change proposals (review)
+          </Link>
+        )}
       </div>
 
       <section className="mt-10">

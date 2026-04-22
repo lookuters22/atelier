@@ -126,6 +126,29 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     }
   });
 
+  it("parses a person memory_note with personId", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "ok",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "person",
+            title: "Contact preference",
+            summary: "Email only",
+            fullContent: "Prefers email over phone",
+            personId: "44444444-4444-4444-4444-444444444444",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    if (o.proposedActions[0]!.kind === "memory_note") {
+      expect(o.proposedActions[0].memoryScope).toBe("person");
+      expect(o.proposedActions[0].personId).toBe("44444444-4444-4444-4444-444444444444");
+    }
+  });
+
   it("Slice 11: parses authorized_case_exception with wedding + override", () => {
     const o = parseOperatorStudioAssistantLlmResponse(
       JSON.stringify({
@@ -142,5 +165,71 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     );
     expect(o.proposedActions).toHaveLength(1);
     expect(o.proposedActions[0]!.kind).toBe("authorized_case_exception");
+  });
+
+  it("Ana: parses studio_profile_change_proposal (bounded queue)", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "Queued for your review — confirm to save.",
+        proposedActions: [
+          {
+            kind: "studio_profile_change_proposal",
+            rationale: "Add Italy to service area via extensions.",
+            studio_business_profile_patch: {
+              extensions: { countries: ["IT", "SM"] },
+            },
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    expect(o.proposedActions[0]!.kind).toBe("studio_profile_change_proposal");
+    if (o.proposedActions[0]!.kind === "studio_profile_change_proposal") {
+      expect(o.proposedActions[0].rationale).toContain("Italy");
+      expect(o.proposedActions[0].studio_business_profile_patch?.extensions).toEqual({ countries: ["IT", "SM"] });
+    }
+  });
+
+  it("Ana: parses offer_builder_change_proposal (confirm-enqueue only)", () => {
+    const pid = "a0eebc99-9c0b-4ef8-8bb2-000000000001";
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "I can queue a new title for that offer document — confirm to save.",
+        proposedActions: [
+          {
+            kind: "offer_builder_change_proposal",
+            rationale: "Operator asked to retitle the document.",
+            project_id: pid,
+            metadata_patch: { root_title: "Destination Collection" },
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    expect(o.proposedActions[0]!.kind).toBe("offer_builder_change_proposal");
+    if (o.proposedActions[0]!.kind === "offer_builder_change_proposal") {
+      expect(o.proposedActions[0].project_id).toBe(pid);
+      expect(o.proposedActions[0].metadata_patch.root_title).toBe("Destination Collection");
+    }
+  });
+
+  it("Ana: parses invoice_setup_change_proposal (confirm-enqueue only)", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "I can queue new payment terms — confirm to save.",
+        proposedActions: [
+          {
+            kind: "invoice_setup_change_proposal",
+            rationale: "Operator asked for Net 14.",
+            template_patch: { paymentTerms: "Net 14 · Bank transfer" },
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    expect(o.proposedActions[0]!.kind).toBe("invoice_setup_change_proposal");
+    if (o.proposedActions[0]!.kind === "invoice_setup_change_proposal") {
+      expect(o.proposedActions[0].template_patch.paymentTerms).toBe("Net 14 · Bank transfer");
+    }
   });
 });

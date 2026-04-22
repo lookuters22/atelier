@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
   type AssistantFocusedProjectFacts,
@@ -9,6 +11,8 @@ import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAs
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
 import {
   formatAssistantContextForOperatorLlm,
+  formatStudioInvoiceSetupForOperatorLlm,
+  formatStudioOfferBuilderForOperatorLlm,
   formatStudioProfileForOperatorLlm,
 } from "./formatAssistantContextForOperatorLlm.ts";
 import {
@@ -48,6 +52,8 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_STATE,
     studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+    studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+    studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
@@ -103,6 +109,114 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
 }
 
 describe("formatAssistantContextForOperatorLlm", () => {
+  it("includes empty Offer projects block with honesty about missing rows", () => {
+    const s = formatAssistantContextForOperatorLlm(minimalCtx());
+    expect(s).toContain("## Offer projects (grounded");
+    expect(s).toMatch(/no offer-builder projects|No rows returned/i);
+  });
+
+  it("includes Invoice setup block without raw logo data", () => {
+    const s = formatAssistantContextForOperatorLlm(minimalCtx());
+    expect(s).toContain("## Invoice setup (grounded");
+    expect(s).toMatch(/No row in this read|studio_invoice_setup/i);
+    expect(s).not.toMatch(/data:image\//);
+  });
+
+  it("renders invoice template fields and logo summary when a row is present", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        studioInvoiceSetup: {
+          hasRow: true,
+          updatedAt: "2026-05-01T12:00:00.000Z",
+          legalName: "Test Studio LLC",
+          invoicePrefix: "INV",
+          paymentTerms: "Net 30",
+          accentColor: "#112233",
+          footerNote: "Thanks.",
+          footerNoteTruncated: false,
+          logo: {
+            hasLogo: true,
+            mimeType: "image/png",
+            approxDataUrlChars: 1200,
+            note: "Summary only.",
+          },
+          note: "N",
+        },
+      }),
+    );
+    expect(s).toContain("Test Studio LLC");
+    expect(s).toContain("INV");
+    expect(s).toContain("Net 30");
+    expect(s).toContain("#112233");
+    expect(s).toContain("approxDataUrlChars");
+    expect(s).not.toContain("data:image/png;base64");
+  });
+
+  it("formatStudioInvoiceSetupForOperatorLlm never includes raw data URLs", () => {
+    const block = formatStudioInvoiceSetupForOperatorLlm({
+      hasRow: true,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      legalName: "L",
+      invoicePrefix: "P",
+      paymentTerms: "T",
+      accentColor: "#000",
+      footerNote: "ok",
+      footerNoteTruncated: false,
+      logo: {
+        hasLogo: true,
+        mimeType: "image/png",
+        approxDataUrlChars: 50_000,
+        note: "Logo stored; bytes not in prompt.",
+      },
+      note: "ctx",
+    });
+    expect(block).not.toMatch(/data:image\//);
+    expect(block).toContain("50000");
+  });
+
+  it("includes offer project rows with ids, updated_at, and derived compactSummary", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        studioOfferBuilder: {
+          projects: [
+            {
+              id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+              displayName: "Premium",
+              updatedAt: "2026-04-20T10:00:00.000Z",
+              compactSummary: "Document title: “Lux”. Blocks (1): PricingTier×1.",
+            },
+          ],
+          totalListed: 1,
+          truncated: false,
+          note: "Test note for model.",
+        },
+      }),
+    );
+    expect(s).toContain("## Offer projects (grounded");
+    expect(s).toContain("Premium");
+    expect(s).toContain("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    expect(s).toContain("2026-04-20T10:00:00.000Z");
+    expect(s).toContain("compactSummary (derived)");
+    expect(s).toContain("Test note for model.");
+  });
+
+  it("formatStudioOfferBuilderForOperatorLlm marks factual vs derived", () => {
+    const md = formatStudioOfferBuilderForOperatorLlm({
+      projects: [
+        {
+          id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          displayName: "X",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          compactSummary: "Outline only.",
+        },
+      ],
+      totalListed: 1,
+      truncated: false,
+      note: "N",
+    });
+    expect(md).toMatch(/Factual \(database\)|derived\)/i);
+  });
+
   it("omits full app catalog JSON for non-app-help queries (deterministic gate)", () => {
     const s = formatAssistantContextForOperatorLlm(minimalCtx());
     expect(s).not.toContain("## Matched entities / likely project matches");

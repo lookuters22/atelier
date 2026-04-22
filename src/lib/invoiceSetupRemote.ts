@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, Json } from "@/types/database.types";
+import type { Database, Json } from "../types/database.types.ts";
 import {
   parseInvoiceTemplateJson,
   toPersistedTemplate,
   type InvoiceSetupState,
-} from "./invoiceSetupTypes";
+} from "./invoiceSetupTypes.ts";
 
 export type InvoiceSetupRow = {
   template: InvoiceSetupState;

@@ -69,6 +69,8 @@ import {
   tryParseClientCarryForward,
 } from "../operatorStudioAssistant/operatorAssistantCarryForward.ts";
 import { fetchAssistantStudioBusinessProfile } from "./fetchAssistantStudioBusinessProfile.ts";
+import { fetchAssistantStudioOfferBuilderRead } from "./fetchAssistantStudioOfferBuilderRead.ts";
+import { fetchAssistantStudioInvoiceSetupRead } from "./fetchAssistantStudioInvoiceSetupRead.ts";
 
 function normalizeOptionalUuid(id: string | null | undefined): string | null {
   if (id == null) return null;
@@ -153,6 +155,8 @@ export async function buildAssistantContext(
 
   const scopesQueried: AssistantRetrievalLog["scopesQueried"] = [
     "studio_profile",
+    "offer_builder",
+    "invoice_setup",
     "playbook",
     "studio_memory",
     "knowledge_base",
@@ -180,6 +184,8 @@ export async function buildAssistantContext(
 
   const [
     studioProfile,
+    studioOfferBuilder,
+    studioInvoiceSetup,
     rawPlaybookRules,
     authorizedCaseExceptions,
     memoryHeaders,
@@ -190,6 +196,8 @@ export async function buildAssistantContext(
     entityIndex,
   ] = await Promise.all([
     fetchAssistantStudioBusinessProfile(supabase, tenantPhotographerId),
+    fetchAssistantStudioOfferBuilderRead(supabase, tenantPhotographerId),
+    fetchAssistantStudioInvoiceSetupRead(supabase, tenantPhotographerId),
     fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
     fetchAuthorizedCaseExceptionsForDecisionContext(
       supabase,
@@ -406,6 +414,13 @@ export async function buildAssistantContext(
       uniqueActionKeyCount: playbookCoverageSummary.uniqueActionKeys.length,
     },
     studioBusinessProfileRowPresent: studioProfile.hasBusinessProfileRow,
+    offerBuilder: {
+      projectCount: studioOfferBuilder.projects.length,
+      listTruncated: studioOfferBuilder.truncated,
+    },
+    invoiceSetup: {
+      hasRow: studioInvoiceSetup.hasRow,
+    },
   };
 
   console.log(
@@ -443,6 +458,8 @@ export async function buildAssistantContext(
     focusedProjectRowHints: focusedProjectSummaryAndHints?.rowHints ?? null,
     operatorStateSummary,
     studioProfile,
+    studioOfferBuilder,
+    studioInvoiceSetup,
     appCatalog,
     includeAppCatalogInOperatorPrompt,
     studioAnalysisSnapshot: studioAnalysisSnapshot,

@@ -14,11 +14,22 @@ const OfferBuilderHubPage = lazy(() =>
 const OfferBuilderEditorPage = lazy(() =>
   import("./pages/settings/OfferBuilderEditorPage").then((m) => ({ default: m.OfferBuilderEditorPage })),
 );
+const OfferBuilderProposalsReviewPage = lazy(() =>
+  import("./pages/workspace/OfferBuilderProposalsReviewPage").then((m) => ({ default: m.OfferBuilderProposalsReviewPage })),
+);
 const InvoiceSetupPage = lazy(() =>
   import("./pages/settings/InvoiceSetupPage").then((m) => ({ default: m.InvoiceSetupPage })),
 );
+const InvoiceSetupProposalsReviewPage = lazy(() =>
+  import("./pages/workspace/InvoiceSetupProposalsReviewPage").then((m) => ({
+    default: m.InvoiceSetupProposalsReviewPage,
+  })),
+);
 const PlaybookRuleCandidatesPage = lazy(() =>
   import("./pages/workspace/PlaybookRuleCandidatesPage").then((m) => ({ default: m.PlaybookRuleCandidatesPage })),
+);
+const StudioProfileReviewPage = lazy(() =>
+  import("./pages/workspace/StudioProfileReviewPage").then((m) => ({ default: m.StudioProfileReviewPage })),
 );
 const LandingPage = lazy(() =>
   import("./pages/LandingPage/LandingPage").then((m) => ({ default: m.LandingPage })),
@@ -112,6 +123,14 @@ export default function App() {
           }
         />
         <Route
+          path="workspace/studio-profile-review"
+          element={
+            <Suspense fallback={<LazyFallback />}>
+              <StudioProfileReviewPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="workspace/invoices"
           element={
             <Suspense fallback={<LazyFallback />}>
@@ -120,10 +139,26 @@ export default function App() {
           }
         />
         <Route
+          path="workspace/invoice-setup/proposals"
+          element={
+            <Suspense fallback={<LazyFallback />}>
+              <InvoiceSetupProposalsReviewPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="workspace/offer-builder"
           element={
             <Suspense fallback={<LazyFallback />}>
               <OfferBuilderHubPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="workspace/offer-builder/proposals"
+          element={
+            <Suspense fallback={<LazyFallback />}>
+              <OfferBuilderProposalsReviewPage />
             </Suspense>
           }
         />

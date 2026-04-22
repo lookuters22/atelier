@@ -16,7 +16,8 @@ export type WorkspaceIndex =
   | "pricing-calculator"
   | "offer-builder"
   | "invoice-pdf"
-  | "playbook-rule-candidates";
+  | "playbook-rule-candidates"
+  | "studio-profile-review";
 
 export type SelectedRow =
   | { kind: "financial"; data: FinancialsOverviewRow }
@@ -75,6 +76,7 @@ export function WorkspaceModeProvider({ children }: { children: ReactNode }) {
       "offer-builder": 0,
       "invoice-pdf": 0,
       "playbook-rule-candidates": 0,
+      "studio-profile-review": 0,
     }),
     [allFinancials, transactions],
   );

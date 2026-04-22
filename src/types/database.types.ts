@@ -1724,6 +1724,121 @@ export type Database = {
           },
         ]
       }
+      studio_profile_change_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          photographer_id: string
+          proposal_payload: Json
+          review_status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          photographer_id: string
+          proposal_payload: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          photographer_id?: string
+          proposal_payload?: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "studio_profile_change_proposals_photographer_id_fkey"
+            columns: ["photographer_id"]
+            isOneToOne: false
+            referencedRelation: "photographers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoice_setup_change_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          photographer_id: string
+          proposal_payload: Json
+          review_status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          photographer_id: string
+          proposal_payload: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          photographer_id?: string
+          proposal_payload?: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_setup_change_proposals_photographer_id_fkey"
+            columns: ["photographer_id"]
+            isOneToOne: false
+            referencedRelation: "photographers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      offer_builder_change_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          photographer_id: string
+          project_id: string
+          proposal_payload: Json
+          review_status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          photographer_id: string
+          project_id: string
+          proposal_payload: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          photographer_id?: string
+          project_id?: string
+          proposal_payload?: Json
+          review_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "offer_builder_change_proposals_photographer_id_fkey"
+            columns: ["photographer_id"]
+            isOneToOne: false
+            referencedRelation: "photographers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "offer_builder_change_proposals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "studio_offer_builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       studio_offer_builder_projects: {
         Row: {
           created_at: string
@@ -2717,6 +2832,30 @@ export type Database = {
           p_superseded_by_candidate_id?: string
         }
         Returns: Json
+      }
+      apply_studio_profile_change_proposal_v1: {
+        Args: { p_proposal_id: string }
+        Returns: undefined
+      }
+      review_studio_profile_change_proposal: {
+        Args: { p_proposal_id: string; p_next_status: "rejected" | "withdrawn" }
+        Returns: undefined
+      }
+      review_offer_builder_change_proposal: {
+        Args: { p_proposal_id: string; p_next_status: "rejected" | "withdrawn" }
+        Returns: undefined
+      }
+      review_invoice_setup_change_proposal: {
+        Args: { p_proposal_id: string; p_next_status: "rejected" | "withdrawn" }
+        Returns: undefined
+      }
+      apply_offer_builder_change_proposal_v1: {
+        Args: { p_proposal_id: string }
+        Returns: undefined
+      }
+      apply_invoice_setup_change_proposal_v1: {
+        Args: { p_proposal_id: string }
+        Returns: undefined
       }
       validate_studio_base_location_shape: {
         Args: { p_value: Json }

@@ -18,6 +18,9 @@ function answerDisplay(mainText: string): OperatorStudioAssistantAssistantDispla
     taskProposals: [],
     memoryNoteProposals: [],
     authorizedCaseExceptionProposals: [],
+    studioProfileChangeProposals: [],
+    offerBuilderChangeProposals: [],
+    invoiceSetupChangeProposals: [],
   };
 }
 

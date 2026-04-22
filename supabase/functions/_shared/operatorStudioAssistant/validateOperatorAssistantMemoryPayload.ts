@@ -1,5 +1,5 @@
 /**
- * Validation for memory_note proposals + confirm path (Slice 8). `project` | `studio` only.
+ * Validation for memory_note proposals + confirm path. `project` | `person` | `studio` — CHECK-safe.
  */
 import type {
   InsertOperatorAssistantMemoryBody,
@@ -22,6 +22,13 @@ function trimToMax(v: unknown, max: number): string | null {
   return t.length > max ? t.slice(0, max) : t;
 }
 
+function parseOptionalUuid(o: Record<string, unknown>, key: string): string | null {
+  const v = o[key];
+  if (v == null) return null;
+  if (typeof v !== "string" || v.trim().length === 0) return null;
+  return v.trim();
+}
+
 export function validateOperatorAssistantMemoryPayload(
   raw: unknown,
 ):
@@ -32,8 +39,8 @@ export function validateOperatorAssistantMemoryPayload(
   }
   const o = raw as Record<string, unknown>;
   const ms = o.memoryScope;
-  if (ms !== "project" && ms !== "studio") {
-    return { ok: false, error: "memoryScope must be project or studio" };
+  if (ms !== "project" && ms !== "studio" && ms !== "person") {
+    return { ok: false, error: "memoryScope must be project, studio, or person" };
   }
 
   const title = trimToMax(o.title, MAX_TITLE);
@@ -48,18 +55,18 @@ export function validateOperatorAssistantMemoryPayload(
   const summaryRaw = trimToMax(o.summary, MAX_SUMMARY);
   const summary = summaryRaw ?? (long.length > MAX_SUMMARY ? long.slice(0, MAX_SUMMARY) : long);
 
-  let weddingId: string | null = null;
-  if (o.weddingId != null) {
-    if (typeof o.weddingId !== "string" || o.weddingId.trim().length === 0) {
-      return { ok: false, error: "weddingId must be a non-empty string when set" };
-    }
-    weddingId = o.weddingId.trim();
-  }
+  const weddingId = parseOptionalUuid(o, "weddingId");
+  const personId = parseOptionalUuid(o, "personId");
 
   if (ms === "project") {
     if (!weddingId) return { ok: false, error: "weddingId is required for project memory" };
+    if (personId) return { ok: false, error: "personId must be omitted for project memory" };
+  } else if (ms === "person") {
+    if (!personId) return { ok: false, error: "personId is required for person memory" };
+    if (weddingId) return { ok: false, error: "weddingId must be omitted for person memory" };
   } else {
     if (weddingId) return { ok: false, error: "weddingId must be omitted for studio memory" };
+    if (personId) return { ok: false, error: "personId must be omitted for studio memory" };
   }
 
   return {
@@ -70,6 +77,7 @@ export function validateOperatorAssistantMemoryPayload(
       summary,
       fullContent: long,
       weddingId: ms === "project" ? weddingId : null,
+      personId: ms === "person" ? personId : null,
     },
   };
 }
@@ -84,8 +92,8 @@ export function tryParseLlmProposedMemoryNote(
   }
   const o = item as Record<string, unknown>;
   const ms = o.memoryScope;
-  if (ms !== "project" && ms !== "studio") {
-    return { ok: false, reason: "memoryScope must be project or studio" };
+  if (ms !== "project" && ms !== "studio" && ms !== "person") {
+    return { ok: false, reason: "memoryScope must be project, studio, or person" };
   }
 
   const title = trimToMax(o.title, MAX_TITLE);
@@ -102,18 +110,18 @@ export function tryParseLlmProposedMemoryNote(
     return { ok: false, reason: "summary or fullContent is required" };
   }
 
-  let weddingId: string | null = null;
-  if (o.weddingId != null) {
-    if (typeof o.weddingId !== "string" || o.weddingId.trim().length === 0) {
-      return { ok: false, reason: "invalid weddingId" };
-    }
-    weddingId = o.weddingId.trim();
-  }
-  if (ms === "project" && !weddingId) {
-    return { ok: false, reason: "weddingId required for project memory" };
-  }
-  if (ms === "studio" && weddingId) {
-    return { ok: false, reason: "weddingId must be omitted for studio memory" };
+  const weddingId = parseOptionalUuid(o, "weddingId");
+  const personId = parseOptionalUuid(o, "personId");
+
+  if (ms === "project") {
+    if (!weddingId) return { ok: false, reason: "weddingId required for project memory" };
+    if (personId) return { ok: false, reason: "personId must be omitted for project memory" };
+  } else if (ms === "person") {
+    if (!personId) return { ok: false, reason: "personId required for person memory" };
+    if (weddingId) return { ok: false, reason: "weddingId must be omitted for person memory" };
+  } else {
+    if (weddingId) return { ok: false, reason: "weddingId must be omitted for studio memory" };
+    if (personId) return { ok: false, reason: "personId must be omitted for studio memory" };
   }
 
   return {
@@ -125,6 +133,7 @@ export function tryParseLlmProposedMemoryNote(
       summary: summary.length > MAX_SUMMARY ? summary.slice(0, MAX_SUMMARY) : summary,
       fullContent: fullContent.length > MAX_FULL ? fullContent.slice(0, MAX_FULL) : fullContent,
       weddingId: ms === "project" ? weddingId : null,
+      personId: ms === "person" ? personId : null,
     },
   };
 }

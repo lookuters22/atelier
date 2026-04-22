@@ -4,12 +4,18 @@
  */
 import type { AuthorizedCaseExceptionOverridePayload } from "../types/decisionContext.types.ts";
 import { defaultOperatorAssistantTaskDueDateUtcToday } from "./operatorAssistantTaskDueDate.ts";
+import { normalizeOfferBuilderChangeProposalsForWidget } from "./operatorAssistantOfferBuilderChangeProposalFromLlm.ts";
+import { normalizeStudioProfileChangeProposalsForWidget } from "./operatorAssistantStudioProfileChangeProposalFromLlm.ts";
 import type {
   OperatorAssistantProposedActionAuthorizedCaseException,
+  OperatorAssistantProposedActionInvoiceSetupChangeProposal,
   OperatorAssistantProposedActionMemoryNote,
+  OperatorAssistantProposedActionOfferBuilderChangeProposal,
   OperatorAssistantProposedActionPlaybookRuleCandidate,
+  OperatorAssistantProposedActionStudioProfileChangeProposal,
   OperatorAssistantProposedActionTask,
 } from "../types/operatorAssistantProposedAction.types.ts";
+import { normalizeInvoiceSetupChangeProposalsForWidget } from "./operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
 
 export type OperatorStudioAssistantInvokePayload = {
   reply?: unknown;
@@ -37,10 +43,16 @@ export type OperatorStudioAssistantAssistantDisplay =
       playbookRuleProposals: OperatorAssistantProposedActionPlaybookRuleCandidate[];
       /** Slice 7 — task proposals; confirm inserts a `tasks` row (open). */
       taskProposals: OperatorAssistantProposedActionTask[];
-      /** Slice 8 — memory proposals; confirm inserts a `memories` row (project | studio). */
+      /** Memory proposals; confirm inserts a `memories` row (project | person | studio). */
       memoryNoteProposals: OperatorAssistantProposedActionMemoryNote[];
       /** Slice 11 — case-scoped policy exception; confirm inserts `authorized_case_exceptions` only. */
       authorizedCaseExceptionProposals: OperatorAssistantProposedActionAuthorizedCaseException[];
+      /** Studio capability / profile change — confirm enqueues `studio_profile_change_proposals` only; live apply is on Studio profile (review). */
+      studioProfileChangeProposals: OperatorAssistantProposedActionStudioProfileChangeProposal[];
+      /** Offer-builder metadata (name / document title) — confirm enqueues `offer_builder_change_proposals`; live apply is reviewed on proposals page (not the widget). */
+      offerBuilderChangeProposals: OperatorAssistantProposedActionOfferBuilderChangeProposal[];
+      /** Invoice PDF template (bounded fields) — confirm enqueues `invoice_setup_change_proposals` only; no live apply in widget. */
+      invoiceSetupChangeProposals: OperatorAssistantProposedActionInvoiceSetupChangeProposal[];
     };
 
 const OPERATOR_RIBBON_COPY =
@@ -77,6 +89,9 @@ export function buildOperatorStudioAssistantAssistantDisplay(
   const taskProposals = normalizeTaskProposals(payload.proposedActions);
   const memoryNoteProposals = normalizeMemoryNoteProposals(payload.proposedActions);
   const authorizedCaseExceptionProposals = normalizeAuthorizedCaseExceptionProposals(payload.proposedActions);
+  const studioProfileChangeProposals = normalizeStudioProfileChangeProposalsForWidget(payload.proposedActions);
+  const offerBuilderChangeProposals = normalizeOfferBuilderChangeProposalsForWidget(payload.proposedActions);
+  const invoiceSetupChangeProposals = normalizeInvoiceSetupChangeProposalsForWidget(payload.proposedActions);
 
   return {
     kind: "answer",
@@ -87,6 +102,9 @@ export function buildOperatorStudioAssistantAssistantDisplay(
     taskProposals,
     memoryNoteProposals,
     authorizedCaseExceptionProposals,
+    studioProfileChangeProposals,
+    offerBuilderChangeProposals,
+    invoiceSetupChangeProposals,
   };
 }
 
@@ -163,7 +181,7 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
   for (const x of raw) {
     if (!x || typeof x !== "object" || (x as { kind?: string }).kind !== "memory_note") continue;
     const o = x as Record<string, unknown>;
-    if (o.memoryScope !== "project" && o.memoryScope !== "studio") continue;
+    if (o.memoryScope !== "project" && o.memoryScope !== "studio" && o.memoryScope !== "person") continue;
     if (typeof o.title !== "string" || o.title.trim().length === 0) continue;
     const title = o.title.trim().slice(0, 120);
     const summ = typeof o.summary === "string" ? o.summary.trim() : "";
@@ -176,8 +194,15 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
     if (typeof o.weddingId === "string" && o.weddingId.trim().length > 0) {
       weddingId = o.weddingId.trim();
     }
+    let personId: string | null = null;
+    if (typeof o.personId === "string" && o.personId.trim().length > 0) {
+      personId = o.personId.trim();
+    }
     if (o.memoryScope === "project" && !weddingId) continue;
-    if (o.memoryScope === "studio" && weddingId) continue;
+    if (o.memoryScope === "project" && personId) continue;
+    if (o.memoryScope === "studio" && (weddingId || personId)) continue;
+    if (o.memoryScope === "person" && !personId) continue;
+    if (o.memoryScope === "person" && weddingId) continue;
     out.push({
       kind: "memory_note",
       memoryScope: o.memoryScope,
@@ -185,9 +210,17 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
       summary,
       fullContent,
       weddingId: o.memoryScope === "project" ? weddingId : null,
+      personId: o.memoryScope === "person" ? personId : null,
     });
   }
   return out;
+}
+
+const CASE_EXC_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isCaseExcScopeUuid(s: string): boolean {
+  return CASE_EXC_UUID_RE.test(s.trim());
 }
 
 function normalizeAuthorizedCaseExceptionProposals(
@@ -200,6 +233,7 @@ function normalizeAuthorizedCaseExceptionProposals(
     const o = x as Record<string, unknown>;
     if (typeof o.overridesActionKey !== "string" || !o.overridesActionKey.trim()) continue;
     if (typeof o.weddingId !== "string" || !o.weddingId.trim()) continue;
+    if (!isCaseExcScopeUuid(o.weddingId)) continue;
     if (!o.overridePayload || typeof o.overridePayload !== "object" || Array.isArray(o.overridePayload)) continue;
     const op = o.overridePayload as Record<string, unknown>;
     const hasMode =
@@ -217,11 +251,15 @@ function normalizeAuthorizedCaseExceptionProposals(
     }
     let clientThreadId: string | null = null;
     if (typeof o.clientThreadId === "string" && o.clientThreadId.trim().length > 0) {
-      clientThreadId = o.clientThreadId.trim();
+      const tid = o.clientThreadId.trim();
+      if (!isCaseExcScopeUuid(tid)) continue;
+      clientThreadId = tid;
     }
     let targetPlaybookRuleId: string | null = null;
     if (typeof o.targetPlaybookRuleId === "string" && o.targetPlaybookRuleId.trim().length > 0) {
-      targetPlaybookRuleId = o.targetPlaybookRuleId.trim();
+      const rid = o.targetPlaybookRuleId.trim();
+      if (!isCaseExcScopeUuid(rid)) continue;
+      targetPlaybookRuleId = rid;
     }
     let effectiveUntil: string | null = null;
     if (typeof o.effectiveUntil === "string" && o.effectiveUntil.trim().length > 0) {

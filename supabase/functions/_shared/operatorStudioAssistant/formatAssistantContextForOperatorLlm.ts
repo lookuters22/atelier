@@ -10,6 +10,8 @@ import type {
   AssistantPlaybookCoverageSummary,
   AssistantStudioProfile,
   AssistantStudioAnalysisSnapshot,
+  type AssistantStudioOfferBuilderRead,
+  type AssistantStudioInvoiceSetupRead,
 } from "../../../../src/types/assistantContext.types.ts";
 import { EMPTY_ASSISTANT_PLAYBOOK_COVERAGE_SUMMARY } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
 import { hasOperatorQueueStateIntent } from "../../../../src/lib/operatorAssistantOperatorStateIntent.ts";
@@ -34,13 +36,18 @@ const MAX_KB_CONTENT_CHARS = 500;
 const MAX_STORY_NOTES_CHARS = 400;
 const MAX_PACKAGE_INCLUSIONS_LISTED = 12;
 /** Catalog JSON includes procedural workflows; keep a ceiling in case the module grows. */
-const MAX_APP_CATALOG_JSON_CHARS = 20000;
+/** App catalog can exceed 20k UTF-8 bytes; clipping mid-JSON breaks parseability (Slice 5 anti-drift test). */
+const MAX_APP_CATALOG_JSON_CHARS = 28000;
 /** Studio analysis snapshot JSON — bounded for prompt budget. */
 const MAX_STUDIO_ANALYSIS_JSON_CHARS = 12000;
 const MAX_PLAYBOOK_COVERAGE_TOPIC_LIST_CHARS = 900;
 const MAX_PLAYBOOK_COVERAGE_KEY_LIST_CHARS = 900;
 const MAX_PLAYBOOK_COVERAGE_KEYWORD_LINE_CHARS = 2000;
 const MAX_PLAYBOOK_COVERAGE_TOPICS_IN_TABLE = 16;
+/** Whole Offer projects section in the operator user message (list + per-row outlines). */
+const MAX_STUDIO_OFFER_BUILDER_SECTION_CHARS = 14_000;
+const MAX_OFFER_PROJECT_COMPACT_SUMMARY_IN_PROMPT = 900;
+const MAX_STUDIO_INVOICE_SETUP_SECTION_CHARS = 4_000;
 
 export type FormatAssistantContextForOperatorLlmOptions = {
   /**
@@ -102,6 +109,70 @@ export function formatStudioProfileForOperatorLlm(sp: AssistantStudioProfile): s
     lines.push(studioProfileLine("Profile updated_at", c.updated_at));
   }
   return lines.join("\n");
+}
+
+/** Read-only: capped `studio_offer_builder_projects` list + Puck-derived outline text per row (no raw JSON). */
+export function formatStudioOfferBuilderForOperatorLlm(ob: AssistantStudioOfferBuilderRead): string {
+  const lines: string[] = [];
+  lines.push("## Offer projects (grounded — investment guide / Offer builder)");
+  lines.push(
+    "*(**Factual (database):** `id`, `name`, `updated_at` on each row. **Summarized (derived):** `compactSummary` is a **heuristic outline** from stored Puck `puck_data` — **not** a client PDF, live site, or guaranteed-complete package list. **Not** CRM **wedding** booking packages on a project — use **Focused project** + **operator_lookup_project_details** for those. If you need a **longer** outline for **one** row, use **operator_lookup_offer_builder** with that row’s `offerProjectId`.)*",
+  );
+  lines.push("");
+  if (ob.projects.length === 0) {
+    lines.push(
+      "- *(No rows returned in this read — the tenant may have no offer-builder projects yet, or the list is empty in `studio_offer_builder_projects`.)*",
+    );
+  } else {
+    if (ob.truncated) {
+      lines.push(
+        "- **List cap:** The newest-first list may be **truncated**; more older rows may exist than shown.",
+      );
+    }
+    lines.push(`- **Note:** ${ob.note}`);
+    lines.push("");
+    for (const p of ob.projects) {
+      lines.push(`### ${p.displayName || "Untitled offer"}`);
+      lines.push(`- **offerProjectId:** \`${p.id}\``);
+      lines.push(`- **updated_at:** ${p.updatedAt}`);
+      lines.push(`- **compactSummary (derived):** ${clip(p.compactSummary, MAX_OFFER_PROJECT_COMPACT_SUMMARY_IN_PROMPT)}`);
+      lines.push("");
+    }
+  }
+  return clip(lines.join("\n"), MAX_STUDIO_OFFER_BUILDER_SECTION_CHARS);
+}
+
+/** Read-only: one `studio_invoice_setup` row — text fields + logo **summary** only (no data URL). */
+export function formatStudioInvoiceSetupForOperatorLlm(inv: AssistantStudioInvoiceSetupRead): string {
+  const lines: string[] = [];
+  lines.push("## Invoice setup (grounded — PDF template / Settings → Invoice)");
+  lines.push(
+    "*(**Factual:** `legalName`, `invoicePrefix`, `paymentTerms`, `accentColor`, `footerNote` strings and `updated_at` from `studio_invoice_setup` when present. **Not** a specific issued invoice, line items, or amounts for a client. **Logo:** only **hasLogo**, **MIME**, and **stored data-URL length** — the **image bytes are never** included in this prompt.)*",
+  );
+  lines.push("");
+  if (!inv.hasRow) {
+    lines.push(`- *(No row in this read — ${inv.note})*`);
+    return clip(lines.join("\n"), MAX_STUDIO_INVOICE_SETUP_SECTION_CHARS);
+  }
+  lines.push(`- **updated_at:** ${inv.updatedAt ?? "—"}`);
+  lines.push(`- **legalName:** ${inv.legalName || "*(empty)*"}`);
+  lines.push(`- **invoicePrefix:** ${inv.invoicePrefix || "*(empty)*"}`);
+  lines.push(`- **paymentTerms:** ${inv.paymentTerms || "*(empty)*"}`);
+  lines.push(`- **accentColor:** ${inv.accentColor || "*(empty)*"}`);
+  lines.push(
+    `- **footerNote:** ${inv.footerNote || "*(empty)*"}${
+      inv.footerNoteTruncated ? " *(clipped in this block — use **operator_lookup_invoice_setup** for a longer excerpt.)*" : ""
+    }`,
+  );
+  lines.push("");
+  lines.push("### Logo (summary only)");
+  lines.push(`- **hasLogo:** ${inv.logo.hasLogo}`);
+  lines.push(`- **mimeType:** ${inv.logo.mimeType ?? "—"}`);
+  lines.push(`- **approxDataUrlChars:** ${inv.logo.approxDataUrlChars}`);
+  lines.push(`- **${inv.logo.note}**`);
+  lines.push("");
+  lines.push(`- **Note:** ${inv.note}`);
+  return clip(lines.join("\n"), MAX_STUDIO_INVOICE_SETUP_SECTION_CHARS);
 }
 
 function formatFocusedProjectSummaryBlock(s: AssistantFocusedProjectSummary): string {
@@ -604,6 +675,12 @@ export function formatAssistantContextForOperatorLlm(
   parts.push("");
 
   parts.push(formatStudioProfileForOperatorLlm(ctx.studioProfile));
+  parts.push("");
+
+  parts.push(formatStudioOfferBuilderForOperatorLlm(ctx.studioOfferBuilder));
+  parts.push("");
+
+  parts.push(formatStudioInvoiceSetupForOperatorLlm(ctx.studioInvoiceSetup));
   parts.push("");
 
   if (ctx.carryForward) {

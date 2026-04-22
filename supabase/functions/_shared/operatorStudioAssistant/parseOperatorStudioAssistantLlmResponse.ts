@@ -1,11 +1,14 @@
 /**
- * OpenAI `json_object` output → user-visible reply + validated proposals (Slice 6–11).
+ * OpenAI `json_object` output → user-visible reply + validated proposals (Slice 6+, including studio profile queue).
  */
 import type { OperatorAssistantProposedAction } from "../../../../src/types/operatorAssistantProposedAction.types.ts";
 import { tryParseLlmProposedPlaybookRuleCandidate } from "./validatePlaybookRuleCandidatePayload.ts";
 import { tryParseLlmProposedMemoryNote } from "./validateOperatorAssistantMemoryPayload.ts";
 import { tryParseLlmProposedTask } from "./validateOperatorAssistantTaskPayload.ts";
 import { tryParseLlmProposedAuthorizedCaseException } from "./validateOperatorAssistantAuthorizedCaseExceptionPayload.ts";
+import { tryParseLlmProposedOfferBuilderChange } from "../../../../src/lib/operatorAssistantOfferBuilderChangeProposalFromLlm.ts";
+import { tryParseLlmProposedStudioProfileChange } from "../../../../src/lib/operatorAssistantStudioProfileChangeProposalFromLlm.ts";
+import { tryParseLlmProposedInvoiceSetupChange } from "../../../../src/lib/operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
 
 export type ReadOnlyLookupToolOutcome = {
   name: string;
@@ -96,10 +99,25 @@ export function parseOperatorStudioAssistantLlmResponse(rawContent: string): Ope
         actions.push(exc.value);
         continue;
       }
+      const sp = tryParseLlmProposedStudioProfileChange(item);
+      if (sp.ok) {
+        actions.push(sp.value);
+        continue;
+      }
+      const ob = tryParseLlmProposedOfferBuilderChange(item);
+      if (ob.ok) {
+        actions.push(ob.value);
+        continue;
+      }
+      const inv = tryParseLlmProposedInvoiceSetupChange(item);
+      if (inv.ok) {
+        actions.push(inv.value);
+        continue;
+      }
       console.warn(
         JSON.stringify({
           type: "operator_studio_assistant_dropped_proposal",
-          reason: `${rule.reason}; ${task.reason}; ${mem.reason}; ${exc.reason}`,
+          reason: `${rule.reason}; ${task.reason}; ${mem.reason}; ${exc.reason}; ${sp.reason}; ${ob.reason}; ${inv.reason}`,
         }),
       );
     }

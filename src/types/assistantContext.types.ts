@@ -412,6 +412,8 @@ export type AssistantRetrievalLog = {
     | "operator_inquiry_count_snapshot"
     | "operator_calendar_snapshot"
     | "studio_profile"
+    | "offer_builder"
+    | "invoice_setup"
   >;
   /** Requested vs tenant-validated (invalid ids are dropped). */
   focus: {
@@ -464,6 +466,15 @@ export type AssistantRetrievalLog = {
     truncated: boolean;
     rowCount: number;
     lookupMode: AssistantOperatorCalendarLookupMode;
+  };
+  /** v1: capped `studio_offer_builder_projects` list for operator offer-builder grounding. */
+  offerBuilder?: {
+    projectCount: number;
+    listTruncated: boolean;
+  };
+  /** v1: `studio_invoice_setup` row present for this tenant. */
+  invoiceSetup?: {
+    hasRow: boolean;
   };
   /** True when query matched operator queue / workload intent (Slice 3 refinement). */
   operatorQueueIntentMatched?: boolean;
@@ -546,6 +557,87 @@ export const IDLE_ASSISTANT_STUDIO_PROFILE: AssistantStudioProfile = {
   capability: null,
 };
 
+/**
+ * One offer-builder project row — **compact** outline from stored Puck data (read-only), not a full design export.
+ */
+export type AssistantOfferBuilderProjectSummary = {
+  id: string;
+  displayName: string;
+  /** ISO 8601 — same as `studio_offer_builder_projects.updated_at`. */
+  updatedAt: string;
+  /**
+   * Bounded derived text (see `offerPuckAssistantSummary`) so Ana can reason about *packages* / sections
+   * without embedding raw `puck_data` JSON in the prompt.
+   */
+  compactSummary: string;
+};
+
+/**
+ * v1: tenant-scoped list of `studio_offer_builder_projects` (capped) for “what offers do we have?” questions.
+ */
+export type AssistantStudioOfferBuilderRead = {
+  projects: AssistantOfferBuilderProjectSummary[];
+  totalListed: number;
+  truncated: boolean;
+  note: string;
+};
+
+export const IDLE_ASSISTANT_STUDIO_OFFER_BUILDER: AssistantStudioOfferBuilderRead = {
+  projects: [],
+  totalListed: 0,
+  truncated: false,
+  note: "",
+};
+
+/**
+ * Logo on invoice template — **no** raw `logoDataUrl` in context; only safe summary.
+ */
+export type AssistantInvoiceLogoSummary = {
+  hasLogo: boolean;
+  /** From `data:mime;base64,` when parseable. */
+  mimeType: string | null;
+  /** Full stored data-URL string length (proxy for payload size; not decoded pixels). */
+  approxDataUrlChars: number;
+  note: string;
+};
+
+/**
+ * v1: one row per tenant in `studio_invoice_setup` (invoice PDF template fields).
+ */
+export type AssistantStudioInvoiceSetupRead = {
+  hasRow: boolean;
+  /** ISO 8601 — `studio_invoice_setup.updated_at` when a row exists. */
+  updatedAt: string | null;
+  /** Parsed template fields (factual from stored JSON). */
+  legalName: string;
+  invoicePrefix: string;
+  paymentTerms: string;
+  accentColor: string;
+  /** May be truncated — see `footerNoteTruncated`. */
+  footerNote: string;
+  footerNoteTruncated: boolean;
+  logo: AssistantInvoiceLogoSummary;
+  note: string;
+};
+
+export const IDLE_ASSISTANT_STUDIO_INVOICE_SETUP: AssistantStudioInvoiceSetupRead = {
+  hasRow: false,
+  updatedAt: null,
+  legalName: "",
+  invoicePrefix: "",
+  paymentTerms: "",
+  accentColor: "",
+  footerNote: "",
+  footerNoteTruncated: false,
+  logo: {
+    hasLogo: false,
+    mimeType: null,
+    approxDataUrlChars: 0,
+    note: "",
+  },
+  note: "",
+};
+
 export type AssistantContext = {
   readonly clientFacingForbidden: true;
   photographerId: string;
@@ -584,6 +676,16 @@ export type AssistantContext = {
    * Grounding for “what we offer / where we work / currency / timezone” — not playbook authority.
    */
   studioProfile: AssistantStudioProfile;
+  /**
+   * v1: bounded read of offer-builder **projects** (stored in `studio_offer_builder_projects`) — **not** CRM wedding packages;
+   * use for *investment guide / offer document* questions. Read-only; compact Puck-derived outlines.
+   */
+  studioOfferBuilder: AssistantStudioOfferBuilderRead;
+  /**
+   * v1: read-only invoice PDF template / setup (`studio_invoice_setup`) — **not** a specific client invoice
+   * or booking line item; use for *prefix, payment terms, logo-on-template, accent color* questions.
+   */
+  studioInvoiceSetup: AssistantStudioInvoiceSetupRead;
   /** Slice 5 — static app routes/nav/vocabulary for software-help answers (B9). */
   appCatalog: AssistantAppCatalogForContext;
   /**

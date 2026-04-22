@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import * as fromSrc from "../../../../src/lib/assistantStudioProfileRead.ts";
 import {
   fetchAssistantStudioBusinessProfile,
   mapSettingsToAssistantStudioIdentity,
@@ -11,7 +12,15 @@ vi.mock("../../../../src/lib/photographerSettings.ts", () => ({
 
 import { readPhotographerSettings } from "../../../../src/lib/photographerSettings.ts";
 
-describe("fetchAssistantStudioBusinessProfile", () => {
+describe("edge fetchAssistantStudioBusinessProfile re-export", () => {
+  it("re-exports the same bindings as src/lib/assistantStudioProfileRead (entry used by buildAssistantContext)", () => {
+    expect(fetchAssistantStudioBusinessProfile).toBe(fromSrc.fetchAssistantStudioBusinessProfile);
+    expect(summarizeProfileJsonField).toBe(fromSrc.summarizeProfileJsonField);
+    expect(mapSettingsToAssistantStudioIdentity).toBe(fromSrc.mapSettingsToAssistantStudioIdentity);
+  });
+});
+
+describe("fetchAssistantStudioBusinessProfile (via edge re-export, Deno-safe src graph)", () => {
   beforeEach(() => {
     vi.mocked(readPhotographerSettings).mockReset();
   });

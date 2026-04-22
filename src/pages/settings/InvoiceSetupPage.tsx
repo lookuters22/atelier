@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useInvoiceSetup } from "../../components/modes/settings/InvoiceSetupContext";
 
 const PRESETS = ["#3b4ed0", "#0d9488", "#b45309", "#1a1c1e"];
@@ -29,6 +30,15 @@ export function InvoiceSetupPage() {
         <h1 className="text-lg font-semibold text-foreground">Invoice PDF setup</h1>
         <p className="mt-1 text-[13px] text-muted-foreground">
           How invoices look when generated. Changes update the live preview in real time.
+        </p>
+        <p className="mt-2">
+          <Link
+            to="/workspace/invoice-setup/proposals"
+            className="text-[13px] text-primary underline underline-offset-2 hover:text-foreground/90"
+            data-testid="invoice-change-proposals-review-link"
+          >
+            Change proposals (review)
+          </Link>
         </p>
       </div>
 

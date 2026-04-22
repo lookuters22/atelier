@@ -29,6 +29,8 @@ vi.mock("./streamingReplyExtractor.ts", () => ({
 }));
 
 import {
+  IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
+  IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
 } from "../../../../src/types/assistantContext.types.ts";
@@ -64,6 +66,8 @@ function minimalContext(): AssistantContext {
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
     studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
+    studioOfferBuilder: IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
+    studioInvoiceSetup: IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],

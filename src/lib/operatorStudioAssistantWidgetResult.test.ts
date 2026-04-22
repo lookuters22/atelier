@@ -39,6 +39,9 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.taskProposals).toEqual([]);
       expect(d.memoryNoteProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 
@@ -58,6 +61,9 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.taskProposals).toEqual([]);
       expect(d.memoryNoteProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 
@@ -77,6 +83,9 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.taskProposals).toEqual([]);
       expect(d.memoryNoteProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 
@@ -105,6 +114,9 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.playbookRuleProposals[0]!.proposedActionKey).toBe("no_flash");
       expect(d.taskProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 
@@ -132,6 +144,9 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.playbookRuleProposals).toEqual([]);
       expect(d.memoryNoteProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 
@@ -178,10 +193,41 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.playbookRuleProposals).toEqual([]);
       expect(d.taskProposals).toEqual([]);
       expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
+    }
+  });
+
+  it("surfaces person-scoped memory_note with personId", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "person",
+            title: "Prefers natural light",
+            summary: "Natural only",
+            fullContent: "Asked for very natural portraits",
+            personId: "55555555-5555-5555-5555-555555555555",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.memoryNoteProposals).toHaveLength(1);
+      const mem = d.memoryNoteProposals[0]!;
+      expect(mem.memoryScope).toBe("person");
+      expect(mem.personId).toBe("55555555-5555-5555-5555-555555555555");
     }
   });
 
   it("Slice 11: surfaces authorized_case_exception proposals (case-scoped only)", () => {
+    const wid = "11111111-1111-4111-8111-111111111111";
     const d = buildOperatorStudioAssistantAssistantDisplay(
       {
         reply: "I can add a one-off case exception for this project.",
@@ -191,7 +237,7 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
             kind: "authorized_case_exception",
             overridesActionKey: "travel_fee",
             overridePayload: { decision_mode: "ask_first" },
-            weddingId: "11111111-1111-1111-1111-111111111111",
+            weddingId: wid,
           },
         ],
       },
@@ -201,8 +247,118 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
     if (d.kind === "answer") {
       expect(d.authorizedCaseExceptionProposals).toHaveLength(1);
       expect(d.authorizedCaseExceptionProposals[0]!.overridesActionKey).toBe("travel_fee");
-      expect(d.authorizedCaseExceptionProposals[0]!.weddingId).toBe("11111111-1111-1111-1111-111111111111");
+      expect(d.authorizedCaseExceptionProposals[0]!.weddingId).toBe(wid);
       expect(d.playbookRuleProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
+    }
+  });
+
+  it("Ana: surfaces studio_profile_change_proposal from the edge payload (bounded patches)", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "I can queue a currency change for review.",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "studio_profile_change_proposal",
+            rationale: "Operator asked to use EUR for pricing display.",
+            settings_patch: { currency: "EUR" },
+            studio_business_profile_patch: { service_types: ["wedding", "commercial"] },
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.studioProfileChangeProposals).toHaveLength(1);
+      const sp = d.studioProfileChangeProposals[0]!;
+      expect(sp.rationale).toContain("EUR");
+      expect(sp.settings_patch?.currency).toBe("EUR");
+      expect(sp.studio_business_profile_patch?.service_types).toEqual(["wedding", "commercial"]);
+      expect(d.playbookRuleProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
+    }
+  });
+
+  it("Ana: surfaces offer_builder_change_proposal (bounded name / title)", () => {
+    const pid = "a0eebc99-9c0b-4ef8-8bb2-000000000001";
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "I can queue a rename for review.",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "offer_builder_change_proposal",
+            rationale: "Operator asked to rename the premium offer.",
+            project_id: pid,
+            metadata_patch: { name: "Editorial Weddings" },
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.offerBuilderChangeProposals).toHaveLength(1);
+      const ob = d.offerBuilderChangeProposals[0]!;
+      expect(ob.project_id).toBe(pid);
+      expect(ob.metadata_patch.name).toBe("Editorial Weddings");
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
+    }
+  });
+
+  it("Ana: surfaces invoice_setup_change_proposal (bounded template_patch)", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "I can queue a new invoice prefix for review.",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "invoice_setup_change_proposal",
+            rationale: "Operator asked to change the invoice prefix to INV.",
+            template_patch: { invoicePrefix: "INV" },
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.invoiceSetupChangeProposals).toHaveLength(1);
+      const inv = d.invoiceSetupChangeProposals[0]!;
+      expect(inv.template_patch.invoicePrefix).toBe("INV");
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+    }
+  });
+
+  it("Slice 11+: drops authorized_case_exception when weddingId is not a valid UUID (safe-write gate)", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "x",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "authorized_case_exception",
+            overridesActionKey: "x",
+            overridePayload: { decision_mode: "ask_first" },
+            weddingId: "not-a-uuid",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.authorizedCaseExceptionProposals).toEqual([]);
+      expect(d.studioProfileChangeProposals).toEqual([]);
+      expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
     }
   });
 });

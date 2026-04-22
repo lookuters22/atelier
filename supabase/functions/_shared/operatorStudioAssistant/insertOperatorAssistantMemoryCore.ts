@@ -1,5 +1,5 @@
 /**
- * Service-role insert into `memories` only (Slice 8). No playbook or task writes.
+ * Service-role insert into `memories` only. No playbook or task writes.
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { Database } from "../../../../src/types/database.types.ts";
@@ -25,11 +25,26 @@ export async function insertMemoryForOperatorAssistant(
     }
   }
 
+  if (body.memoryScope === "person" && body.personId) {
+    const { data, error } = await supabase
+      .from("people")
+      .select("id")
+      .eq("id", body.personId)
+      .eq("photographer_id", photographerId)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`person verify failed: ${error.message}`);
+    }
+    if (!data?.id) {
+      throw new Error("person not found for tenant");
+    }
+  }
+
   const insertRow: Database["public"]["Tables"]["memories"]["Insert"] = {
     photographer_id: photographerId,
     scope: body.memoryScope,
     wedding_id: body.memoryScope === "project" ? body.weddingId : null,
-    person_id: null,
+    person_id: body.memoryScope === "person" ? body.personId : null,
     type: "operator_assistant_note",
     title: body.title,
     summary: body.summary,

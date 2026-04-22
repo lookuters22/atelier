@@ -34,6 +34,10 @@ verify_jwt = false
 [functions.insert-operator-assistant-authorized-case-exception]
 verify_jwt = false
 
+# Browser sends user JWT; gateway HS256 pre-check can block ES256 — validate in-handler (see authPhotographer.ts).
+[functions.review-playbook-rule-candidate]
+verify_jwt = false
+
 [functions.webhook-approval]
 verify_jwt = false
 

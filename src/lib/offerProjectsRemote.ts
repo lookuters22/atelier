@@ -1,6 +1,6 @@
 import type { Data } from "@measured/puck";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, Json } from "@/types/database.types";
+import type { Database, Json } from "../types/database.types";
 import type { OfferProjectRecord } from "./offerProjectsLocal";
 
 function rowToRecord(row: Database["public"]["Tables"]["studio_offer_builder_projects"]["Row"]): OfferProjectRecord {
