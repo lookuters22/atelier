@@ -68,6 +68,7 @@ import {
   prepareCarryForwardForContext,
   tryParseClientCarryForward,
 } from "../operatorStudioAssistant/operatorAssistantCarryForward.ts";
+import { fetchAssistantStudioBusinessProfile } from "./fetchAssistantStudioBusinessProfile.ts";
 
 function normalizeOptionalUuid(id: string | null | undefined): string | null {
   if (id == null) return null;
@@ -151,6 +152,7 @@ export async function buildAssistantContext(
   );
 
   const scopesQueried: AssistantRetrievalLog["scopesQueried"] = [
+    "studio_profile",
     "playbook",
     "studio_memory",
     "knowledge_base",
@@ -177,6 +179,7 @@ export async function buildAssistantContext(
   const includeAppCatalogInOperatorPrompt = shouldIncludeAppCatalogInOperatorPrompt(queryText);
 
   const [
+    studioProfile,
     rawPlaybookRules,
     authorizedCaseExceptions,
     memoryHeaders,
@@ -186,6 +189,7 @@ export async function buildAssistantContext(
     studioAnalysisSnapshot,
     entityIndex,
   ] = await Promise.all([
+    fetchAssistantStudioBusinessProfile(supabase, tenantPhotographerId),
     fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
     fetchAuthorizedCaseExceptionsForDecisionContext(
       supabase,
@@ -401,6 +405,7 @@ export async function buildAssistantContext(
       uniqueTopicCount: playbookCoverageSummary.uniqueTopics.length,
       uniqueActionKeyCount: playbookCoverageSummary.uniqueActionKeys.length,
     },
+    studioBusinessProfileRowPresent: studioProfile.hasBusinessProfileRow,
   };
 
   console.log(
@@ -437,6 +442,7 @@ export async function buildAssistantContext(
     focusedProjectSummary: focusedProjectSummaryAndHints?.summary ?? null,
     focusedProjectRowHints: focusedProjectSummaryAndHints?.rowHints ?? null,
     operatorStateSummary,
+    studioProfile,
     appCatalog,
     includeAppCatalogInOperatorPrompt,
     studioAnalysisSnapshot: studioAnalysisSnapshot,

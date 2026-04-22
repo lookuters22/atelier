@@ -411,6 +411,7 @@ export type AssistantRetrievalLog = {
     | "operator_thread_message_bodies"
     | "operator_inquiry_count_snapshot"
     | "operator_calendar_snapshot"
+    | "studio_profile"
   >;
   /** Requested vs tenant-validated (invalid ids are dropped). */
   focus: {
@@ -474,6 +475,8 @@ export type AssistantRetrievalLog = {
     uniqueTopicCount: number;
     uniqueActionKeyCount: number;
   };
+  /** Read-only `studio_business_profiles` row present for this tenant (Slice: studio profile grounding v1). */
+  studioBusinessProfileRowPresent?: boolean;
 };
 
 /**
@@ -482,6 +485,67 @@ export type AssistantRetrievalLog = {
  * **Invariant:** `clientFacingForbidden` is always `true` at the type level so this object must not be
  * routed into client-facing writers (V3 memory plan §3 Mode B).
  */
+/**
+ * Identity / runtime fields from `photographers.settings` (read-only assistant grounding).
+ * Null = missing or unset in settings JSON — not a signal to invent values.
+ */
+export type AssistantStudioProfileIdentity = {
+  studio_name: string | null;
+  manager_name: string | null;
+  photographer_names: string | null;
+  timezone: string | null;
+  currency: string | null;
+  /** One-line label (+ optional country code) from structured `base_location`, when set. */
+  base_location: string | null;
+  inquiry_first_step_style: string | null;
+};
+
+/**
+ * Bounded summaries of `studio_business_profiles` JSON columns (read-only).
+ * Strings are human-readable excerpts, not raw dumps.
+ */
+export type AssistantStudioProfileCapability = {
+  service_types: string | null;
+  core_services: string | null;
+  deliverable_types: string | null;
+  geographic_scope: string | null;
+  travel_policy: string | null;
+  language_support: string | null;
+  team_structure: string | null;
+  client_types: string | null;
+  lead_acceptance_rules: string | null;
+  service_availability: string | null;
+  booking_scope: string | null;
+  extensions_summary: string | null;
+  source_type: string | null;
+  updated_at: string | null;
+};
+
+/**
+ * Studio capability boundary (what the business offers / can do) vs playbook (how Ana should behave).
+ */
+export type AssistantStudioProfile = {
+  hasBusinessProfileRow: boolean;
+  identity: AssistantStudioProfileIdentity;
+  /** Null when there is no `studio_business_profiles` row for this tenant. */
+  capability: AssistantStudioProfileCapability | null;
+};
+
+/** Default assistant studio profile when fetch fails or is not run (tests). */
+export const IDLE_ASSISTANT_STUDIO_PROFILE: AssistantStudioProfile = {
+  hasBusinessProfileRow: false,
+  identity: {
+    studio_name: null,
+    manager_name: null,
+    photographer_names: null,
+    timezone: null,
+    currency: null,
+    base_location: null,
+    inquiry_first_step_style: null,
+  },
+  capability: null,
+};
+
 export type AssistantContext = {
   readonly clientFacingForbidden: true;
   photographerId: string;
@@ -515,6 +579,11 @@ export type AssistantContext = {
   focusedProjectRowHints: AssistantFocusedProjectRowHints | null;
   /** Today / Inbox queue snapshot (Slice 3); same semantics as the operator Today feed. */
   operatorStateSummary: AssistantOperatorStateSummary;
+  /**
+   * Read-only studio capability / business-scope layer (`studio_business_profiles` + key `photographers.settings`).
+   * Grounding for “what we offer / where we work / currency / timezone” — not playbook authority.
+   */
+  studioProfile: AssistantStudioProfile;
   /** Slice 5 — static app routes/nav/vocabulary for software-help answers (B9). */
   appCatalog: AssistantAppCatalogForContext;
   /**

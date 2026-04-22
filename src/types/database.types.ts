@@ -1724,6 +1724,41 @@ export type Database = {
           },
         ]
       }
+      studio_offer_builder_projects: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          photographer_id: string
+          puck_data: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          name: string
+          photographer_id: string
+          puck_data: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          photographer_id?: string
+          puck_data?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "studio_offer_builder_projects_photographer_id_fkey"
+            columns: ["photographer_id"]
+            isOneToOne: false
+            referencedRelation: "photographers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tasks: {
         Row: {
           due_date: string

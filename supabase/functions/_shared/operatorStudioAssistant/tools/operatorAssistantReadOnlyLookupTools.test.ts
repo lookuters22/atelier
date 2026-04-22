@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AssistantContext } from "../../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+} from "../../../../../src/types/assistantContext.types.ts";
 import { IDLE_ASSISTANT_CALENDAR_SNAPSHOT } from "../../context/fetchAssistantOperatorCalendarSnapshot.ts";
 import { IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY } from "../../context/fetchAssistantOperatorStateSummary.ts";
 import { IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT } from "../../context/fetchAssistantInquiryCountSnapshot.ts";
@@ -36,6 +39,7 @@ function minimalCtx(): AssistantContext {
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     appCatalog: getAssistantAppCatalogForContext(),
     includeAppCatalogInOperatorPrompt: false,
     studioAnalysisSnapshot: null,

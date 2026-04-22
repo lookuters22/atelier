@@ -7,6 +7,114 @@
 
 ---
 
+## Current execution overlay (2026-04)
+
+### Why this overlay exists
+
+The original slice list below was useful for the first Ana widget build-out, but it is no longer sufficient as the live execution order.
+
+Use this file together with:
+
+- `C:\Users\Despot\Desktop\wedding\docs\v3\V3_OPERATOR_ANA_MANAGER_EXECUTION_DOCUMENT.md`
+- `C:\Users\Despot\Desktop\wedding\docs\v3\V3_OPERATOR_ANA_FULL_CAPABILITY_EXECUTION_PACKET.md`
+
+The overlay in this section is the current near-term execution truth.
+The original slice plan below remains useful as background and historical rationale.
+
+### Already landed since the original slice plan
+
+Treat these as baseline and do not re-plan them as pending:
+
+- domain-first project retrieval foundations
+- focused project facts / CRM truth improvements
+- project-type semantics enforcement
+- carry-forward transport and follow-up behavior
+- inquiry-count continuity fix
+- thread title/body honesty fix
+- thread retrieval quality fix
+- bounded thread message-body lookup
+- deterministic triage v1
+- calendar hardening
+- app-help grounding completion
+- operator-state / inbox-state refinement
+- studio-analysis first-cut hardening
+- task safe-write promotion
+- playbook rule-candidate review dashboard foundation
+
+### Current product-enabler status
+
+- offer builder server-side storage foundation is the active product-enabler branch
+- before deployment, its migration logic must be fixed so:
+  - migration state is photographer-scoped, not browser-global
+  - local-only projects are reconciled into remote, not dropped when remote already has rows
+
+### Active near-term priority order
+
+Use this order for upcoming implementation prompts unless a newer execution note supersedes it:
+
+1. Fix and deploy the offer-builder server-side storage foundation safely.
+2. Add **studio profile grounding v1 (read-only)** so Ana can see the studio capability boundary:
+   - `studio_business_profiles`
+   - key `photographers.settings` identity/runtime fields
+3. Only after the read path is grounded, consider a later studio-profile update path with:
+   - a review/apply surface
+   - an edit-scoped validated RPC
+4. After that, continue with the next product-enabler branch:
+   - invoice storage / structured invoice-template foundation
+   - or another explicitly prioritized manager capability
+
+### Important planning correction
+
+The playbook/rule path is not the whole studio-rules story.
+
+Ana already sees much of the authority layer:
+
+- playbook rules
+- case exceptions
+- memories
+- knowledge-base narrative
+
+But she still does not properly see the capability layer:
+
+- `studio_business_profiles`
+- core studio identity/runtime settings
+
+That means the next important manager-grade grounding slice is not "more playbook."
+It is the studio capability/profile layer.
+
+### What the next studio-profile slice should be
+
+The next slice in this branch should be:
+
+- read-only only
+- no writes to `studio_business_profiles`
+- no writes to `photographers.settings`
+- no triage expansion
+- no specialist mode
+
+It should add:
+
+- one fetcher for bounded studio profile data
+- one `AssistantContext` field
+- one compact formatter block
+- one short prompt paragraph
+- tests for profile truth, missing-row behavior, and capability/identity questions
+
+### What should wait until later
+
+Do not combine these into the studio-profile grounding slice:
+
+- profile editing
+- onboarding RPC changes
+- geography mutation
+- settings mutation
+- proposal actions for profile changes
+- invoice/package specialist-mode work
+
+Those are later slices after the read path is trustworthy.
+
+---
+
 ## Ordering rationale
 
 Slices are ordered so that each one delivers real operator value **and** unblocks the next. The ordering is:

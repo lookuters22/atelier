@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { AssistantContext, AssistantOperatorStateSummary } from "../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+  type AssistantOperatorStateSummary,
+} from "../../../../src/types/assistantContext.types.ts";
 import type { OperatorAnaCarryForwardForLlm } from "../../../../src/types/operatorAnaCarryForward.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
@@ -51,6 +55,7 @@ function fakeCtx(overrides: Partial<AssistantContext> = {}): AssistantContext {
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],

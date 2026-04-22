@@ -8,6 +8,7 @@ import type {
   AssistantFocusedProjectSummary,
   AssistantOperatorStateSummary,
   AssistantPlaybookCoverageSummary,
+  AssistantStudioProfile,
   AssistantStudioAnalysisSnapshot,
 } from "../../../../src/types/assistantContext.types.ts";
 import { EMPTY_ASSISTANT_PLAYBOOK_COVERAGE_SUMMARY } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
@@ -53,6 +54,54 @@ function clip(s: string, max: number): string {
   const t = s.trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}...`;
+}
+
+function studioProfileLine(label: string, value: string | null | undefined): string {
+  if (value == null || String(value).trim() === "") {
+    return `- **${label}:** *(not set)*`;
+  }
+  return `- **${label}:** ${value}`;
+}
+
+/** Compact studio capability + settings identity for operator prompts (read-only). */
+export function formatStudioProfileForOperatorLlm(sp: AssistantStudioProfile): string {
+  const lines: string[] = [];
+  lines.push("## Studio profile (capability boundary, not playbook policy)");
+  lines.push(
+    "*(**What the studio is / can do** from `studio_business_profiles` + key `photographers.settings`. **Not** automation policy — the **Playbook** block below still governs behavior. If something is *not set* or the business-profile row is missing, say so — **do not invent** services, travel, or currency.)*",
+  );
+  lines.push("");
+  lines.push("### Identity (`photographers.settings`)");
+  const id = sp.identity;
+  lines.push(studioProfileLine("Studio name", id.studio_name));
+  lines.push(studioProfileLine("Manager name", id.manager_name));
+  lines.push(studioProfileLine("Photographer names", id.photographer_names));
+  lines.push(studioProfileLine("Timezone", id.timezone));
+  lines.push(studioProfileLine("Currency", id.currency));
+  lines.push(studioProfileLine("Base location", id.base_location));
+  lines.push(studioProfileLine("Inquiry first-step style", id.inquiry_first_step_style));
+  lines.push("");
+  lines.push("### Services & scope (`studio_business_profiles`)");
+  if (!sp.hasBusinessProfileRow || !sp.capability) {
+    lines.push("- *(No `studio_business_profiles` row — service/geography/deliverable scope not loaded.)*");
+  } else {
+    const c = sp.capability;
+    lines.push(studioProfileLine("Service types", c.service_types));
+    lines.push(studioProfileLine("Core services", c.core_services));
+    lines.push(studioProfileLine("Deliverable types", c.deliverable_types));
+    lines.push(studioProfileLine("Geographic scope", c.geographic_scope));
+    lines.push(studioProfileLine("Travel policy", c.travel_policy));
+    lines.push(studioProfileLine("Service availability", c.service_availability));
+    lines.push(studioProfileLine("Booking scope", c.booking_scope));
+    lines.push(studioProfileLine("Client types", c.client_types));
+    lines.push(studioProfileLine("Lead acceptance rules", c.lead_acceptance_rules));
+    lines.push(studioProfileLine("Language support", c.language_support));
+    lines.push(studioProfileLine("Team structure", c.team_structure));
+    lines.push(studioProfileLine("Extensions (notes/custom labels, clipped)", c.extensions_summary));
+    lines.push(studioProfileLine("Profile source_type", c.source_type));
+    lines.push(studioProfileLine("Profile updated_at", c.updated_at));
+  }
+  return lines.join("\n");
 }
 
 function formatFocusedProjectSummaryBlock(s: AssistantFocusedProjectSummary): string {
@@ -552,6 +601,9 @@ export function formatAssistantContextForOperatorLlm(
   parts.push(`- Studio (tenant): ${ctx.photographerId}`);
   parts.push(`- Focused wedding (validated): ${ctx.focusedWeddingId ?? "none"}`);
   parts.push(`- Focused person (validated): ${ctx.focusedPersonId ?? "none"}`);
+  parts.push("");
+
+  parts.push(formatStudioProfileForOperatorLlm(ctx.studioProfile));
   parts.push("");
 
   if (ctx.carryForward) {

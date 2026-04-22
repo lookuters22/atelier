@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AssistantContext,
-  AssistantFocusedProjectFacts,
-  AssistantOperatorStateSummary,
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+  type AssistantFocusedProjectFacts,
+  type AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
-import { formatAssistantContextForOperatorLlm } from "./formatAssistantContextForOperatorLlm.ts";
+import {
+  formatAssistantContextForOperatorLlm,
+  formatStudioProfileForOperatorLlm,
+} from "./formatAssistantContextForOperatorLlm.ts";
 import {
   IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
 } from "../context/fetchAssistantThreadMessageBodies.ts";
@@ -43,6 +47,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_STATE,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
@@ -104,6 +109,9 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).not.toContain("## Recent thread & email activity");
     expect(s).not.toContain("## Inquiry counts / comparisons");
     expect(s).toContain("## Operator question");
+    expect(s).toContain("## Studio profile (capability boundary, not playbook policy)");
+    expect(s).toContain("### Identity (`photographers.settings`)");
+    expect(s).toContain("### Services & scope (`studio_business_profiles`)");
     expect(s).toContain("## Triage (v1 hint — not a gate)");
     expect(s).toContain('"primary":"unclear"');
     expect(s).toContain('"secondary":[]');
@@ -861,5 +869,59 @@ describe("formatAssistantContextForOperatorLlm — Slice 6 carry-forward", () =>
     expect(s).toContain("lastFocusedProjectId");
     expect(s).toContain("advisoryHint");
     expect(s).toContain("short_cue_detected");
+  });
+});
+
+describe("formatStudioProfileForOperatorLlm", () => {
+  it("missing business profile row still renders identity lines and explicit gap", () => {
+    const md = formatStudioProfileForOperatorLlm({
+      ...IDLE_ASSISTANT_STUDIO_PROFILE,
+      identity: {
+        ...IDLE_ASSISTANT_STUDIO_PROFILE.identity,
+        studio_name: "Test Studio",
+        currency: "GBP",
+        timezone: "Europe/London",
+      },
+    });
+    expect(md).toContain("capability boundary, not playbook policy");
+    expect(md).toContain("**Studio name:** Test Studio");
+    expect(md).toContain("**Currency:** GBP");
+    expect(md).toContain("No `studio_business_profiles` row");
+  });
+
+  it("renders bounded capability summaries for video / geography questions", () => {
+    const md = formatStudioProfileForOperatorLlm({
+      hasBusinessProfileRow: true,
+      identity: {
+        studio_name: "Lumen",
+        manager_name: null,
+        photographer_names: null,
+        timezone: "Europe/Rome",
+        currency: "EUR",
+        base_location: "Milan (IT)",
+        inquiry_first_step_style: "proactive_call",
+      },
+      capability: {
+        service_types: "wedding, video",
+        core_services: null,
+        deliverable_types: "digital files",
+        geographic_scope: '{"primary":"italy"}',
+        travel_policy: '{"mode":"selective"}',
+        language_support: "en, it",
+        team_structure: null,
+        client_types: null,
+        lead_acceptance_rules: null,
+        service_availability: null,
+        booking_scope: null,
+        extensions_summary: null,
+        source_type: "onboarding",
+        updated_at: "2026-04-01T00:00:00.000Z",
+      },
+    });
+    expect(md).toContain("**Currency:** EUR");
+    expect(md).toContain("wedding, video");
+    expect(md).toContain("**Geographic scope:**");
+    expect(md).toContain("italy");
+    expect(md).toContain("**Inquiry first-step style:** proactive_call");
   });
 });

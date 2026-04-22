@@ -702,20 +702,20 @@ This is the practical backlog shape to use after the currently active hardening 
 
 ### Track F - Fast path completion
 
-- F1: studio analysis first-cut hardening
-- F2: safe write promotion for tasks
-- F3: safe write promotion for memories
-- F4: simple calendar write proposal/confirmation path
-- F5: draft-inspection / "why did this draft happen?" read path
-- F6: queue urgency refinement
+- F1: studio profile grounding v1 (read-only capability boundary from `studio_business_profiles` + key `photographers.settings`)
+- F2: safe write promotion for memories
+- F3: simple calendar write proposal/confirmation path
+- F4: draft-inspection / "why did this draft happen?" read path
+- F5: queue urgency refinement
+- F6: studio profile update path only after review/apply UI + validated RPC exist
 
 ### Track P - Product enablers
 
-- P1: rule-candidate review dashboard
-- P2: offer builder server-side storage plan
-- P3: invoice template/setup server-side storage plan
-- P4: structured patch contract for builder/template surfaces
-- P5: audit + undo infrastructure for Ana-originated writes
+- P1: offer builder server-side storage fix/deploy (migration-safety fix before rollout)
+- P2: invoice template/setup server-side storage foundation
+- P3: structured patch contract for builder/template surfaces
+- P4: audit + undo infrastructure for Ana-originated writes
+- P5: studio-profile review/apply surface for future Ana-proposed business-profile changes
 
 ### Track S - Specialist modes
 
@@ -727,6 +727,14 @@ This is the practical backlog shape to use after the currently active hardening 
 - S6: bulk triage mode
 
 These should become concrete slice docs only when the prerequisite layer is ready.
+
+### Already landed from this backlog
+
+These are no longer pending and should be treated as baseline:
+
+- studio analysis first-cut hardening
+- safe write promotion for tasks
+- rule-candidate review dashboard foundation
 
 ---
 
@@ -789,4 +797,3 @@ Instead:
 - read this document
 - choose one slice
 - write a narrow implementation prompt against that slice only
-

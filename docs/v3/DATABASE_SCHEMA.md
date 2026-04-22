@@ -43,6 +43,7 @@ Tables present in the checked-in migrations:
 - `calendar_events`
 - `wedding_milestones`
 - `authorized_case_exceptions` (V3 case-scoped approved policy overrides; see §5.17.1)
+- `studio_offer_builder_projects` (logged-in offer / package builder Puck documents; see §5.22)
 
 Important truth:
 
@@ -1111,6 +1112,35 @@ Implemented today.
 - Do not use this table as a dumping ground for all workflow state. It is for checklist-style milestone facts only.
 - This is the safe trigger surface for approved milestone-driven sleepers.
 - Prefer updating a known milestone here rather than inventing a new background timer shape.
+
+## 5.22 studio_offer_builder_projects
+
+### Status
+
+Implemented today (migration `20260423140000_studio_offer_builder_projects.sql`).
+
+### Purpose
+
+Durable, tenant-scoped storage for the magazine-style **offer builder** (Puck). Replaces browser-only `localStorage` for signed-in photographers so server-side tools (e.g. future Ana specialist flows) can read and patch structured layout data safely.
+
+### Current columns
+
+- `id` UUID PK (client-generated; upsert on conflict)
+- `photographer_id` UUID NOT NULL FK → `photographers.id` ON DELETE CASCADE
+- `name` TEXT NOT NULL (display label in hub)
+- `puck_data` JSONB NOT NULL — `@measured/puck` `Data` (`root`, `content[]`, zones)
+- `created_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+- `updated_at` TIMESTAMPTZ NOT NULL (app-supplied on write from editor)
+
+### Access
+
+- RLS: `photographer_id = auth.uid()` for all operations.
+- Index: `(photographer_id, updated_at DESC)` for hub listing.
+
+### Rules
+
+- Treat `puck_data` as the canonical structured document for offer layouts; avoid parallel ad-hoc copies of the same content.
+- Logged-out / dev fallback may still use local storage; the app migrates local projects to this table once per browser after first successful remote list when the user is authenticated.
 
 ## 6. Insert And Update Rules For AI Coding
 

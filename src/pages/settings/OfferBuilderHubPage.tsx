@@ -3,7 +3,13 @@ import Lenis from "lenis";
 import { ExternalLink, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { createOfferProject, deleteOfferProject, listOfferProjects, type OfferProjectRecord } from "../../lib/offerProjectsStorage";
+import { useAuth } from "@/context/AuthContext";
+import {
+  createOfferProject,
+  deleteOfferProject,
+  listOfferProjects,
+  type OfferProjectRecord,
+} from "../../lib/offerProjectsStorage";
 import {
   getCachedOfferPreviewHtml,
   OFFER_HOVER_DESIGN_WIDTH_PX,
@@ -31,19 +37,37 @@ const PREVIEW_SCALE = 280 / OFFER_HOVER_DESIGN_WIDTH_PX;
 export function OfferBuilderHubPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [projects, setProjects] = useState(() => listOfferProjects());
+  const { photographerId } = useAuth();
+  const [projects, setProjects] = useState<OfferProjectRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setProjects(await listOfferProjects(photographerId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load projects");
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [photographerId]);
 
   useEffect(() => {
-    setProjects(listOfferProjects());
-  }, [location.pathname]);
+    void refresh();
+  }, [refresh, location.pathname]);
 
-  const refresh = useCallback(() => setProjects(listOfferProjects()), []);
-
-  const createNew = useCallback(() => {
-    const p = createOfferProject();
-    refresh();
-    navigate(`/workspace/offer-builder/edit/${p.id}`);
-  }, [navigate, refresh]);
+  const createNew = useCallback(async () => {
+    try {
+      const p = await createOfferProject(photographerId);
+      await refresh();
+      navigate(`/workspace/offer-builder/edit/${p.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create project");
+    }
+  }, [navigate, photographerId, refresh]);
 
   const openProject = useCallback(
     (id: string) => {
@@ -53,11 +77,15 @@ export function OfferBuilderHubPage() {
   );
 
   const removeProject = useCallback(
-    (id: string) => {
-      deleteOfferProject(id);
-      refresh();
+    async (id: string) => {
+      try {
+        await deleteOfferProject(id, photographerId);
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not delete project");
+      }
     },
-    [refresh],
+    [photographerId, refresh],
   );
 
   return (
@@ -66,14 +94,22 @@ export function OfferBuilderHubPage() {
         <h1 className="text-lg font-semibold text-foreground">Offer builder</h1>
         <p className="mt-1 max-w-lg text-[13px] text-muted-foreground">
           Create HTML magazine-style offers. The layout editor runs full screen when you open or create a project.
+          {photographerId ? " Projects are saved to your studio account." : " Sign in to sync projects to your studio."}
         </p>
       </div>
+
+      {error && (
+        <p className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+          {error}
+        </p>
+      )}
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={createNew}
-          className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition hover:bg-foreground/90"
+          onClick={() => void createNew()}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition hover:bg-foreground/90 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" strokeWidth={2} />
           Create new project
@@ -84,7 +120,9 @@ export function OfferBuilderHubPage() {
         <h3 className="border-b border-border pb-2 text-[15px] font-medium text-foreground">Saved works</h3>
         <p className="mt-3 text-[13px] text-muted-foreground">Right-click a card for options; click to open.</p>
 
-        {projects.length === 0 ? (
+        {loading ? (
+          <p className="mt-6 text-[13px] text-muted-foreground">Loading projects…</p>
+        ) : projects.length === 0 ? (
           <div className="mt-6">
             <Empty>
               <EmptyHeader>
@@ -97,7 +135,7 @@ export function OfferBuilderHubPage() {
               <EmptyContent>
                 <button
                   type="button"
-                  onClick={createNew}
+                  onClick={() => void createNew()}
                   className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition hover:bg-foreground/90"
                 >
                   <Plus className="h-4 w-4" strokeWidth={2} />
@@ -118,7 +156,7 @@ export function OfferBuilderHubPage() {
                     <ExternalLink className="mr-2 h-4 w-4" /> Open project
                   </ContextMenuItem>
                   <ContextMenuSeparator />
-                  <ContextMenuItem className="text-red-400" onClick={() => removeProject(p.id)}>
+                  <ContextMenuItem className="text-red-400" onClick={() => void removeProject(p.id)}>
                     <Trash2 className="mr-2 h-4 w-4" /> Delete
                   </ContextMenuItem>
                 </ContextMenuContent>
@@ -199,27 +237,18 @@ const ProjectTiltedCard = forwardRef<HTMLElement, { project: OfferProjectRecord;
           style={{ aspectRatio: "3/4" }}
           onWheel={onWheel}
         >
-          <div
-            className="pointer-events-none absolute left-0 top-0 origin-top-left"
+          <iframe
+            ref={iframeRef}
+            title={`Preview ${project.name}`}
+            className="pointer-events-none block origin-top-left border-0"
             style={{
               width: OFFER_HOVER_DESIGN_WIDTH_PX,
               height: OFFER_HOVER_VIEWPORT_HEIGHT_PX,
               transform: `scale(${PREVIEW_SCALE})`,
             }}
-          >
-            <iframe
-              ref={iframeRef}
-              title={`preview-${project.id}`}
-              sandbox="allow-same-origin"
-              className="h-full w-full border-0"
-              style={{
-                opacity: loaded ? 1 : 0,
-                transition: "opacity 0.3s",
-              }}
-            />
-          </div>
+          />
           {!loaded && (
-            <div className="absolute inset-0 flex items-center justify-center text-[11px] text-ink-muted">
+            <div className="absolute inset-0 flex items-center justify-center bg-[#fafaf9] text-[11px] text-muted-foreground">
               Loading…
             </div>
           )}

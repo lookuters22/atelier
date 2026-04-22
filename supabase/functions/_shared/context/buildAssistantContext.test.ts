@@ -1,10 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type {
-  AssistantOperatorStateSummary,
-  AssistantStudioAnalysisSnapshot,
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantOperatorStateSummary,
+  type AssistantStudioAnalysisSnapshot,
 } from "../../../../src/types/assistantContext.types.ts";
 
-const { operatorStateFixture, fetchAssistantOperatorStateSummaryMock, fetchStudioAnalysisMock } = vi.hoisted(() => {
+const {
+  operatorStateFixture,
+  fetchAssistantOperatorStateSummaryMock,
+  fetchStudioAnalysisMock,
+  fetchAssistantStudioProfileMock,
+} = vi.hoisted(() => {
   const operatorStateFixture: AssistantOperatorStateSummary = {
     fetchedAt: "2020-01-01T00:00:00.000Z",
     sourcesNote: "test fixture",
@@ -32,6 +38,7 @@ const { operatorStateFixture, fetchAssistantOperatorStateSummaryMock, fetchStudi
     operatorStateFixture,
     fetchAssistantOperatorStateSummaryMock: vi.fn(() => Promise.resolve(operatorStateFixture)),
     fetchStudioAnalysisMock: vi.fn(() => Promise.resolve(null)),
+    fetchAssistantStudioProfileMock: vi.fn(() => Promise.resolve(IDLE_ASSISTANT_STUDIO_PROFILE)),
   };
 });
 
@@ -43,6 +50,10 @@ vi.mock("./fetchAssistantStudioAnalysisSnapshot.ts", () => ({
   fetchAssistantStudioAnalysisSnapshot: fetchStudioAnalysisMock,
 }));
 
+vi.mock("./fetchAssistantStudioBusinessProfile.ts", () => ({
+  fetchAssistantStudioBusinessProfile: fetchAssistantStudioProfileMock,
+}));
+
 import { IDLE_ASSISTANT_THREAD_MESSAGE_BODIES } from "./fetchAssistantThreadMessageBodies.ts";
 import { buildAssistantContext } from "./buildAssistantContext.ts";
 import { fetchAssistantOperatorStateSummary } from "./fetchAssistantOperatorStateSummary.ts";
@@ -51,6 +62,8 @@ describe("buildAssistantContext", () => {
   beforeEach(() => {
     vi.mocked(fetchStudioAnalysisMock).mockReset();
     vi.mocked(fetchStudioAnalysisMock).mockResolvedValue(null);
+    vi.mocked(fetchAssistantStudioProfileMock).mockReset();
+    vi.mocked(fetchAssistantStudioProfileMock).mockResolvedValue(IDLE_ASSISTANT_STUDIO_PROFILE);
   });
 
   it("returns clientFacingForbidden true and studio-only memory scope when no focus", async () => {
@@ -146,6 +159,9 @@ describe("buildAssistantContext", () => {
     expect(ctx.focusedPersonId).toBeNull();
     expect(ctx.retrievalLog.queryTextScopeExpansion).toBe("none");
     expect(ctx.retrievalLog.focus.weddingIdEffective).toBeNull();
+    expect(ctx.retrievalLog.scopesQueried).toContain("studio_profile");
+    expect(ctx.retrievalLog.studioBusinessProfileRowPresent).toBe(false);
+    expect(ctx.studioProfile.hasBusinessProfileRow).toBe(false);
     expect(ctx.retrievalLog.scopesQueried).toContain("studio_memory");
     expect(ctx.retrievalLog.scopesQueried).not.toContain("crm_digest");
     expect(ctx.retrievalLog.scopesQueried).not.toContain("project_memory");
@@ -1762,6 +1778,78 @@ describe("buildAssistantContext", () => {
       queryText: "Where is the venue for this project?",
     });
     expect(crmCtx.includeAppCatalogInOperatorPrompt).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
+  it("loads studioProfile for capability questions (currency + video in mocked profile)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(fetchAssistantStudioProfileMock).mockResolvedValue({
+      hasBusinessProfileRow: true,
+      identity: {
+        studio_name: "Lumen Studio",
+        manager_name: null,
+        photographer_names: null,
+        timezone: "Europe/Rome",
+        currency: "EUR",
+        base_location: "Milan (IT)",
+        inquiry_first_step_style: null,
+      },
+      capability: {
+        service_types: "wedding, video",
+        core_services: null,
+        deliverable_types: "digital, album",
+        geographic_scope: '{"mode":"eu"}',
+        travel_policy: null,
+        language_support: "en, it",
+        team_structure: null,
+        client_types: null,
+        lead_acceptance_rules: null,
+        service_availability: null,
+        booking_scope: null,
+        extensions_summary: null,
+        source_type: "onboarding",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    const supabase = {
+      rpc: () => Promise.resolve({ data: [], error: null }),
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.is = () => chain;
+        chain.in = () => chain;
+        chain.lte = () => chain;
+        chain.or = () => chain;
+        chain.order = () => chain;
+        chain.limit = () => chain;
+        chain.maybeSingle = () => Promise.resolve({ data: null, error: null });
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (table === "playbook_rules") return resolve({ data: [], error: null });
+          if (table === "authorized_case_exceptions") return resolve({ data: [], error: null });
+          if (table === "weddings") return resolve({ data: [], error: null });
+          if (table === "people") return resolve({ data: [], error: null });
+          if (table === "memories") return resolve({ data: [], error: null });
+          if (table === "global_knowledge" || table === "knowledge_documents") {
+            return resolve({ data: [], error: null });
+          }
+          return resolve({ data: [], error: null });
+        };
+        return chain;
+      },
+    } as never;
+
+    const ctx = await buildAssistantContext(supabase, "photo-1", {
+      queryText: "What currency do we use? Do we offer video?",
+    });
+
+    expect(fetchAssistantStudioProfileMock).toHaveBeenCalledWith(supabase, "photo-1");
+    expect(ctx.studioProfile.identity.currency).toBe("EUR");
+    expect(ctx.studioProfile.capability?.service_types).toMatch(/video/i);
+    expect(ctx.retrievalLog.studioBusinessProfileRowPresent).toBe(true);
+    expect(ctx.retrievalLog.scopesQueried).toContain("studio_profile");
 
     vi.restoreAllMocks();
   });

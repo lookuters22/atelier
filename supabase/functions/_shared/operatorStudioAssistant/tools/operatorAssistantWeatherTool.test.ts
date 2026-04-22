@@ -2,7 +2,11 @@
  * Slice 9 — weather tool path (Open-Meteo) for operator assistant only.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import type { AssistantContext, AssistantOperatorStateSummary } from "../../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+  type AssistantOperatorStateSummary,
+} from "../../../../../src/types/assistantContext.types.ts";
 import { IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY } from "../../context/fetchAssistantOperatorStateSummary.ts";
 import { getAssistantAppCatalogForContext } from "../../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../../src/lib/operatorAssistantAppHelpIntent.ts";
@@ -40,6 +44,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OP,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],

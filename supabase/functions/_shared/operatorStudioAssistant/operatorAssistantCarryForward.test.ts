@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AssistantContext } from "../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+} from "../../../../src/types/assistantContext.types.ts";
 import type { OperatorAnaCarryForwardData, OperatorAnaCarryForwardForLlm } from "../../../../src/types/operatorAnaCarryForward.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { deriveAssistantPlaybookCoverageSummary } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
@@ -40,6 +43,7 @@ const emptyCtxBase = {
     ...IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY,
     fetchedAt: "2020-01-01T00:00:00.000Z",
   },
+  studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
   memoryHeaders: [] as never[],
   selectedMemories: [] as never[],
   globalKnowledge: [] as never[],

@@ -2,13 +2,13 @@ import type { Data } from "@measured/puck";
 import { Puck } from "@measured/puck";
 import "@measured/puck/puck.css";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OFFER_PUCK_UI_VIEWPORTS, OFFER_PUCK_VIEWPORTS } from "../../features/offer-puck/puckDefaultViewports";
 import { buildStandaloneHtmlFromPuck } from "../../features/offer-puck/exportHtml";
 import { offerPuckConfig } from "../../features/offer-puck/offerPuckConfig";
 import { OfferViewportProvider } from "../../features/offer-puck/OfferViewportContext";
 import { normalizePuckData, projectDisplayName } from "../../lib/offerPuckNormalize";
-import { getOfferProject, upsertOfferProject } from "../../lib/offerProjectsStorage";
+import { upsertOfferProject, type OfferProjectRecord } from "../../lib/offerProjectsStorage";
 import { OfferHtmlPreviewModal } from "../../features/offer-puck/OfferHtmlPreviewModal";
 import { OfferPuckComponentOverlay } from "../../features/offer-puck/OfferPuckComponentOverlay";
 import { OfferViewportControls } from "../../features/offer-puck/OfferViewportControls";
@@ -20,16 +20,9 @@ import { OfferPuckInspectorBridge } from "./OfferPuckInspectorBridge";
 import { useOfferBuilderShell } from "./offerBuilderShellContext";
 
 type OfferPuckEditorProps = {
-  projectId: string;
+  initialProject: OfferProjectRecord;
+  photographerId: string | null;
 };
-
-function loadProjectData(projectId: string): Data {
-  const p = getOfferProject(projectId);
-  if (!p) {
-    throw new Error("Missing project");
-  }
-  return normalizePuckData(p.data);
-}
 
 function clonePuckData(data: Data): Data {
   if (typeof structuredClone === "function") {
@@ -38,9 +31,12 @@ function clonePuckData(data: Data): Data {
   return JSON.parse(JSON.stringify(data)) as Data;
 }
 
-export function OfferPuckEditor({ projectId }: OfferPuckEditorProps) {
+export function OfferPuckEditor({ initialProject, photographerId }: OfferPuckEditorProps) {
+  const projectId = initialProject.id;
+  const initialProjectRef = useRef(initialProject);
+  initialProjectRef.current = initialProject;
   const { setCommands } = useOfferBuilderShell();
-  const [data, setData] = useState<Data>(() => loadProjectData(projectId));
+  const [data, setData] = useState<Data>(() => normalizePuckData(clonePuckData(initialProject.data)));
   const [editorKey, setEditorKey] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewViewportWidth, setPreviewViewportWidth] = useState(
@@ -48,7 +44,8 @@ export function OfferPuckEditor({ projectId }: OfferPuckEditorProps) {
   );
 
   useEffect(() => {
-    setData(loadProjectData(projectId));
+    const p = initialProjectRef.current;
+    setData(normalizePuckData(clonePuckData(p.data)));
     setEditorKey((current) => current + 1);
     setPreviewViewportWidth(OFFER_PUCK_VIEWPORTS[OFFER_PUCK_VIEWPORTS.length - 1]?.width ?? 1280);
   }, [projectId]);
@@ -81,16 +78,17 @@ export function OfferPuckEditor({ projectId }: OfferPuckEditorProps) {
   }, [blockCount, projectId]);
 
   useEffect(() => {
-    const p = getOfferProject(projectId);
-    if (!p) return;
     const name = projectDisplayName(data);
-    upsertOfferProject({
-      ...p,
-      name,
-      updatedAt: new Date().toISOString(),
-      data,
-    });
-  }, [projectId, data]);
+    void upsertOfferProject(
+      {
+        id: projectId,
+        name,
+        updatedAt: new Date().toISOString(),
+        data,
+      },
+      photographerId,
+    ).catch((e) => console.error("Offer project save failed:", e));
+  }, [projectId, data, photographerId]);
 
   const previewSrc = useMemo(() => {
     try {
@@ -119,15 +117,16 @@ export function OfferPuckEditor({ projectId }: OfferPuckEditorProps) {
   }, [data]);
 
   const saveNow = useCallback(() => {
-    const p = getOfferProject(projectId);
-    if (!p) return;
-    upsertOfferProject({
-      ...p,
-      name: projectDisplayName(data),
-      updatedAt: new Date().toISOString(),
-      data,
-    });
-  }, [projectId, data]);
+    void upsertOfferProject(
+      {
+        id: projectId,
+        name: projectDisplayName(data),
+        updatedAt: new Date().toISOString(),
+        data,
+      },
+      photographerId,
+    ).catch((e) => console.error("Offer project save failed:", e));
+  }, [projectId, data, photographerId]);
 
   const documentTitle =
     (data.root?.props as { title?: string } | undefined)?.title?.trim() || "Magazine offer";

@@ -28,7 +28,10 @@ vi.mock("./streamingReplyExtractor.ts", () => ({
   }),
 }));
 
-import type { AssistantContext } from "../../../../src/types/assistantContext.types.ts";
+import {
+  IDLE_ASSISTANT_STUDIO_PROFILE,
+  type AssistantContext,
+} from "../../../../src/types/assistantContext.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
 import { IDLE_ASSISTANT_THREAD_MESSAGE_BODIES } from "../context/fetchAssistantThreadMessageBodies.ts";
@@ -60,6 +63,7 @@ function minimalContext(): AssistantContext {
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],

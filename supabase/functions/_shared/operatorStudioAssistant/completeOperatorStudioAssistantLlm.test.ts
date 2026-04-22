@@ -25,6 +25,7 @@ import type {
   AssistantFocusedProjectFacts,
   AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
+import { IDLE_ASSISTANT_STUDIO_PROFILE } from "../../../../src/types/assistantContext.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { shouldIncludeAppCatalogInOperatorPrompt } from "../../../../src/lib/operatorAssistantAppHelpIntent.ts";
 import { IDLE_ASSISTANT_THREAD_MESSAGE_BODIES } from "../context/fetchAssistantThreadMessageBodies.ts";
@@ -71,6 +72,7 @@ function minimalAssistantContext(overrides: Partial<AssistantContext> = {}): Ass
     focusedProjectSummary: null,
     focusedProjectRowHints: null,
     operatorStateSummary: EMPTY_OPERATOR_STATE,
+    studioProfile: IDLE_ASSISTANT_STUDIO_PROFILE,
     memoryHeaders: [],
     selectedMemories: [],
     globalKnowledge: [],
@@ -175,6 +177,15 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toContain("supporting");
     expect(p).toContain("context does not contain");
     expect(p).toContain("missing");
+  });
+
+  it("studio profile grounding v1 — capability boundary vs playbook authority", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toContain("**Studio profile vs playbook (read-only capability boundary):**");
+    expect(p).toContain("**studio_business_profiles**");
+    expect(p).toContain("**photographers.settings**");
+    expect(p).toMatch(/do not invent/i);
+    expect(p).toMatch(/Playbook.*governs how you should behave/i);
   });
 
   it("includes out-of-scope redirect and keeps studio orientation", () => {
