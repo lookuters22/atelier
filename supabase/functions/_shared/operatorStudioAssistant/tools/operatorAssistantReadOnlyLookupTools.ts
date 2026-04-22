@@ -15,6 +15,7 @@ import {
 import {
   fetchAssistantThreadMessageBodies,
 } from "../../context/fetchAssistantThreadMessageBodies.ts";
+import { fetchAssistantOperatorCorpusSearch } from "../../context/fetchAssistantOperatorCorpusSearch.ts";
 import { fetchAssistantThreadMessageLookup } from "../../context/fetchAssistantThreadMessageLookup.ts";
 import { fetchAssistantInquiryCountSnapshot } from "../../context/fetchAssistantInquiryCountSnapshot.ts";
 import {
@@ -196,9 +197,27 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "operator_lookup_corpus",
+      description:
+        "Phase-1 **tenant-wide indexed search** (read-only): threads/inbox view (title, sender, latest snippet; optional bounded `messages.body` probe), CRM `weddings` text fields, `memories` title/summary, offer-builder **names**, in-memory **playbook** + **case exception notes**, invoice template fields from Context. Returns **lightweight hits with ids** — not full bodies or Puck JSON. Use when the **Corpus search** block is missing, empty, or the operator asks a **find / search / anything about** question across the studio. Follow with **operator_lookup_project_details**, **operator_lookup_thread_messages**, or **operator_lookup_offer_builder** on **top hits** for phase-2 detail.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Natural-language search query (max 200 characters).",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "operator_lookup_threads",
       description:
-        "Fetch a bounded list of recent threads with last inbound/outbound activity timestamps (**no** message bodies in this tool). Resolves people/projects from the query using the same index as first pass, and respects the operator’s focused wedding/person from context when relevant. Use when thread/email activity is missing from Context and the question is about who emailed, last contact, or a named inquiry/thread — including *did we talk to X* / *messages from X* when the first-pass Context list is empty or clearly not enough. **Deep search** mode still uses a **wider** inbox scoring window than normal; this tool can add another targeted pass. For **what the email says**, follow with **operator_lookup_thread_messages** using a **threadId** from the result.",
+        "Fetch a bounded list of recent threads with last inbound/outbound activity timestamps (**no** message bodies in this tool). Resolves people/projects from the query using the same index as first pass, and respects the operator’s focused wedding/person from context when relevant. Use when thread/email activity is missing from Context and the question is about who emailed, last contact, or a named inquiry/thread — including *did we talk to X* / *messages from X* when the first-pass Context list is empty or clearly not enough. For **full-tenant indexed hits** across threads + CRM + policy, prefer **operator_lookup_corpus** (or the **Corpus search** Context block). **Deep search** mode still uses a **wider** inbox scoring window than normal; this tool can add another targeted pass. For **what the email says**, follow with **operator_lookup_thread_messages** using a **threadId** from the result.",
       parameters: {
         type: "object",
         properties: {
@@ -379,6 +398,32 @@ function slimThreadLookupPayload(
   };
 }
 
+function slimCorpusSearchPayload(snap: Awaited<ReturnType<typeof fetchAssistantOperatorCorpusSearch>>) {
+  return {
+    didRun: snap.didRun,
+    scopeNote: snap.scopeNote,
+    tokensQueried: snap.tokensQueried,
+    deepMode: snap.deepMode,
+    messageBodyProbeRan: snap.messageBodyProbeRan,
+    threadHits: snap.threadHits.slice(0, 16),
+    projectHits: snap.projectHits.slice(0, 16),
+    playbookHits: snap.playbookHits.slice(0, 12),
+    caseExceptionHits: snap.caseExceptionHits.slice(0, 8),
+    memoryHits: snap.memoryHits.slice(0, 10),
+    offerProjectHits: snap.offerProjectHits.slice(0, 8),
+    invoiceTemplateMentioned: snap.invoiceTemplateMentioned,
+    truncated: {
+      threads: snap.threadHits.length > 16,
+      projects: snap.projectHits.length > 16,
+      playbook: snap.playbookHits.length > 12,
+      caseExceptions: snap.caseExceptionHits.length > 8,
+      memories: snap.memoryHits.length > 10,
+      offers: snap.offerProjectHits.length > 8,
+    },
+    note: "Phase-1 hits only; expand top ids with operator_lookup_project_details / operator_lookup_thread_messages / operator_lookup_offer_builder.",
+  };
+}
+
 function slimInquiryPayload(s: Awaited<ReturnType<typeof fetchAssistantInquiryCountSnapshot>>) {
   return {
     didRun: s.didRun,
@@ -407,6 +452,25 @@ export async function executeOperatorReadOnlyLookupTool(
   if (name === "operator_lookup_inquiry_counts") {
     const snap = await fetchAssistantInquiryCountSnapshot(supabase, photographerId, {});
     return JSON.stringify({ tool: name, result: slimInquiryPayload(snap) });
+  }
+
+  if (name === "operator_lookup_corpus") {
+    const query = normalizeToolQuery(args.query);
+    if (query.length < 4) {
+      return JSON.stringify({
+        tool: name,
+        error: "query_too_short",
+        note: "Provide at least 4 characters for corpus search.",
+      });
+    }
+    const snap = await fetchAssistantOperatorCorpusSearch(supabase, photographerId, {
+      queryText: query,
+      playbookRules: ctx.playbookRules,
+      authorizedCaseExceptions: ctx.authorizedCaseExceptions,
+      studioInvoiceSetup: ctx.studioInvoiceSetup,
+      deepCorpusSearch: ctx.investigationSpecialistFocus != null,
+    });
+    return JSON.stringify({ tool: name, query, result: slimCorpusSearchPayload(snap) });
   }
 
   if (name === "operator_lookup_projects") {

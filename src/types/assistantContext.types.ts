@@ -216,6 +216,82 @@ export type AssistantOperatorThreadMessageBodiesSnapshot = {
 };
 
 /**
+ * Phase-1 **tenant corpus** hits (indexed / lightweight fields only). Phase-2 detail = read-only tools.
+ * Gated by `shouldLoadOperatorCorpusSearchSnapshot` (`operatorCorpusSearchIntent.ts`).
+ */
+export type AssistantOperatorCorpusSearchSnapshot = {
+  didRun: boolean;
+  /** Honest description of SQL vs in-memory surfaces and caps (for the model). */
+  scopeNote: string;
+  /** Normalized tokens used for ilike / matching. */
+  tokensQueried: string[];
+  /** True when S4 deep search used wider per-surface caps. */
+  deepMode: boolean;
+  /** True when a bounded `messages.body` ilike probe ran (not full history). */
+  messageBodyProbeRan: boolean;
+  threadHits: Array<{
+    threadId: string;
+    title: string;
+    weddingId: string | null;
+    lastActivityAt: string;
+    channel: string;
+    kind: string;
+    matchedOn: "title" | "latest_sender" | "latest_body_snippet" | "message_body_probe";
+    snippet: string | null;
+  }>;
+  projectHits: Array<{
+    weddingId: string;
+    coupleNames: string;
+    location: string;
+    stage: string;
+    projectType: string;
+    weddingDate: string | null;
+    matchedOn: string;
+  }>;
+  playbookHits: Array<{
+    ruleId: string;
+    actionKey: string;
+    topic: string | null;
+    decisionMode: string;
+    snippet: string;
+  }>;
+  caseExceptionHits: Array<{
+    id: string;
+    weddingId: string | null;
+    status: string;
+    snippet: string;
+  }>;
+  memoryHits: Array<{
+    id: string;
+    scope: string;
+    title: string;
+    snippet: string;
+  }>;
+  offerProjectHits: Array<{
+    offerProjectId: string;
+    name: string;
+    updatedAt: string;
+  }>;
+  /** In-memory match against invoice template fields already loaded in Context. */
+  invoiceTemplateMentioned: boolean;
+};
+
+export const IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH: AssistantOperatorCorpusSearchSnapshot = {
+  didRun: false,
+  scopeNote: "not run",
+  tokensQueried: [],
+  deepMode: false,
+  messageBodyProbeRan: false,
+  threadHits: [],
+  projectHits: [],
+  playbookHits: [],
+  caseExceptionHits: [],
+  memoryHits: [],
+  offerProjectHits: [],
+  invoiceTemplateMentioned: false,
+};
+
+/**
  * Time-window **new inquiry arrival** counts (first client `direction=in` per thread), UTC windows.
  * Gated by {@link hasOperatorInquiryCountIntent} to avoid extra reads.
  */
@@ -414,6 +490,7 @@ export type AssistantRetrievalLog = {
     | "studio_profile"
     | "offer_builder"
     | "invoice_setup"
+    | "operator_corpus_search"
   >;
   /** Requested vs tenant-validated (invalid ids are dropped). */
   focus: {
@@ -488,6 +565,19 @@ export type AssistantRetrievalLog = {
   };
   /** Read-only `studio_business_profiles` row present for this tenant (Slice: studio profile grounding v1). */
   studioBusinessProfileRowPresent?: boolean;
+  /** Phase-1 indexed corpus search (operator Ana). */
+  corpusSearch?: {
+    didRun: boolean;
+    tokenCount: number;
+    threadHits: number;
+    projectHits: number;
+    playbookHits: number;
+    caseExceptionHits: number;
+    memoryHits: number;
+    offerHits: number;
+    messageBodyProbe: boolean;
+    deepMode: boolean;
+  };
 };
 
 /**
@@ -748,6 +838,11 @@ export type AssistantContext = {
    * questions about email/thread history — gated by query intent; uses focus + entity resolution when available.
    */
   operatorThreadMessageLookup: AssistantOperatorThreadMessageLookup;
+  /**
+   * Phase-1 **tenant corpus** search (indexed `weddings` / inbox view / memories / offer names, in-memory policy).
+   * See `shouldLoadOperatorCorpusSearchSnapshot` in `operatorCorpusSearchIntent.ts`.
+   */
+  operatorCorpusSearch: AssistantOperatorCorpusSearchSnapshot;
   /**
    * Bounded recent message **bodies** for one thread (optional first-pass auto-load or tool).
    * See {@link hasOperatorThreadMessageBodyLookupIntent} and **operator_lookup_thread_messages**.

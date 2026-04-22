@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -84,6 +85,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
     operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     operatorTriage: IDLE_OPERATOR_ANA_TRIAGE,
     escalationResolverFocus: null,
     offerBuilderSpecialistFocus: null,
@@ -105,6 +107,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     operatorInquiryCountSnapshot:
       merged.operatorInquiryCountSnapshot ?? IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: merged.operatorCalendarSnapshot ?? IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: merged.operatorCorpusSearch ?? IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     playbookCoverageSummary: cov,
     retrievalLog: {
       ...merged.retrievalLog,
@@ -122,6 +125,35 @@ describe("formatAssistantContextForOperatorLlm", () => {
     const s = formatAssistantContextForOperatorLlm(minimalCtx());
     expect(s).toContain("## Offer projects (grounded");
     expect(s).toMatch(/no offer-builder projects|No rows returned/i);
+  });
+
+  it("includes Corpus search block when operatorCorpusSearch ran", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        queryText: "find anything about Villa Balbiano",
+        operatorCorpusSearch: {
+          ...IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
+          didRun: true,
+          scopeNote: "test scope",
+          tokensQueried: ["balbiano", "villa"],
+          threadHits: [
+            {
+              threadId: "t1",
+              title: "Re: Villa Balbiano",
+              weddingId: null,
+              lastActivityAt: "2026-01-01T00:00:00.000Z",
+              channel: "email",
+              kind: "client",
+              matchedOn: "title",
+              snippet: null,
+            },
+          ],
+        },
+      }),
+    );
+    expect(s).toContain("## Corpus search (tenant-wide indexed hits — phase 1)");
+    expect(s).toContain("Villa Balbiano");
+    expect(s).toContain("`t1`");
   });
 
   it("adds person-name communication honesty when thread lookup ran and query names someone", () => {

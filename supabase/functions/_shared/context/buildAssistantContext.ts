@@ -7,6 +7,7 @@ import type {
   AssistantStudioAnalysisSnapshot,
   BuildAssistantContextInput,
 } from "../../../../src/types/assistantContext.types.ts";
+import { IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH } from "../../../../src/types/assistantContext.types.ts";
 import { assertResolvedTenantPhotographerId } from "../../../../src/types/decisionContext.types.ts";
 import { deriveEffectivePlaybook } from "../policy/deriveEffectivePlaybook.ts";
 import { fetchActivePlaybookRulesForDecisionContext } from "./fetchActivePlaybookRulesForDecisionContext.ts";
@@ -38,6 +39,7 @@ import {
   fetchAssistantThreadMessageBodies,
   IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
 } from "./fetchAssistantThreadMessageBodies.ts";
+import { fetchAssistantOperatorCorpusSearch } from "./fetchAssistantOperatorCorpusSearch.ts";
 import {
   fetchAssistantThreadMessageLookup,
   IDLE_ASSISTANT_THREAD_MESSAGE_LOOKUP,
@@ -48,6 +50,7 @@ import {
   hasOperatorThreadMessageLookupIntent,
   querySuggestsCommercialOrNonWeddingInboundFocus,
 } from "../../../../src/lib/operatorAssistantThreadMessageLookupIntent.ts";
+import { shouldLoadOperatorCorpusSearchSnapshot } from "../../../../src/lib/operatorCorpusSearchIntent.ts";
 import {
   hasOperatorInquiryCountContinuityIntent,
   hasOperatorInquiryCountIntent,
@@ -357,6 +360,11 @@ export async function buildAssistantContext(
     scopesQueried.push("operator_calendar_snapshot");
   }
 
+  const loadCorpusSearch = shouldLoadOperatorCorpusSearchSnapshot(queryText);
+  if (loadCorpusSearch) {
+    scopesQueried.push("operator_corpus_search");
+  }
+
   const assistantNow = new Date();
   const operatorCalendarLookupPlan =
     loadCalendarSnapshot
@@ -373,7 +381,7 @@ export async function buildAssistantContext(
         })
       : null;
 
-  const [operatorThreadMessageLookup, operatorInquiryCountSnapshot, operatorCalendarSnapshot] =
+  const [operatorThreadMessageLookup, operatorInquiryCountSnapshot, operatorCalendarSnapshot, operatorCorpusSearch] =
     await Promise.all([
       loadThreadMessageLookup
         ? fetchAssistantThreadMessageLookup(supabase, tenantPhotographerId, {
@@ -394,6 +402,15 @@ export async function buildAssistantContext(
             plan: operatorCalendarLookupPlan,
           })
         : Promise.resolve(IDLE_ASSISTANT_CALENDAR_SNAPSHOT),
+      loadCorpusSearch
+        ? fetchAssistantOperatorCorpusSearch(supabase, tenantPhotographerId, {
+            queryText,
+            playbookRules,
+            authorizedCaseExceptions,
+            studioInvoiceSetup,
+            deepCorpusSearch: investigationSpecialistRequested,
+          })
+        : Promise.resolve(IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH),
     ]);
 
   let operatorThreadMessageBodies = IDLE_ASSISTANT_THREAD_MESSAGE_BODIES;
@@ -472,6 +489,18 @@ export async function buildAssistantContext(
     },
     invoiceSetup: {
       hasRow: studioInvoiceSetup.hasRow,
+    },
+    corpusSearch: {
+      didRun: operatorCorpusSearch.didRun,
+      tokenCount: operatorCorpusSearch.tokensQueried.length,
+      threadHits: operatorCorpusSearch.threadHits.length,
+      projectHits: operatorCorpusSearch.projectHits.length,
+      playbookHits: operatorCorpusSearch.playbookHits.length,
+      caseExceptionHits: operatorCorpusSearch.caseExceptionHits.length,
+      memoryHits: operatorCorpusSearch.memoryHits.length,
+      offerHits: operatorCorpusSearch.offerProjectHits.length,
+      messageBodyProbe: operatorCorpusSearch.messageBodyProbeRan,
+      deepMode: operatorCorpusSearch.deepMode,
     },
   };
 
@@ -573,6 +602,7 @@ export async function buildAssistantContext(
     studioAnalysisSnapshot: studioAnalysisSnapshot,
     operatorQueryEntityResolution,
     operatorThreadMessageLookup,
+    operatorCorpusSearch,
     operatorThreadMessageBodies,
     operatorInquiryCountSnapshot,
     operatorCalendarSnapshot,

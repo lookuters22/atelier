@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -59,6 +60,7 @@ const emptyCtxBase = {
   operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
   operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
   operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+  operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   operatorTriage: IDLE_OPERATOR_ANA_TRIAGE,
   escalationResolverFocus: null,
   offerBuilderSpecialistFocus: null,

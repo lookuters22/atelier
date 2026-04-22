@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -59,6 +60,7 @@ function minimalCtx(): AssistantContext {
     operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
     operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     operatorTriage: IDLE_OPERATOR_ANA_TRIAGE,
     escalationResolverFocus: null,
     offerBuilderSpecialistFocus: null,
@@ -140,7 +142,46 @@ describe("executeOperatorReadOnlyLookupTool", () => {
     expect(TOOL_NAMES).toContain("operator_lookup_escalation");
     expect(TOOL_NAMES).toContain("operator_lookup_offer_builder");
     expect(TOOL_NAMES).toContain("operator_lookup_invoice_setup");
-    expect(TOOL_NAMES.length).toBe(10);
+    expect(TOOL_NAMES).toContain("operator_lookup_corpus");
+    expect(TOOL_NAMES.length).toBe(11);
+  });
+
+  it("operator_lookup_corpus rejects very short query", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_corpus",
+      JSON.stringify({ query: "ab" }),
+    );
+    const j = JSON.parse(raw) as { error?: string };
+    expect(j.error).toBe("query_too_short");
+  });
+
+  it("operator_lookup_corpus returns slim payload on stub supabase (empty hits)", async () => {
+    const terminal = Promise.resolve({ data: [] as unknown[], error: null });
+    const chain: Record<string, unknown> = {};
+    for (const m of ["select", "eq", "neq", "ilike", "or", "is", "in", "order"] as const) {
+      chain[m] = () => chain;
+    }
+    chain.limit = () => terminal;
+    const supabase = { from: () => chain } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_corpus",
+      JSON.stringify({ query: "Lake Como wedding threads" }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      query: string;
+      result: { didRun: boolean; tokensQueried: string[]; note: string };
+    };
+    expect(j.tool).toBe("operator_lookup_corpus");
+    expect(j.result.didRun).toBe(true);
+    expect(j.result.tokensQueried.length).toBeGreaterThan(0);
+    expect(j.result.note).toMatch(/Phase-1/);
   });
 
   it("operator_lookup_projects returns JSON from entity index", async () => {

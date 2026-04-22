@@ -29,6 +29,7 @@ vi.mock("./streamingReplyExtractor.ts", () => ({
 }));
 
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -102,10 +103,12 @@ function minimalContext(): AssistantContext {
     operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
     operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   };
   return {
     ...base,
     includeAppCatalogInOperatorPrompt: shouldIncludeAppCatalogInOperatorPrompt(base.queryText),
+    operatorCorpusSearch: base.operatorCorpusSearch ?? IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     playbookCoverageSummary: deriveAssistantPlaybookCoverageSummary(base.playbookRules),
   };
 }

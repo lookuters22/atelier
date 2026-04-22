@@ -635,6 +635,116 @@ function formatThreadMessageLookupForOperatorLlm(ctx: AssistantContext): string 
   return lines.join("\n");
 }
 
+const MAX_CORPUS_THREAD_LINES = 14;
+const MAX_CORPUS_PROJECT_LINES = 14;
+const MAX_CORPUS_PLAYBOOK_LINES = 12;
+const MAX_CORPUS_EXCEPTION_LINES = 8;
+const MAX_CORPUS_MEMORY_LINES = 10;
+const MAX_CORPUS_OFFER_LINES = 8;
+
+function formatOperatorCorpusSearchForOperatorLlm(ctx: AssistantContext): string | null {
+  const c = ctx.operatorCorpusSearch;
+  if (!c.didRun) return null;
+  const lines: string[] = [];
+  lines.push("## Corpus search (tenant-wide indexed hits — phase 1)");
+  lines.push(
+    "*(**Phase 1:** SQL `ilike` on indexed/light columns + in-memory playbook/exception/invoice-template matches — **not** full message history or raw Puck JSON. **Phase 2:** use **operator_lookup_project_details**, **operator_lookup_thread_messages**, **operator_lookup_offer_builder**, etc., for top ids. If this block is empty, say **no indexed matches** for the tokens — not “nothing exists anywhere”.)*",
+  );
+  lines.push("");
+  lines.push(`- **Tokens:** ${c.tokensQueried.length ? c.tokensQueried.map((t) => `\`${clip(t, 48)}\``).join(", ") : "*(none)*"}`);
+  lines.push(`- **Deep caps:** ${c.deepMode ? "on" : "off"} · **messages.body probe:** ${c.messageBodyProbeRan ? "yes (bounded)" : "no"}`);
+  lines.push(`- **Scope:** ${clip(c.scopeNote, 900)}`);
+  lines.push("");
+
+  if (c.threadHits.length > 0) {
+    lines.push("### Threads / inbox (matched on title, sender, latest snippet, or body probe)");
+    for (const h of c.threadHits.slice(0, MAX_CORPUS_THREAD_LINES)) {
+      const sn = h.snippet ? ` — snippet: ${clip(h.snippet, 140)}` : "";
+      lines.push(
+        `  - **${clip(h.title, 160)}** — \`${h.matchedOn}\`${sn} — last: ${h.lastActivityAt} — wedding: ${h.weddingId ?? "—"} — thread \`${h.threadId}\``,
+      );
+    }
+    if (c.threadHits.length > MAX_CORPUS_THREAD_LINES) {
+      lines.push(`  - *(…${c.threadHits.length - MAX_CORPUS_THREAD_LINES} more thread hit(s) omitted — use tools to expand.)*`);
+    }
+    lines.push("");
+  }
+
+  if (c.projectHits.length > 0) {
+    lines.push("### Projects (weddings — names, location, package, story_notes)");
+    for (const p of c.projectHits.slice(0, MAX_CORPUS_PROJECT_LINES)) {
+      lines.push(
+        `  - **${clip(p.coupleNames, 120)}** (${p.projectType}, ${p.stage}) — ${clip(p.location, 80)} — date: ${p.weddingDate ?? "—"} — \`${p.weddingId}\` — *${clip(p.matchedOn, 40)}*`,
+      );
+    }
+    if (c.projectHits.length > MAX_CORPUS_PROJECT_LINES) {
+      lines.push(`  - *(…${c.projectHits.length - MAX_CORPUS_PROJECT_LINES} more project hit(s) omitted.)*`);
+    }
+    lines.push("");
+  }
+
+  if (c.playbookHits.length > 0) {
+    lines.push("### Playbook rules (in-memory match on topic / instruction / action_key)");
+    for (const r of c.playbookHits.slice(0, MAX_CORPUS_PLAYBOOK_LINES)) {
+      lines.push(
+        `  - **\`${r.actionKey}\`** — topic: ${clip(r.topic ?? "—", 80)} — mode: ${r.decisionMode} — \`${r.ruleId}\``,
+      );
+      lines.push(`    ${clip(r.snippet, 260)}`);
+    }
+    lines.push("");
+  }
+
+  if (c.caseExceptionHits.length > 0) {
+    lines.push("### Authorized case exceptions (notes matched)");
+    for (const e of c.caseExceptionHits.slice(0, MAX_CORPUS_EXCEPTION_LINES)) {
+      lines.push(
+        `  - **${e.status}** — wedding: ${e.weddingId ?? "—"} — \`${e.id}\` — ${clip(e.snippet, 200)}`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (c.memoryHits.length > 0) {
+    lines.push("### Memories (title/summary)");
+    for (const m of c.memoryHits.slice(0, MAX_CORPUS_MEMORY_LINES)) {
+      lines.push(`  - **${clip(m.title, 120)}** (${m.scope}) — \`${m.id}\` — ${clip(m.snippet, 180)}`);
+    }
+    lines.push("");
+  }
+
+  if (c.offerProjectHits.length > 0) {
+    lines.push("### Offer builder projects (name ilike)");
+    for (const o of c.offerProjectHits.slice(0, MAX_CORPUS_OFFER_LINES)) {
+      lines.push(`  - **${clip(o.name, 120)}** — updated ${o.updatedAt} — \`${o.offerProjectId}\``);
+    }
+    lines.push("");
+  }
+
+  if (c.invoiceTemplateMentioned) {
+    lines.push("### Invoice template (Context row)");
+    lines.push(
+      "  - **Match:** Invoice setup fields in Context mention a query token — see **Invoice setup** block for full bounded text; not a separate DB pass.",
+    );
+    lines.push("");
+  }
+
+  const anyHits =
+    c.threadHits.length +
+      c.projectHits.length +
+      c.playbookHits.length +
+      c.caseExceptionHits.length +
+      c.memoryHits.length +
+      c.offerProjectHits.length +
+      (c.invoiceTemplateMentioned ? 1 : 0) >
+    0;
+  if (!anyHits) {
+    lines.push("*No indexed hits for this query’s tokens in the surfaces above (still bounded — not proof of global absence.)*");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 function formatStudioAnalysisSnapshotBlock(s: AssistantStudioAnalysisSnapshot): string {
   const lines: string[] = [];
   lines.push(
@@ -804,6 +914,12 @@ export function formatAssistantContextForOperatorLlm(
 
   if (matched) {
     parts.push(matched);
+    parts.push("");
+  }
+
+  const corpusMd = formatOperatorCorpusSearchForOperatorLlm(ctx);
+  if (corpusMd) {
+    parts.push(corpusMd);
     parts.push("");
   }
 

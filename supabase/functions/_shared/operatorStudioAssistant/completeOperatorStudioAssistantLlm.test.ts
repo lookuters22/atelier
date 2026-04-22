@@ -26,6 +26,7 @@ import type {
   AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -111,6 +112,7 @@ function minimalAssistantContext(overrides: Partial<AssistantContext> = {}): Ass
     operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
     operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     operatorTriage: IDLE_OPERATOR_ANA_TRIAGE,
     escalationResolverFocus: null,
     offerBuilderSpecialistFocus: null,
@@ -133,6 +135,7 @@ function minimalAssistantContext(overrides: Partial<AssistantContext> = {}): Ass
     operatorInquiryCountSnapshot:
       base.operatorInquiryCountSnapshot ?? IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: base.operatorCalendarSnapshot ?? IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: base.operatorCorpusSearch ?? IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     playbookCoverageSummary: cov,
     retrievalLog: {
       ...base.retrievalLog,
@@ -339,6 +342,7 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toContain("operator_lookup_escalation");
     expect(p).toContain("operator_lookup_offer_builder");
     expect(p).toContain("operator_lookup_invoice_setup");
+    expect(p).toContain("operator_lookup_corpus");
     expect(p).toMatch(/read-only lookup tools|Read-only lookup tools/i);
     expect(p).toMatch(/Project CRM|resolver vs detail|Slice 3/);
     expect(p).toMatch(/never more than three|more than three/i);
@@ -388,6 +392,7 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
   it("thread / email honesty: bounded bodies + title is not a substitute when excerpts absent", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
     expect(p).toMatch(/\*\*Thread & email \(Context — honesty \+ bounded bodies\):\*\*/);
+    expect(p).toMatch(/\*\*Corpus search \(Context — phase 1/);
     expect(p).toContain("Communication history by name");
     expect(p).toMatch(/Thread message excerpts/);
     expect(p).toMatch(/operator_lookup_thread_messages/);

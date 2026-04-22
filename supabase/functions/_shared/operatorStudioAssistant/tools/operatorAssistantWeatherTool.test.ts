@@ -3,6 +3,7 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
+  IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
   IDLE_ASSISTANT_STUDIO_INVOICE_SETUP,
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
@@ -65,7 +66,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     retrievalLog: {
       mode: "assistant_query" as const,
       queryDigest: { charLength: 2, fingerprint: "wx" },
-      scopesQueried: [] as string[],
+      scopesQueried: [] as AssistantContext["retrievalLog"]["scopesQueried"],
       focus: {
         weddingIdRequested: null,
         weddingIdEffective: null,
@@ -80,8 +81,10 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     },
     operatorQueryEntityResolution: IDLE_OPERATOR_QUERY_ENTITY_RESOLUTION,
     operatorThreadMessageLookup: IDLE_ASSISTANT_THREAD_MESSAGE_LOOKUP,
+    operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
     operatorInquiryCountSnapshot: IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     ...overrides,
   };
   const cov = deriveAssistantPlaybookCoverageSummary(merged.playbookRules);
@@ -96,6 +99,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
     operatorInquiryCountSnapshot:
       merged.operatorInquiryCountSnapshot ?? IDLE_ASSISTANT_INQUIRY_COUNT_SNAPSHOT,
     operatorCalendarSnapshot: merged.operatorCalendarSnapshot ?? IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    operatorCorpusSearch: merged.operatorCorpusSearch ?? IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH,
     playbookCoverageSummary: cov,
     retrievalLog: {
       ...merged.retrievalLog,
@@ -104,7 +108,7 @@ function minimalCtx(overrides: Partial<AssistantContext> = {}): AssistantContext
         uniqueTopicCount: cov.uniqueTopics.length,
         uniqueActionKeyCount: cov.uniqueActionKeys.length,
       },
-    },
+    } as AssistantContext["retrievalLog"],
   };
 }
 
