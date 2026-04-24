@@ -183,10 +183,25 @@ Deno.serve(async (req) => {
     }
 
     if (action === "reject") {
-      const { error: transitionErr } = await transitionDraftPendingToProcessingRewrite(draft_id);
+      const { error: transitionErr, transitioned } = await transitionDraftPendingToProcessingRewrite(draft_id);
       if (transitionErr) {
         logEnd({ ok: false, status: 500, op: "reject_transition", extra: { outcome: String(transitionErr) } });
         return json({ error: transitionErr }, 500);
+      }
+      if (!transitioned) {
+        logEnd({
+          ok: false,
+          status: 409,
+          op: "reject_idempotent",
+          extra: { outcome: "no_pending_row" },
+        });
+        return json(
+          {
+            error:
+              "Draft is not pending approval, or this reject was already applied — no rewrite to request.",
+          },
+          409,
+        );
       }
 
       await emitDraftRewriteRequestedEvent({

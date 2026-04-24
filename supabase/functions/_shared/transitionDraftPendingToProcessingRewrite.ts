@@ -6,12 +6,20 @@ import { supabaseAdmin } from "./supabase.ts";
 
 export async function transitionDraftPendingToProcessingRewrite(
   draftId: string,
-): Promise<{ error: string | null }> {
-  const { error } = await supabaseAdmin
+): Promise<{ error: string | null; transitioned: boolean }> {
+  const { data, error } = await supabaseAdmin
     .from("drafts")
     .update({ status: "processing_rewrite" })
     .eq("id", draftId)
-    .eq("status", "pending_approval");
+    .eq("status", "pending_approval")
+    .select("id")
+    .maybeSingle();
 
-  return { error: error?.message ?? null };
+  if (error) {
+    return { error: error.message, transitioned: false };
+  }
+  if (data == null) {
+    return { error: null, transitioned: false };
+  }
+  return { error: null, transitioned: true };
 }
