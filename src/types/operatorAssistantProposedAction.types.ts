@@ -6,6 +6,58 @@ import type {
 } from "./studioProfileChangeProposal.types.ts";
 import type { OfferBuilderMetadataPatchV1 } from "./offerBuilderChangeProposal.types.ts";
 import type { InvoiceSetupTemplatePatchV1 } from "./invoiceSetupChangeProposal.types.ts";
+import type {
+  ProjectCommercialAmendmentChangeCategory,
+  ProjectCommercialAmendmentDeltasV1,
+} from "./projectCommercialAmendmentProposal.types.ts";
+import type {
+  PublicationRightsEvidenceSource,
+  PublicationRightsPermissionStatus,
+  PublicationRightsUsageChannel,
+} from "./projectPublicationRights.types.ts";
+
+/** Allowed values for verbal/offline capture metadata (matches `memories.capture_channel` CHECK). */
+export const OPERATOR_MEMORY_CAPTURE_CHANNELS = [
+  "phone",
+  "video_call",
+  "in_person",
+  "whatsapp",
+  "instagram_dm",
+  "other",
+] as const;
+
+export type OperatorMemoryCaptureChannel = (typeof OPERATOR_MEMORY_CAPTURE_CHANNELS)[number];
+
+export function isOperatorMemoryCaptureChannel(s: string): s is OperatorMemoryCaptureChannel {
+  return (OPERATOR_MEMORY_CAPTURE_CHANNELS as readonly string[]).includes(s);
+}
+
+/** Matches `memories.audience_source_tier` CHECK / thread audience policy. */
+export const OPERATOR_MEMORY_AUDIENCE_SOURCE_TIERS = [
+  "client_visible",
+  "internal_team",
+  "operator_only",
+] as const;
+
+export type OperatorMemoryAudienceSourceTier = (typeof OPERATOR_MEMORY_AUDIENCE_SOURCE_TIERS)[number];
+
+export function isOperatorMemoryAudienceSourceTier(s: string): s is OperatorMemoryAudienceSourceTier {
+  return (OPERATOR_MEMORY_AUDIENCE_SOURCE_TIERS as readonly string[]).includes(s);
+}
+
+/** How the memory text entered the operator confirm path (request / audit; not a `memories` row column in this slice). */
+export const OPERATOR_ASSISTANT_MEMORY_PROPOSAL_ORIGINS = [
+  "operator_typed",
+  "assistant_proposed_confirmed",
+  "assistant_proposed_edited",
+] as const;
+
+export type OperatorAssistantMemoryProposalOrigin =
+  (typeof OPERATOR_ASSISTANT_MEMORY_PROPOSAL_ORIGINS)[number];
+
+export function isOperatorAssistantMemoryProposalOrigin(s: string): s is OperatorAssistantMemoryProposalOrigin {
+  return (OPERATOR_ASSISTANT_MEMORY_PROPOSAL_ORIGINS as readonly string[]).includes(s);
+}
 
 /**
  * Slice 6 — staged rule row; promotion via `review_playbook_rule_candidate` only (not direct `playbook_rules`).
@@ -63,6 +115,17 @@ export type OperatorAssistantProposedActionMemoryNote = {
   weddingId?: string | null;
   /** Required when `memoryScope` is `person` (UUID from tenant `people`). */
   personId?: string | null;
+  /**
+   * Off-email source for verbal/offline capture. When set, confirmed insert uses `memories.type = operator_verbal_capture`.
+   * If `captureOccurredOn` is set, `captureChannel` must also be set (validated on confirm).
+   */
+  captureChannel?: OperatorMemoryCaptureChannel | null;
+  /** YYYY-MM-DD (UTC calendar). Optional; only valid when `captureChannel` is set. */
+  captureOccurredOn?: string | null;
+  /**
+   * Who may see this memory when retrieved in client-facing threads. Omit for normal client-safe facts (**client_visible** on confirm).
+   */
+  audienceSourceTier?: OperatorMemoryAudienceSourceTier | null;
 };
 
 /**
@@ -119,6 +182,43 @@ export type OperatorAssistantProposedActionInvoiceSetupChangeProposal = {
 };
 
 /**
+ * Project-scoped commercial / scope / timeline / team / payment-schedule amendment — confirm enqueues
+ * `project_commercial_amendment_proposals` only (no live contract or invoice apply in v1).
+ * Distinct from **memory_note** (advisory), **playbook_rule_candidate** (reusable policy), **authorized_case_exception** (policy bend).
+ */
+export type OperatorAssistantProposedActionProjectCommercialAmendmentProposal = {
+  kind: "project_commercial_amendment_proposal";
+  rationale: string;
+  /** Tenant-owned project (`weddings.id`). */
+  weddingId: string;
+  /** Optional thread anchor (`threads.id`). */
+  clientThreadId?: string | null;
+  changeCategories: ProjectCommercialAmendmentChangeCategory[];
+  deltas: ProjectCommercialAmendmentDeltasV1;
+};
+
+/**
+ * P13 — structured publication / usage / attribution record for one project (`weddings.id`).
+ * Confirm inserts `project_publication_rights` only — not memory (advisory), playbook, amendment, or case exception.
+ */
+export type OperatorAssistantProposedActionPublicationRightsRecord = {
+  kind: "publication_rights_record";
+  weddingId: string;
+  personId?: string | null;
+  clientThreadId?: string | null;
+  permissionStatus: PublicationRightsPermissionStatus;
+  permittedUsageChannels: PublicationRightsUsageChannel[];
+  attributionRequired: boolean;
+  attributionDetail?: string | null;
+  exclusionNotes?: string | null;
+  /** YYYY-MM-DD optional expiry of this grant / constraint snapshot. */
+  validUntil?: string | null;
+  evidenceSource: PublicationRightsEvidenceSource;
+  /** Operator-visible audit line — what is being recorded and why. */
+  operatorConfirmationSummary: string;
+};
+
+/**
  * F3 — simple `calendar_events` create (confirm → insert). Optional project link via `weddingId`.
  */
 export type OperatorAssistantProposedActionCalendarEventCreate = {
@@ -161,6 +261,8 @@ export type OperatorAssistantProposedAction =
   | OperatorAssistantProposedActionStudioProfileChangeProposal
   | OperatorAssistantProposedActionOfferBuilderChangeProposal
   | OperatorAssistantProposedActionInvoiceSetupChangeProposal
+  | OperatorAssistantProposedActionProjectCommercialAmendmentProposal
+  | OperatorAssistantProposedActionPublicationRightsRecord
   | OperatorAssistantProposedActionCalendarEventCreate
   | OperatorAssistantProposedActionCalendarEventReschedule
   | OperatorAssistantProposedActionEscalationResolve;
@@ -206,6 +308,11 @@ export type InsertOperatorAssistantTaskBody = {
 
 /** API body for `insert-operator-assistant-memory` (confirm step). */
 export type InsertOperatorAssistantMemoryBody = {
+  /**
+   * Distinguishes Ana’s one-click confirm from other entry paths at the API boundary
+   * (no DB column in this slice — recorded on write-audit detail).
+   */
+  proposalOrigin: OperatorAssistantMemoryProposalOrigin;
   memoryScope: "project" | "studio" | "person";
   title: string;
   /** Explicit decision/outcome line; server composes the stored preview from this + supplementary `summary`. */
@@ -215,6 +322,25 @@ export type InsertOperatorAssistantMemoryBody = {
   fullContent: string;
   weddingId?: string | null;
   personId?: string | null;
+  captureChannel?: OperatorMemoryCaptureChannel | null;
+  captureOccurredOn?: string | null;
+  /** Omit to default **client_visible** on insert. */
+  audienceSourceTier?: OperatorMemoryAudienceSourceTier | null;
+};
+
+/** API body for `insert-operator-assistant-publication-rights` (confirm step). */
+export type InsertOperatorAssistantPublicationRightsBody = {
+  weddingId: string;
+  personId?: string | null;
+  clientThreadId?: string | null;
+  permissionStatus: PublicationRightsPermissionStatus;
+  permittedUsageChannels: PublicationRightsUsageChannel[];
+  attributionRequired: boolean;
+  attributionDetail?: string | null;
+  exclusionNotes?: string | null;
+  validUntil?: string | null;
+  evidenceSource: PublicationRightsEvidenceSource;
+  operatorConfirmationSummary: string;
 };
 
 /** API body for `insert-operator-assistant-authorized-case-exception` (confirm step). */

@@ -5,12 +5,13 @@ import { MemoryRouter } from "react-router-dom";
 import { SupportAssistantWidget } from "./SupportAssistantWidget";
 
 const getSessionMock = vi.hoisted(() => vi.fn());
+const getUserMock = vi.hoisted(() => vi.fn());
 const invokeMock = vi.hoisted(() => vi.fn());
 const globalFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/supabase", () => ({
   supabase: {
-    auth: { getSession: getSessionMock },
+    auth: { getSession: getSessionMock, getUser: getUserMock },
     functions: { invoke: invokeMock },
   },
 }));
@@ -54,9 +55,11 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     getSessionMock.mockReset();
+    getUserMock.mockReset();
     invokeMock.mockReset();
     globalFetch.mockReset();
     getSessionMock.mockResolvedValue({ data: { session: { access_token: "tok" } } });
+    getUserMock.mockResolvedValue({ data: { user: { email: "test@example.com" } } });
     globalThis.fetch = globalFetch as unknown as typeof fetch;
   });
 
@@ -83,7 +86,7 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
       </MemoryRouter>,
     );
     openPanel();
-    const ta = screen.getByPlaceholderText("Ask me anything...");
+    const ta = screen.getByTestId("ana-widget-question-input");
     fireEvent.change(ta, { target: { value: "Hello" } });
     fireEvent.click(screen.getByLabelText("Send"));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("operator-studio-assistant", expect.anything()));
@@ -131,7 +134,7 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
       </MemoryRouter>,
     );
     openPanel();
-    const ta = screen.getByPlaceholderText("Ask me anything...");
+    const ta = screen.getByTestId("ana-widget-question-input");
     fireEvent.change(ta, { target: { value: "Q" } });
     fireEvent.click(screen.getByLabelText("Send"));
 
@@ -173,7 +176,7 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
       </MemoryRouter>,
     );
     openPanel();
-    const ta = screen.getByPlaceholderText("Ask me anything...");
+    const ta = screen.getByTestId("ana-widget-question-input");
     fireEvent.change(ta, { target: { value: "Q" } });
     fireEvent.click(screen.getByLabelText("Send"));
     await waitFor(() => expect(alertMock).toHaveBeenCalled());
@@ -203,7 +206,7 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
       </MemoryRouter>,
     );
     openPanel();
-    fireEvent.change(screen.getByPlaceholderText("Ask me anything..."), { target: { value: "Q" } });
+    fireEvent.change(screen.getByTestId("ana-widget-question-input"), { target: { value: "Q" } });
     fireEvent.click(screen.getByLabelText("Send"));
     await waitFor(() => expect(globalFetch).toHaveBeenCalled());
     const sig = firstSignal;
@@ -248,7 +251,7 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
       </MemoryRouter>,
     );
     openPanel();
-    const ta = screen.getByPlaceholderText("Ask me anything...");
+    const ta = screen.getByTestId("ana-widget-question-input");
     fireEvent.change(ta, { target: { value: "First" } });
     fireEvent.click(screen.getByLabelText("Send"));
     await waitFor(() => expect(n).toBe(1));
@@ -258,6 +261,62 @@ describe("SupportAssistantWidget streaming (Slice 5)", () => {
     fireEvent.click(screen.getByLabelText("Send"));
     await waitFor(() => expect(firstSignal!.aborted).toBe(true));
     await waitFor(() => expect(n).toBe(2));
+    alertMock.mockRestore();
+  });
+
+  it("memory confirm: invoke body includes proposalOrigin assistant_proposed_confirmed", async () => {
+    vi.stubEnv("VITE_OPERATOR_ASSISTANT_STREAMING_V1", "true");
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-test");
+    const alertMock = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    invokeMock.mockResolvedValue({ data: { memoryId: "mem-test-1" }, error: null });
+
+    globalFetch.mockImplementation(() =>
+      Promise.resolve(
+        makeSseResponse([
+          {
+            type: "done",
+            data: {
+              reply: "I added a memory note for you to confirm.",
+              clientFacingForbidden: true,
+              carryForward: null,
+              proposedActions: [
+                {
+                  kind: "memory_note",
+                  memoryScope: "studio",
+                  title: "Ceremony",
+                  outcome: "Unplugged",
+                  summary: "No flash",
+                  fullContent: "No flash in church",
+                },
+              ],
+            },
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <MemoryRouter>
+        <SupportAssistantWidget />
+      </MemoryRouter>,
+    );
+    openPanel();
+    fireEvent.change(screen.getByTestId("ana-widget-question-input"), { target: { value: "Remember this" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Suggested by Ana")).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save memory (confirm)" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    const call = invokeMock.mock.calls.find((c) => c[0] === "insert-operator-assistant-memory");
+    expect(call).toBeDefined();
+    const body = (call![1] as { body: Record<string, unknown> }).body;
+    expect(body.proposalOrigin).toBe("assistant_proposed_confirmed");
+    expect(body.memoryScope).toBe("studio");
+    expect(alertMock).toHaveBeenCalled();
     alertMock.mockRestore();
   });
 });

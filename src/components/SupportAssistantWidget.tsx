@@ -406,6 +406,7 @@ export function SupportAssistantWidget() {
     try {
       const { data, error } = await supabase.functions.invoke("insert-operator-assistant-memory", {
         body: {
+          proposalOrigin: "assistant_proposed_confirmed",
           memoryScope: p.memoryScope,
           title: p.title,
           outcome: p.outcome,
@@ -413,6 +414,9 @@ export function SupportAssistantWidget() {
           fullContent: p.fullContent,
           weddingId: p.weddingId ?? null,
           personId: p.personId ?? null,
+          ...(p.captureChannel != null ? { captureChannel: p.captureChannel } : {}),
+          ...(p.captureOccurredOn != null ? { captureOccurredOn: p.captureOccurredOn } : {}),
+          ...(p.audienceSourceTier != null ? { audienceSourceTier: p.audienceSourceTier } : {}),
         },
       });
       if (error) {
@@ -1520,6 +1524,9 @@ export function SupportAssistantWidget() {
                                   <p className="font-['Saans',ui-sans-serif] text-[10px] font-semibold uppercase tracking-wide text-violet-200/90">
                                     Proposed memory
                                   </p>
+                                  <p className="mt-0.5 font-['Saans',ui-sans-serif] text-[9px] font-medium text-violet-200/80">
+                                    Suggested by Ana
+                                  </p>
                                   <p className="mt-1 font-['Saans',ui-sans-serif] text-[11px] text-white/90">{p.title}</p>
                                   <p className="mt-0.5 line-clamp-3 font-['Saans',ui-sans-serif] text-[10px] leading-snug text-white/70">
                                     {composeOperatorAssistantMemorySummaryForStorage(p.outcome, p.summary, 400)}
@@ -1932,6 +1939,7 @@ export function SupportAssistantWidget() {
                 <div className="ana-widget-input-well focus-within:border-white/25">
                   <textarea
                     id="support-question"
+                    data-testid="ana-widget-question-input"
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
                     onKeyDown={(e) => {

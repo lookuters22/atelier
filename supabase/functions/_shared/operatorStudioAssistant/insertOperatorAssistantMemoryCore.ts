@@ -41,15 +41,23 @@ export async function insertMemoryForOperatorAssistant(
     }
   }
 
+  const memoryType =
+    body.captureChannel != null && body.captureChannel !== ""
+      ? "operator_verbal_capture"
+      : "operator_assistant_note";
+
   const insertRow: Database["public"]["Tables"]["memories"]["Insert"] = {
     photographer_id: photographerId,
     scope: body.memoryScope,
     wedding_id: body.memoryScope === "project" ? body.weddingId : null,
     person_id: body.memoryScope === "person" ? body.personId : null,
-    type: "operator_assistant_note",
+    type: memoryType,
     title: body.title,
     summary: body.summary,
     full_content: body.fullContent,
+    capture_channel: body.captureChannel ?? null,
+    capture_occurred_on: body.captureOccurredOn ?? null,
+    audience_source_tier: body.audienceSourceTier,
   };
 
   const { data: row, error: insErr } = await supabase.from("memories").insert(insertRow).select("id").single();
@@ -66,11 +74,16 @@ export async function insertMemoryForOperatorAssistant(
     entityTable: "memories",
     entityId: id,
     detail: {
+      proposalOrigin: body.proposalOrigin,
       memoryScope: body.memoryScope,
       title: body.title,
       outcome: body.outcome,
       weddingId: body.weddingId ?? null,
       personId: body.personId ?? null,
+      captureChannel: body.captureChannel ?? null,
+      captureOccurredOn: body.captureOccurredOn ?? null,
+      memoryType,
+      audienceSourceTier: body.audienceSourceTier,
     },
   });
   return { id, auditId };
