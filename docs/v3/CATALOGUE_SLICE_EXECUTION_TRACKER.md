@@ -64,10 +64,11 @@ After a worker finishes:
 | slice_key | source_ids | lane | status | verification_state | notes |
 | --- | --- | --- | --- | --- | --- |
 | R1 | review S1-S3 verification | review-carry | partial | review artifacts read; branch reality must be re-checked | `MERGE_PREP_SUMMARY.md` says proof is incomplete. |
-| R2 | `H3` | review-carry | ready | confirmed against live code | Draft reject/rewrite idempotency gap is real. |
+| R2 | `H3` | review-carry | shipped | helper now returns explicit `transitioned` state; reject path returns `409` without emitting rewrite event when no row matched; targeted proof lane passes | Landed locally at `9441907` (`fix(H3): gate draft rewrite emit on real transition`). |
 | R3 | legacy tenant-scope hardening | review-carry | partial | hotspots identified from cleanup audit | Needs exact file-by-file live re-check before prompting. |
 | R4 | legacy verifier/tool-bypass hardening | review-carry | partial | hotspots identified from cleanup audit | Needs exact path-level prompt scoping. |
 | R5 | sleeper wake re-check hardening | review-carry | partial | hotspots identified from cleanup audit | Must be narrowed to each sleeper path before worker handoff. |
+| R6 | `C3` | review-carry | ready | confirmed against live code â€” `authPhotographer.ts` still creates a new anon Supabase client on every helper call | Safe next slice: narrow shared auth helper + unit test only; backend-only and no schema/UI overlap. |
 
 ## Next-up queue
 
