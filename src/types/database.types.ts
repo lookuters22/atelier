@@ -709,7 +709,6 @@ export type Database = {
       }
       escalation_resolution_jobs: {
         Row: {
-          approve_bounded_near_match_thread_link: boolean
           created_at: string
           escalation_id: string
           id: string
@@ -721,7 +720,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          approve_bounded_near_match_thread_link?: boolean
           created_at?: string
           escalation_id: string
           id?: string
@@ -733,7 +731,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          approve_bounded_near_match_thread_link?: boolean
           created_at?: string
           escalation_id?: string
           id?: string
@@ -1212,9 +1209,6 @@ export type Database = {
       memories: {
         Row: {
           archived_at: string | null
-          audience_source_tier: string | null
-          capture_channel: string | null
-          capture_occurred_on: string | null
           full_content: string
           id: string
           last_accessed_at: string | null
@@ -1231,9 +1225,6 @@ export type Database = {
         }
         Insert: {
           archived_at?: string | null
-          audience_source_tier?: string | null
-          capture_channel?: string | null
-          capture_occurred_on?: string | null
           full_content: string
           id?: string
           last_accessed_at?: string | null
@@ -1250,9 +1241,6 @@ export type Database = {
         }
         Update: {
           archived_at?: string | null
-          audience_source_tier?: string | null
-          capture_channel?: string | null
-          capture_occurred_on?: string | null
           full_content?: string
           id?: string
           last_accessed_at?: string | null
@@ -1829,146 +1817,6 @@ export type Database = {
           },
         ]
       }
-      project_commercial_amendment_proposals: {
-        Row: {
-          created_at: string
-          id: string
-          photographer_id: string
-          proposal_payload: Json
-          review_status: string
-          thread_id: string | null
-          updated_at: string
-          wedding_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          photographer_id: string
-          proposal_payload: Json
-          review_status?: string
-          thread_id?: string | null
-          updated_at?: string
-          wedding_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          proposal_payload?: Json
-          review_status?: string
-          thread_id?: string | null
-          updated_at?: string
-          wedding_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "project_commercial_amendment_proposals_photographer_id_fkey"
-            columns: ["photographer_id"]
-            isOneToOne: false
-            referencedRelation: "photographers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_commercial_amendment_proposals_wedding_id_fkey"
-            columns: ["wedding_id"]
-            isOneToOne: false
-            referencedRelation: "weddings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_commercial_amendment_proposals_thread_id_fkey"
-            columns: ["thread_id"]
-            isOneToOne: false
-            referencedRelation: "threads"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      project_publication_rights: {
-        Row: {
-          attribution_detail: string | null
-          attribution_required: boolean
-          created_at: string
-          evidence_source: string
-          exclusion_notes: string | null
-          id: string
-          operator_confirmation_summary: string
-          permission_status: string
-          permitted_usage_channels: string[]
-          person_id: string | null
-          photographer_id: string
-          source_classification: Json
-          thread_id: string | null
-          updated_at: string
-          valid_until: string | null
-          wedding_id: string
-        }
-        Insert: {
-          attribution_detail?: string | null
-          attribution_required?: boolean
-          created_at?: string
-          evidence_source: string
-          exclusion_notes?: string | null
-          id?: string
-          operator_confirmation_summary: string
-          permission_status: string
-          permitted_usage_channels?: string[]
-          person_id?: string | null
-          photographer_id: string
-          source_classification?: Json
-          thread_id?: string | null
-          updated_at?: string
-          valid_until?: string | null
-          wedding_id: string
-        }
-        Update: {
-          attribution_detail?: string | null
-          attribution_required?: boolean
-          created_at?: string
-          evidence_source?: string
-          exclusion_notes?: string | null
-          id?: string
-          operator_confirmation_summary?: string
-          permission_status?: string
-          permitted_usage_channels?: string[]
-          person_id?: string | null
-          photographer_id?: string
-          source_classification?: Json
-          thread_id?: string | null
-          updated_at?: string
-          valid_until?: string | null
-          wedding_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "project_publication_rights_photographer_id_fkey"
-            columns: ["photographer_id"]
-            isOneToOne: false
-            referencedRelation: "photographers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_publication_rights_wedding_id_fkey"
-            columns: ["wedding_id"]
-            isOneToOne: false
-            referencedRelation: "weddings"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_publication_rights_person_id_fkey"
-            columns: ["person_id"]
-            isOneToOne: false
-            referencedRelation: "people"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_publication_rights_thread_id_fkey"
-            columns: ["thread_id"]
-            isOneToOne: false
-            referencedRelation: "threads"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       offer_builder_change_proposals: {
         Row: {
           created_at: string
@@ -2195,7 +2043,6 @@ export type Database = {
           is_cc: boolean
           is_recipient: boolean
           is_sender: boolean
-          participant_role: string
           person_id: string
           photographer_id: string
           thread_id: string
@@ -2207,7 +2054,6 @@ export type Database = {
           is_cc?: boolean
           is_recipient?: boolean
           is_sender?: boolean
-          participant_role?: string
           person_id: string
           photographer_id: string
           thread_id: string
@@ -2219,7 +2065,6 @@ export type Database = {
           is_cc?: boolean
           is_recipient?: boolean
           is_sender?: boolean
-          participant_role?: string
           person_id?: string
           photographer_id?: string
           thread_id?: string
@@ -2378,7 +2223,6 @@ export type Database = {
       threads: {
         Row: {
           ai_routing_metadata: Json | null
-          audience_tier: string
           automation_mode: Database["public"]["Enums"]["automation_mode"]
           channel: Database["public"]["Enums"]["thread_channel"]
           external_thread_key: string | null
@@ -2397,7 +2241,6 @@ export type Database = {
         }
         Insert: {
           ai_routing_metadata?: Json | null
-          audience_tier?: string
           automation_mode?: Database["public"]["Enums"]["automation_mode"]
           channel?: Database["public"]["Enums"]["thread_channel"]
           external_thread_key?: string | null
@@ -2416,7 +2259,6 @@ export type Database = {
         }
         Update: {
           ai_routing_metadata?: Json | null
-          audience_tier?: string
           automation_mode?: Database["public"]["Enums"]["automation_mode"]
           channel?: Database["public"]["Enums"]["thread_channel"]
           external_thread_key?: string | null
@@ -2944,14 +2786,6 @@ export type Database = {
           p_photographer_id: string
           p_thread_id: string
           p_wedding_id: string
-        }
-        Returns: Json
-      }
-      complete_bounded_near_match_thread_wedding_link: {
-        Args: {
-          p_escalation_id: string
-          p_photographer_id: string
-          p_resolution_summary: string
         }
         Returns: Json
       }
