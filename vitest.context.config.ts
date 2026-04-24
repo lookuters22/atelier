@@ -1,7 +1,17 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
-/** Resolves Deno-style `npm:@supabase/supabase-js@2` imports in `supabase/functions` for Vitest. */
+/**
+ * Vitest config for `supabase/functions` + shared lib globs (Deno-style `npm:…` imports).
+ * Pins `test.include` for a bounded Node surface. Same `npm:` aliases as `vitest.config.ts` /
+ * `vitest.signoff.config.ts`.
+ *
+ * Heavy real-message signoff / proof files are in `test.exclude` (F5). Excludes apply even when you
+ * pass a file path on the CLI — those suites will not run under this config. Use
+ * `vitest.signoff.config.ts` (see `npm run v3:proof-*` and `npm run test:signoff:real-message`).
+ *
+ * `npm run test:context` runs the full include glob minus excludes; it does not run signoff proofs.
+ */
 export default defineConfig({
   resolve: {
     alias: {
@@ -21,8 +31,24 @@ export default defineConfig({
   test: {
     include: [
       "supabase/functions/_shared/**/*.test.ts",
+      "supabase/functions/inngest/**/*.test.ts",
       "src/lib/**/*.test.ts",
       "src/hooks/**/*.test.ts",
+      "src/components/**/*.test.tsx",
+    ],
+    exclude: [
+      "**/.claude/worktrees/**",
+      "**/v3StressReplayBatch*Harness.test.ts",
+      "**/stressTestPausePropagationProof.test.ts",
+      "**/stressTest7RbacAudienceProof.test.ts",
+      "**/stressTest5And8RbacAudienceProof.test.ts",
+      "**/stressTestAudienceTierDecisionPathProof.test.ts",
+      "**/crossIngestParityProof.test.ts",
+      "**/ingressSenderEmailNormalize.test.ts",
+      "**/strDurableRuntimeProof.test.ts",
+      "**/v3RbacAudienceRuntimeE2eProof.test.ts",
+      "**/v3RealThreadReplayProof.hosted.test.ts",
+      "**/reviewPlaybookRuleCandidateMigrationProof.test.ts",
     ],
     environment: "node",
   },

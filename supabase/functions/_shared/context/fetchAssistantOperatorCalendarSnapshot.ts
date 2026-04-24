@@ -23,7 +23,7 @@ const IDLE: AssistantOperatorCalendarSnapshot = {
   timeZoneNote:
     "Event times are stored as timestamptz; listed in ISO 8601 (UTC in suffix). The UI may show local time — do not convert unless the operator asks in a local frame.",
   semanticsNote:
-    "Not run — only loaded for calendar / scheduling content questions (see hasOperatorCalendarScheduleIntent). When run, rows are DB `calendar_events` only (no Google Calendar / tasks).",
+    "Not run — no bounded `calendar_events` fetch for this turn (see hasOperatorCalendarScheduleIntent / calendar carry-forward continuity). When run, rows are DB `calendar_events` only for the plan’s window and filters (Slice 5 domain-first — not global schedule truth).",
   weddingFilter: null,
   titleContains: null,
   eventTypeFilter: null,

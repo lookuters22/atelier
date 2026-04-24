@@ -3,6 +3,7 @@
  * Does not replace RBAC; reduces accidental exfiltration of huge/binary pasted payloads into model context.
  */
 import { stripInlineDataUrlsFromText } from "./attachmentSafetyForModelContext.ts";
+import { redactSensitiveDocumentPatternsForModelContext } from "./redactSensitiveDocumentPatternsForModelContext.ts";
 
 /** Hard cap for any single inbound blob (email body, message body) in model-facing strings. */
 export const MAX_INBOUND_TEXT_CHARS_FOR_MODEL = 12_000;
@@ -26,7 +27,8 @@ function controlOrBinaryRatio(s: string): number {
  */
 export function sanitizeInboundTextForModelContext(raw: string | null | undefined): string {
   const s0 = typeof raw === "string" ? raw : "";
-  const s = stripInlineDataUrlsFromText(s0);
+  const stripped = stripInlineDataUrlsFromText(s0);
+  const s = redactSensitiveDocumentPatternsForModelContext(stripped);
   if (s.length === 0) return "";
 
   if (controlOrBinaryRatio(s) > CONTROL_OR_BINARY_THRESHOLD) {

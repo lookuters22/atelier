@@ -1,5 +1,5 @@
 /**
- * Operator Ana (dashboard widget) LLM provider switch — OpenAI (default) or Google Gemini (optional test path).
+ * Operator Ana (dashboard widget) LLM provider switch — OpenAI (default) or Google Gemini.
  */
 
 export type OperatorAnaLlmProvider = "openai" | "google";

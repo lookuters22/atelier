@@ -42,6 +42,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -67,6 +69,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -92,6 +96,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -126,6 +132,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -159,6 +167,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -212,9 +222,64 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
+    }
+  });
+
+  it("surfaces memory_note with verbal capture metadata when valid", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "WhatsApp",
+            outcome: "Client sent timeline",
+            summary: "Off email",
+            fullContent: "They shared the day-of timeline on WhatsApp.",
+            captureChannel: "whatsapp",
+            captureOccurredOn: "2026-04-12",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      const mem = d.memoryNoteProposals[0]!;
+      expect(mem.captureChannel).toBe("whatsapp");
+      expect(mem.captureOccurredOn).toBe("2026-04-12");
+    }
+  });
+
+  it("drops memory_note when captureOccurredOn is set without captureChannel", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "Bad",
+            outcome: "o",
+            summary: "s",
+            fullContent: "f",
+            captureOccurredOn: "2026-04-12",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.memoryNoteProposals).toHaveLength(0);
     }
   });
 
@@ -231,7 +296,7 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
             outcome: "Prefers natural light only.",
             summary: "Natural only",
             fullContent: "Asked for very natural portraits",
-            personId: "55555555-5555-5555-5555-555555555555",
+            personId: "55555555-5555-4555-9555-555555555555",
           },
         ],
       },
@@ -242,8 +307,86 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.memoryNoteProposals).toHaveLength(1);
       const mem = d.memoryNoteProposals[0]!;
       expect(mem.memoryScope).toBe("person");
-      expect(mem.personId).toBe("55555555-5555-5555-5555-555555555555");
+      expect(mem.personId).toBe("55555555-5555-4555-9555-555555555555");
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
+    }
+  });
+
+  it("drops person-scoped memory_note when personId is not a valid UUID (no invented CRM id)", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "person",
+            title: "Bad",
+            outcome: "o",
+            summary: "s",
+            fullContent: "f",
+            personId: "client-john-smith",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.memoryNoteProposals).toHaveLength(0);
+    }
+  });
+
+  it("surfaces memory_note with audienceSourceTier when valid", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "Vendor",
+            outcome: "Load-in window 9–10.",
+            summary: "Dock B",
+            fullContent: "Coordinator-only logistics.",
+            audienceSourceTier: "internal_team",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.memoryNoteProposals).toHaveLength(1);
+      expect(d.memoryNoteProposals[0]!.audienceSourceTier).toBe("internal_team");
+      expect(d.publicationRightsRecordProposals).toEqual([]);
+    }
+  });
+
+  it("drops memory_note when audienceSourceTier is invalid", () => {
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "ok",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "Bad tier",
+            outcome: "o",
+            summary: "s",
+            fullContent: "f",
+            audienceSourceTier: "public",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.memoryNoteProposals).toHaveLength(0);
     }
   });
 
@@ -273,6 +416,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -305,6 +450,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.playbookRuleProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -336,9 +483,80 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(ob.metadata_patch.name).toBe("Editorial Weddings");
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
+    }
+  });
+
+  it("Ana: surfaces project_commercial_amendment_proposal (bounded deltas)", () => {
+    const wid = "b0eebc99-9c0b-4ef8-8bb6-222222222222";
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "I can queue a commercial amendment for this project.",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "project_commercial_amendment_proposal",
+            rationale: "Upsell: second shooter added verbally.",
+            weddingId: wid,
+            changeCategories: ["team", "pricing"],
+            deltas: {
+              team: { summary: "Add associate photographer for ceremony", headcount_delta: 1 },
+              pricing: { summary: "+€600 for second shooter" },
+            },
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.projectCommercialAmendmentProposals).toHaveLength(1);
+      const a = d.projectCommercialAmendmentProposals[0]!;
+      expect(a.weddingId).toBe(wid);
+      expect(a.deltas.team?.headcount_delta).toBe(1);
+      expect(d.memoryNoteProposals).toEqual([]);
+      expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
+    }
+  });
+
+  it("P13: surfaces publication_rights_record (structured; memory_note alone is not a substitute)", () => {
+    const wid = "d0eebc99-9c0b-4ef8-8bb6-444444444444";
+    const d = buildOperatorStudioAssistantAssistantDisplay(
+      {
+        reply: "Confirm to save publication / usage permissions for this project.",
+        clientFacingForbidden: true,
+        proposedActions: [
+          {
+            kind: "publication_rights_record",
+            weddingId: wid,
+            permissionStatus: "permitted_narrow",
+            permittedUsageChannels: ["instagram"],
+            attributionRequired: true,
+            attributionDetail: "Tag studio + planner; no couple tags on solo portraits.",
+            exclusionNotes: "Exclude jewelry-detail set from any public reel.",
+            evidenceSource: "client_email_thread",
+            operatorConfirmationSummary:
+              "Email approves Instagram-only teasers with credits; broader portfolio use still off-limits.",
+          },
+        ],
+      },
+      { devMode: false },
+    );
+    expect(d.kind).toBe("answer");
+    if (d.kind === "answer") {
+      expect(d.publicationRightsRecordProposals).toHaveLength(1);
+      const pr = d.publicationRightsRecordProposals[0]!;
+      expect(pr.weddingId).toBe(wid);
+      expect(pr.permissionStatus).toBe("permitted_narrow");
+      expect(pr.permittedUsageChannels).toEqual(["instagram"]);
+      expect(pr.attributionRequired).toBe(true);
+      expect(d.memoryNoteProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
     }
   });
 
@@ -364,6 +582,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(inv.template_patch.invoicePrefix).toBe("INV");
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
@@ -401,6 +621,7 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.calendarEventCreateProposals[0]!.title).toBe("Venue call");
       expect(d.calendarEventRescheduleProposals).toHaveLength(1);
       expect(d.calendarEventRescheduleProposals[0]!.calendarEventId).toBe(eid);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);
     }
   });
@@ -427,6 +648,8 @@ describe("buildOperatorStudioAssistantAssistantDisplay", () => {
       expect(d.studioProfileChangeProposals).toEqual([]);
       expect(d.offerBuilderChangeProposals).toEqual([]);
       expect(d.invoiceSetupChangeProposals).toEqual([]);
+      expect(d.projectCommercialAmendmentProposals).toEqual([]);
+      expect(d.publicationRightsRecordProposals).toEqual([]);
       expect(d.calendarEventCreateProposals).toEqual([]);
       expect(d.calendarEventRescheduleProposals).toEqual([]);
       expect(d.escalationResolveProposals).toEqual([]);

@@ -28,6 +28,7 @@ describe("fetchSelectedMemoriesFull — selectedMemories promotion", () => {
                           title: "Reply tone",
                           summary: "Short header",
                           full_content: "LONG DURABLE BODY ONLY AFTER PROMOTION",
+                          audience_source_tier: null,
                         },
                       ],
                       error: null,
@@ -77,7 +78,9 @@ describe("fetchSelectedMemoriesFull — selectedMemories promotion", () => {
                 return {
                   in() {
                     return Promise.resolve({
-                      data: [{ id: "x", type: "t", title: "", summary: "", full_content: "c" }],
+                      data: [
+                        { id: "x", type: "t", title: "", summary: "", full_content: "c", audience_source_tier: null },
+                      ],
                       error: null,
                     });
                   },
@@ -103,6 +106,65 @@ describe("fetchSelectedMemoriesFull — selectedMemories promotion", () => {
 
     await fetchSelectedMemoriesFull(supabase as unknown as SupabaseClient, "p", ["x"]);
     await vi.waitFor(() => expect(updateCalls).toBe(1));
+  });
+
+  it("omits internal_team rows when hydrating for client_visible thread tier", async () => {
+    const supabase = {
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  in() {
+                    return Promise.resolve({
+                      data: [
+                        {
+                          id: "a",
+                          type: "t",
+                          title: "",
+                          summary: "",
+                          full_content: "ok",
+                          audience_source_tier: "client_visible",
+                        },
+                        {
+                          id: "b",
+                          type: "t",
+                          title: "",
+                          summary: "",
+                          full_content: "secret",
+                          audience_source_tier: "internal_team",
+                        },
+                      ],
+                      error: null,
+                    });
+                  },
+                };
+              },
+            };
+          },
+          update() {
+            return {
+              eq() {
+                return {
+                  in() {
+                    return Promise.resolve({ error: null });
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    const rows = await fetchSelectedMemoriesFull(
+      supabase as unknown as SupabaseClient,
+      "tenant-a",
+      ["a", "b"],
+      { replyThreadAudienceTier: "client_visible" },
+    );
+    expect(rows.map((r) => r.id)).toEqual(["a"]);
   });
 });
 

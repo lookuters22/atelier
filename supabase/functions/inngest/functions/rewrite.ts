@@ -11,9 +11,15 @@
  *    and append the feedback to instruction_history for audit.
  */
 import { captureDraftLearningInput } from "../../_shared/captureDraftLearningInput.ts";
+import { evaluateRewriteDraftUpdatePauseGate } from "../../_shared/inngestClientFreshPauseGates.ts";
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import { runPersonaAgent, type PersonaContext } from "../../_shared/agents/persona.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 export const rewriteFunction = inngest.createFunction(
   { id: "rewrite-worker", name: "Rewrite Worker — Feedback Loop" },
@@ -35,10 +41,13 @@ export const rewriteFunction = inngest.createFunction(
       const thread = draft.threads as Record<string, unknown>;
       const weddingId = thread.wedding_id as string;
 
+      const photographerId = draft.photographer_id as string;
+
       const { data: wedding, error: weddingErr } = await supabaseAdmin
         .from("weddings")
-        .select("couple_names, wedding_date, location")
+        .select("couple_names, wedding_date, location, compassion_pause, strategic_pause")
         .eq("id", weddingId)
+        .eq("photographer_id", photographerId)
         .single();
 
       if (weddingErr || !wedding) {
@@ -48,14 +57,34 @@ export const rewriteFunction = inngest.createFunction(
       return {
         draftBody: draft.body as string,
         instructionHistory: (draft.instruction_history ?? []) as Record<string, unknown>[],
-        photographerId: draft.photographer_id as string,
+        photographerId,
         threadId: thread.id as string,
         weddingId,
         couple_names: wedding.couple_names as string,
         wedding_date: (wedding.wedding_date as string) ?? null,
         location: (wedding.location as string) ?? null,
+        compassion_pause: wedding.compassion_pause as boolean | null,
+        strategic_pause: wedding.strategic_pause as boolean | null,
       };
     });
+
+    if (isWeddingAutomationPaused(context)) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "rewrite-worker",
+        wedding_id: context.weddingId,
+        thread_id: context.threadId,
+        photographer_id: context.photographerId,
+        draft_id,
+        gate: "post_fetch_context",
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        draft_id,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+      };
+    }
 
     const newBody = await step.run("rewrite-with-persona", async () => {
       const bullets: string[] = [
@@ -72,6 +101,26 @@ export const rewriteFunction = inngest.createFunction(
 
       return runPersonaAgent(bullets, personaContext);
     });
+
+    const updateGate = await step.run("rewrite-pause-gate-before-update", async () =>
+      evaluateRewriteDraftUpdatePauseGate(supabaseAdmin, {
+        weddingId: context.weddingId,
+        photographerId: context.photographerId,
+        draftId: draft_id,
+        threadId: context.threadId,
+      }),
+    );
+
+    if (!updateGate.allowUpdate) {
+      return {
+        status:
+          updateGate.skip_reason === WEDDING_AUTOMATION_PAUSED_SKIP_REASON
+            ? ("skipped_wedding_automation_paused" as const)
+            : ("skipped_wedding_pause_state_unconfirmed" as const),
+        draft_id,
+        skip_reason: updateGate.skip_reason,
+      };
+    }
 
     await step.run("update-draft-with-rewrite", async () => {
       const updatedHistory = [

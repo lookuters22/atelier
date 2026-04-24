@@ -23,6 +23,7 @@ import {
   commercialDepositStarvationStructuredApplies,
 } from "./orchestratorCommercialDepositStarvation.ts";
 import { detectMultiActorAuthorityRefinement } from "./detectMultiActorAuthorityRefinement.ts";
+import { billingPayerMismatchActionConstraints } from "../context/billingPayerWorkflowContext.ts";
 
 /** Stable substrings for tests / QA — package-inclusion slice (travel + second shooter). */
 export const PACKAGE_INCLUSION_CONTEXT_TRAVEL_FEE_INCLUDED_CONFIRM =
@@ -204,6 +205,12 @@ export function buildOrchestratorSupportingContextInjection(
   const approvedWithPackage = [...pkg.facts, ...approved_supporting_facts];
   for (const c of pkg.constraints) {
     action_constraints.push(c);
+  }
+
+  if (audience.billingPayerWorkflow != null) {
+    for (const c of billingPayerMismatchActionConstraints(audience.billingPayerWorkflow)) {
+      action_constraints.push(c);
+    }
   }
 
   const memory_digest_lines = selectedMemories.map((m) =>

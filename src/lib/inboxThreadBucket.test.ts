@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES,
   deriveInboxThreadBucket,
   inboxBucketTodayStatusLabel,
   inboxUnlinkedBucketChipLabel,
   isSuppressedInboxThread,
   readInboxMetadataSenderRole,
+  zenLobbyHeroTagForInboxBucket,
 } from "./inboxThreadBucket";
 
 function baseUnlinked(meta: unknown) {
@@ -36,6 +38,19 @@ describe("isSuppressedInboxThread", () => {
   });
 });
 
+describe("DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES", () => {
+  it("is the canonical set of four pre-LLM deterministic operator-review ingress roles", () => {
+    expect([...DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES].sort()).toEqual(
+      [
+        "billing_or_account_followup",
+        "partnership_or_collaboration",
+        "recruiter_or_job_outreach",
+        "vendor_solicitation",
+      ].sort(),
+    );
+  });
+});
+
 describe("deriveInboxThreadBucket", () => {
   it("suppressed: promo_automated wins even if other fields exist", () => {
     expect(
@@ -55,6 +70,73 @@ describe("deriveInboxThreadBucket", () => {
         ai_routing_metadata: { routing_disposition: "suggested_match_unresolved" },
       }),
     ).toBe("inquiry");
+  });
+
+  it("operator_review: billing_or_account_followup on linked project (project link preserved)", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: {
+          sender_role: "billing_or_account_followup",
+          routing_disposition: "unresolved_human",
+          routing_layer: "deterministic_billing_account_ingress_v1",
+        },
+      }),
+    ).toBe("operator_review");
+  });
+
+  it("inquiry: linked project with customer_lead stays inquiry", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: { sender_role: "customer_lead" },
+      }),
+    ).toBe("inquiry");
+  });
+
+  it("operator_review: vendor_solicitation on linked project", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: {
+          sender_role: "vendor_solicitation",
+          routing_layer: "deterministic_vendor_partnership_ingress_v1",
+        },
+      }),
+    ).toBe("operator_review");
+  });
+
+  it("operator_review: partnership_or_collaboration on linked project", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: { sender_role: "partnership_or_collaboration" },
+      }),
+    ).toBe("operator_review");
+  });
+
+  it("operator_review: recruiter_or_job_outreach on linked project", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: {
+          sender_role: "recruiter_or_job_outreach",
+          routing_layer: "deterministic_recruiter_job_ingress_v1",
+        },
+      }),
+    ).toBe("operator_review");
+  });
+
+  it("suppressed: promo_automated wins over linked billing_or_account_followup", () => {
+    expect(
+      deriveInboxThreadBucket({
+        weddingId: "w-1",
+        ai_routing_metadata: {
+          routing_disposition: "promo_automated",
+          sender_role: "billing_or_account_followup",
+        },
+      }),
+    ).toBe("suppressed");
   });
 
   it("inquiry: unlinked customer_lead", () => {
@@ -162,6 +244,26 @@ describe("inboxBucketTodayStatusLabel", () => {
     expect(
       inboxBucketTodayStatusLabel(baseUnlinked({ sender_role: "vendor_solicitation" })),
     ).toBe("Vendor / pitch");
+  });
+
+  it("linked billing/account thread uses Billing / account status (operator review lane)", () => {
+    expect(
+      inboxBucketTodayStatusLabel({
+        weddingId: "w-1",
+        ai_routing_metadata: { sender_role: "billing_or_account_followup" },
+      }),
+    ).toBe("Billing / account");
+  });
+});
+
+describe("zenLobbyHeroTagForInboxBucket", () => {
+  it("linked billing/account maps to Billing / account hero tag", () => {
+    expect(
+      zenLobbyHeroTagForInboxBucket(
+        "operator_review",
+        "billing_or_account_followup",
+      ),
+    ).toBe("Billing / account");
   });
 });
 

@@ -10,6 +10,11 @@ import { inngest } from "../../_shared/inngest.ts";
 import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  AGENCY_CC_LOCK_SKIP_REASON,
+  isWeddingAutomationPaused,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 async function resolveThreadForWedding(
   weddingId: string,
@@ -49,6 +54,17 @@ export const postWeddingFunction = inngest.createFunction(
 
       if (await isThreadV3OperatorHold(supabaseAdmin, photographerId, threadId)) {
         return { drafted: false as const, reason: "v3_operator_hold" as const };
+      }
+
+      const { data: pauseRow, error: pErr } = await supabaseAdmin
+        .from("weddings")
+        .select("compassion_pause, strategic_pause, agency_cc_lock")
+        .eq("id", weddingId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+      if (pErr) throw new Error(`weddings pause: ${pErr.message}`);
+      if (isWeddingAutomationPaused(pauseRow) || pauseRow?.agency_cc_lock === true) {
+        return { drafted: false as const, reason: "wedding_paused" as const };
       }
 
       const agentContext: AgentContext = await buildAgentContext(
@@ -135,12 +151,11 @@ export const postWeddingFunction = inngest.createFunction(
         return { drafted: false as const, reason: "wedding_missing" as const };
       }
 
-      if (
-        wedding.compassion_pause === true ||
-        wedding.strategic_pause === true ||
-        wedding.agency_cc_lock === true
-      ) {
-        return { drafted: false as const, reason: "wedding_paused" as const };
+      if (isWeddingAutomationPaused(wedding)) {
+        return { drafted: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+      }
+      if (wedding.agency_cc_lock === true) {
+        return { drafted: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
       }
 
       const stage = wedding.stage as string;

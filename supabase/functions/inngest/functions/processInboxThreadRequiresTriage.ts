@@ -2,7 +2,8 @@
  * Classifier worker for canonical inbox threads (post–Gmail delta). Updates `threads` + optional near-match escalation;
  * boots inquiry wedding when intake + unlinked; dispatches without duplicating thread/message rows.
  *
- * Layered funnel: header heuristics (no LLM) → LLM for survivors → Gmail-specific dispatch policy (no unlinked fake intake).
+ * Layered funnel: header heuristics (no LLM) → post-ingest suppression → **deterministic human non-client parity**
+ * (same ordering as `comms/email.received`) → LLM for survivors → Gmail-specific dispatch policy (no unlinked fake intake).
  */
 import { runTriageAgent } from "../../_shared/agents/triage.ts";
 import { isTriageBoundedUnresolvedEmailMatchmakerEnabled } from "../../_shared/orchestrator/triageShadowOrchestratorClientV1Gate.ts";
@@ -27,6 +28,7 @@ import {
   routeNonWeddingBusinessInquiry,
   type NonWeddingBusinessInquiryRouteOutcome,
 } from "../../_shared/triage/nonWeddingBusinessInquiryRouter.ts";
+import { evaluateDeterministicHumanNonClientIngress } from "../../_shared/triage/deterministicOperatorReviewIngress.ts";
 import { evaluatePreLlmInboundEmail } from "../../_shared/triage/preLlmEmailRouting.ts";
 import { evaluatePostIngestSuppressionAfterPreLlm } from "../../_shared/triage/postIngestSuppressionGate.ts";
 import { applyUnlinkedWeddingLeadIntakeBoost } from "../../_shared/triage/unlinkedWeddingLeadIntakeBoost.ts";
@@ -34,8 +36,7 @@ import {
   type MainPathEmailDispatchResult,
   runMainPathEmailDispatch,
 } from "../../_shared/triage/runMainPathEmailDispatch.ts";
-import { extractEmailAddress } from "../../_shared/utils/extractEmailAddress.ts";
-import { normalizeEmail } from "../../_shared/utils/normalizeEmail.ts";
+import { resolveIngressIdentitySenderEmail } from "../../_shared/triage/ingressSenderEmailNormalize.ts";
 import { bootstrapInquiryWeddingForCanonicalThread } from "../../_shared/resolvers/bootstrapInquiryWeddingForCanonicalThread.ts";
 import { INBOX_THREAD_REQUIRES_TRIAGE_V1_EVENT, inngest } from "../../_shared/inngest.ts";
 import {
@@ -88,11 +89,21 @@ export const processInboxThreadRequiresTriage = inngest.createFunction(
 
     const body = typeof messageRow.body === "string" ? messageRow.body : String(messageRow.body ?? "");
     const senderRaw = typeof messageRow.sender === "string" ? messageRow.sender : String(messageRow.sender ?? "");
-    const senderForIdentity = normalizeEmail(extractEmailAddress(senderRaw) ?? senderRaw) || "";
     const messageMetadata =
       messageRow.metadata && typeof messageRow.metadata === "object"
         ? (messageRow.metadata as Record<string, unknown>)
         : null;
+    const gmailImport = messageMetadata?.gmail_import;
+    const replyToForIdentity =
+      gmailImport != null &&
+      typeof gmailImport === "object" &&
+      typeof (gmailImport as Record<string, unknown>).reply_to_header === "string"
+        ? String((gmailImport as Record<string, unknown>).reply_to_header).trim() || null
+        : null;
+    const senderForIdentity = resolveIngressIdentitySenderEmail({
+      fromOrSenderRaw: senderRaw,
+      replyToRaw: replyToForIdentity,
+    });
 
     const { identity, linkedProjectAtStart } = await step.run(
       "resolve-identity-for-routing",
@@ -126,7 +137,8 @@ export const processInboxThreadRequiresTriage = inngest.createFunction(
           };
         }
         const base = await resolveDeterministicIdentity(supabaseAdmin, {
-          sender: senderForIdentity,
+          sender: senderRaw,
+          replyToForIdentity,
           payloadPhotographerId: photographerId,
         });
         return { identity: base, linkedProjectAtStart: false };
@@ -188,6 +200,67 @@ export const processInboxThreadRequiresTriage = inngest.createFunction(
       }
     }
 
+    /** Parity with `comms/email.received` pre-LLM deterministic human non-client gates (billing / vendor / recruiter). */
+    const subjectForDeterministic = typeof threadRow.title === "string" ? threadRow.title : "";
+
+    const humanNonClientIngress = await step.run(
+      "deterministic-human-non-client-ingress-parity",
+      async () =>
+        evaluateDeterministicHumanNonClientIngress({
+          subject: subjectForDeterministic,
+          body,
+        }),
+    );
+
+    if (humanNonClientIngress.match) {
+      await step.run("persist-deterministic-human-non-client-metadata", async () => {
+        const { error } = await supabaseAdmin
+          .from("threads")
+          .update({ ai_routing_metadata: humanNonClientIngress.routingMetadata as Record<string, unknown> })
+          .eq("id", threadId)
+          .eq("photographer_id", photographerId);
+        if (error) throw new Error(error.message);
+      });
+
+      console.info(
+        "[processInboxThreadRequiresTriage.deterministic_human_non_client_ingress]",
+        JSON.stringify({
+          threadId,
+          variant: humanNonClientIngress.variant,
+          reason_codes: humanNonClientIngress.reason_codes,
+        }),
+      );
+
+      const base = {
+        photographer_id: photographerId,
+        wedding_id: (threadRow.wedding_id as string | null) ?? null,
+        threadId,
+        traceId,
+        reply_channel: "email" as const,
+      };
+
+      if (humanNonClientIngress.variant === "billing") {
+        return {
+          status: humanNonClientIngress.triageReturnStatus,
+          ...base,
+          deterministic_billing_reason_codes: humanNonClientIngress.reason_codes,
+        };
+      }
+      if (humanNonClientIngress.variant === "vendor_partnership") {
+        return {
+          status: humanNonClientIngress.triageReturnStatus,
+          ...base,
+          deterministic_vendor_partnership_sender_role: humanNonClientIngress.sender_role,
+          deterministic_vendor_partnership_reason_codes: humanNonClientIngress.reason_codes,
+        };
+      }
+      return {
+        status: humanNonClientIngress.triageReturnStatus,
+        ...base,
+        deterministic_recruiter_job_reason_codes: humanNonClientIngress.reason_codes,
+      };
+    }
+
     const llmIntent = await step.run("classify-intent", async () => {
       const raw = await runTriageAgent(body);
       if (linkedProjectAtStart || identity.weddingId) return raw;
@@ -209,6 +282,8 @@ export const processInboxThreadRequiresTriage = inngest.createFunction(
       async (): Promise<MatchmakerStepResult> =>
         runConditionalMatchmakerForEmail(supabaseAdmin, {
           body,
+          subject: typeof threadRow.title === "string" ? threadRow.title : "",
+          senderEmail: senderForIdentity,
           identity,
           stageGateIntent: matchmakerStageIntent,
           boundedUnresolvedSubsetEligible,

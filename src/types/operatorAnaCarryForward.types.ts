@@ -1,19 +1,25 @@
 /**
  * Slice 6 — round-trip carry-forward pointer for the operator Ana widget (no DB; session transport only).
  * @see docs/v3/V3_OPERATOR_ANA_FOLLOW_UP_AND_CARRY_FORWARD_SLICE.md
+ *
+ * **Emission:** Most values come from read-only tool names via `OPERATOR_ANA_DOMAIN_BY_TOOL`.
+ * `calendar`, `studio_analysis`, and `app_help` are **first-pass Context only** (see `mergeContextOnlySignals`);
+ * they are not tool tags but are valid client round-trip values for `lastDomain`.
  */
+export const OPERATOR_ANA_CARRY_FORWARD_DOMAINS = [
+  "projects",
+  "threads",
+  "calendar",
+  "playbook",
+  "memories",
+  "studio_analysis",
+  "app_help",
+  "knowledge",
+  "inquiry_counts",
+  "none",
+] as const;
 
-export type OperatorAnaCarryForwardDomain =
-  | "projects"
-  | "threads"
-  | "calendar"
-  | "playbook"
-  | "memories"
-  | "studio_analysis"
-  | "app_help"
-  | "knowledge"
-  | "inquiry_counts"
-  | "none";
+export type OperatorAnaCarryForwardDomain = (typeof OPERATOR_ANA_CARRY_FORWARD_DOMAINS)[number];
 
 export type OperatorAnaCarryForwardProjectType = "wedding" | "commercial" | "video" | "other";
 

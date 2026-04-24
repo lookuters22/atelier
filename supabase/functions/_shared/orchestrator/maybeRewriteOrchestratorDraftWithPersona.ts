@@ -30,6 +30,11 @@ import { auditPlannerPrivateLeakage } from "./auditPlannerPrivateLeakage.ts";
 import { buildUnknownPolicySignals } from "./commercialPolicySignals.ts";
 import { buildOrchestratorStubDraftBody } from "./attemptOrchestratorDraft.ts";
 import { recordV3OutputAuditorEscalation } from "./recordV3OutputAuditorEscalation.ts";
+import { readWeddingAutomationPauseFreshForTenant } from "../fetchWeddingPauseFlags.ts";
+import {
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../weddingAutomationPause.ts";
 import {
   buildBudgetStatementSlotFactsSection,
   hasBudgetStatementPlaceholder,
@@ -541,6 +546,39 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
   }
   const prior = Array.isArray(rowEarly?.instruction_history) ? (rowEarly!.instruction_history as unknown[]) : [];
 
+  const weddingIdForPause = params.decisionContext.weddingId ?? null;
+  if (weddingIdForPause) {
+    const freshPre = await readWeddingAutomationPauseFreshForTenant(
+      supabase,
+      weddingIdForPause,
+      params.photographerId,
+    );
+    if (!freshPre.ok) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_persona_rewrite_skipped_pre_llm",
+        skip_reason: freshPre.reason,
+        inngest_function_id: "client-orchestrator-v1-persona-rewrite",
+        wedding_id: weddingIdForPause,
+        thread_id: params.threadId,
+        photographer_id: params.photographerId,
+        draft_id: draftId,
+      });
+      return { applied: false, reason: freshPre.reason };
+    }
+    if (freshPre.paused) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_persona_rewrite_skipped_pre_llm",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "client-orchestrator-v1-persona-rewrite",
+        wedding_id: weddingIdForPause,
+        thread_id: params.threadId,
+        photographer_id: params.photographerId,
+        draft_id: draftId,
+      });
+      return { applied: false, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+    }
+  }
+
   let structured: PersonaWriterStructuredOutput;
   try {
     structured = await draftPersonaStructuredResponse(params.decisionContext, facts);
@@ -836,6 +874,38 @@ export async function maybeRewriteOrchestratorDraftWithPersona(
     },
     { step: "v3_output_auditor_planner_private_leakage", passed: true },
   ];
+
+  if (weddingIdForPause) {
+    const freshCommit = await readWeddingAutomationPauseFreshForTenant(
+      supabase,
+      weddingIdForPause,
+      params.photographerId,
+    );
+    if (!freshCommit.ok) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_persona_rewrite_skipped_pre_commit",
+        skip_reason: freshCommit.reason,
+        inngest_function_id: "client-orchestrator-v1-persona-rewrite",
+        wedding_id: weddingIdForPause,
+        thread_id: params.threadId,
+        photographer_id: params.photographerId,
+        draft_id: params.draftAttempt.draftId,
+      });
+      return { applied: false, reason: freshCommit.reason };
+    }
+    if (freshCommit.paused) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_persona_rewrite_skipped_pre_commit",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "client-orchestrator-v1-persona-rewrite",
+        wedding_id: weddingIdForPause,
+        thread_id: params.threadId,
+        photographer_id: params.photographerId,
+        draft_id: params.draftAttempt.draftId,
+      });
+      return { applied: false, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+    }
+  }
 
   const { error: upErr } = await supabase
     .from("drafts")

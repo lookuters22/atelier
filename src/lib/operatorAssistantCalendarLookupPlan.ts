@@ -2,7 +2,10 @@
  * Deterministic, bounded calendar lookup plan for operator Ana (read-only `calendar_events`).
  * Used by `buildAssistantContext` → `fetchAssistantOperatorCalendarSnapshot`.
  */
-import type { AssistantOperatorCalendarLookupMode } from "../types/assistantContext.types.ts";
+import type {
+  AssistantFocusedProjectSummary,
+  AssistantOperatorCalendarLookupMode,
+} from "../types/assistantContext.types.ts";
 
 export const OPERATOR_ASSISTANT_CALENDAR_MAX_EVENTS = 60;
 /** Default forward rolling window when the query does not imply a narrower range. */
@@ -26,7 +29,7 @@ export type BuildOperatorCalendarLookupPlanInput = {
   entityResolution: {
     weddingSignal: "none" | "unique" | "ambiguous";
     uniqueWeddingId: string | null;
-    queryResolvedProjectFacts: { weddingId: string; couple_names: string; location: string } | null;
+    queryResolvedProjectSummary: AssistantFocusedProjectSummary | null;
   };
   weddingIndexRows: Array<{ id: string; couple_names: string; location: string }>;
 };
@@ -265,7 +268,8 @@ function resolveWeddingFilter(input: BuildOperatorCalendarLookupPlanInput): {
   if (input.entityResolution.weddingSignal === "unique" && input.entityResolution.uniqueWeddingId) {
     const wid = input.entityResolution.uniqueWeddingId;
     const names =
-      input.entityResolution.queryResolvedProjectFacts?.couple_names?.trim() || findCoupleNamesFromIndex(wid, input.weddingIndexRows);
+      input.entityResolution.queryResolvedProjectSummary?.displayTitle?.trim() ||
+      findCoupleNamesFromIndex(wid, input.weddingIndexRows);
     return {
       weddingId: wid,
       coupleNames: names && names.length > 0 ? names : null,

@@ -98,7 +98,7 @@ describe("extractOperatorInboxThreadLookupSignals", () => {
     expect(s.recency).toBe("today");
     expect(s.senderPhrases.some((p) => p.includes("miki"))).toBe(true);
     expect(s.topicKeywords).toContain("skincare");
-    expect(s.topicKeywords).toContain("inquiry");
+    expect(s.topicKeywords.some((k) => k === "inquiry" || k === "inquiries")).toBe(false);
   });
 
   it("extracts yesterday and multiple topic terms without broadening to generic words", () => {
@@ -133,5 +133,18 @@ describe("extractOperatorInboxThreadLookupSignals", () => {
     expect(extractOperatorInboxThreadLookupSignals("did Danilo email us").senderPhrases.some((p) =>
       p.includes("danilo"),
     )).toBe(true);
+  });
+
+  it("does not promote structural inbox words like inquiry or tomorrow into topic keywords", () => {
+    const s = extractOperatorInboxThreadLookupSignals("did I get any inquiry tomorrow");
+    expect(s.topicKeywords.some((k) => k === "inquiry" || k === "inquiries" || k === "tomorrow")).toBe(false);
+    expect(s.recency).toBeNull();
+  });
+
+  it("still matches thread lookup intent for inbound/inquiry phrasing but strips generic tokens from topicKeywords", () => {
+    expect(hasOperatorThreadMessageLookupIntent("Any inbound email on this inquiry?")).toBe(true);
+    const s = extractOperatorInboxThreadLookupSignals("Any inbound email on this inquiry?");
+    expect(s.topicKeywords.some((k) => k === "inbound" || k === "inquiry" || k === "inquiries")).toBe(false);
+    expect(s.topicKeywords.some((k) => k === "email")).toBe(false);
   });
 });

@@ -3,6 +3,57 @@
  * Not for pure UI navigation ("where do I open the calendar" → app catalog).
  */
 
+import { hasOperatorInquiryCountIntent } from "./operatorAssistantInquiryCountIntent.ts";
+import { hasOperatorThreadMessageLookupIntent } from "./operatorAssistantThreadMessageLookupIntent.ts";
+
+/** Keep aligned with `OPERATOR_ANA_CARRY_FORWARD_MAX_AGE_SECONDS` (Slice 6). */
+const CALENDAR_CARRY_CONTINUITY_MAX_AGE_SEC = 180;
+
+/**
+ * Short calendar follow-up after a prior turn whose carry-forward **lastDomain** was **calendar**
+ * (e.g. *what about tomorrow?*, *and Friday?*) when the elliptical wording no longer triggers
+ * {@link hasOperatorCalendarScheduleIntent} alone.
+ */
+export function hasOperatorCalendarContinuityIntent(
+  queryText: string,
+  carryForward: { lastDomain: string; ageSeconds: number } | null,
+): boolean {
+  if (carryForward == null) return false;
+  if (carryForward.lastDomain !== "calendar") return false;
+  if (carryForward.ageSeconds > CALENDAR_CARRY_CONTINUITY_MAX_AGE_SEC) return false;
+  if (hasOperatorCalendarScheduleIntent(queryText)) return false;
+  if (hasOperatorInquiryCountIntent(queryText)) return false;
+  if (hasOperatorThreadMessageLookupIntent(queryText)) return false;
+
+  const s = String(queryText ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+  if (s.length < 3 || s.length > 120) return false;
+
+  const timeRef =
+    /\b(today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|this week|next week|last week|weekend|this weekend|next weekend)\b/.test(
+      s,
+    ) ||
+    /\b20\d{2}-\d{1,2}-\d{1,2}\b/.test(s) ||
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/.test(
+      s,
+    );
+
+  const scheduleCue =
+    /\b(calendar|schedule|agenda|event|meeting|appointment|busy|free|slot|availability|booked|shoot|session)\b/.test(
+      s,
+    );
+
+  const ellipticalStart =
+    /^(and|what about|how about|same|also|ok|okay|cool)\b/i.test(s) ||
+    /\b(anything else|what else|and for|same day)\b/i.test(s);
+
+  if (timeRef && (scheduleCue || ellipticalStart)) return true;
+  if (timeRef && s.length <= 36) return true;
+  return false;
+}
+
 /**
  * True when the operator is likely asking about **their** calendar content (upcoming or historical),
  * not how to find the calendar page.

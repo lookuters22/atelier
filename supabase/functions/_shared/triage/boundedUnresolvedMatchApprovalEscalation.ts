@@ -28,7 +28,7 @@ export async function insertBoundedUnresolvedMatchApprovalEscalation(
 ): Promise<string> {
   const shortWid = input.candidateWeddingId.slice(0, 8);
   const question_body = formatOperatorEscalationQuestion(
-    `Email thread may belong to existing wedding (${shortWid}…). Match confidence ${input.confidenceScore}/100 — approve filing this thread to that wedding in the dashboard, or choose another.`,
+    `This email thread may belong to an existing project (${shortWid}…). Match confidence ${input.confidenceScore}/100 — approve filing this thread to that project in the dashboard, or choose another.`,
   );
 
   const decision_justification = {
@@ -57,7 +57,7 @@ export async function insertBoundedUnresolvedMatchApprovalEscalation(
       reason_code: "bounded_matchmaker_near_match",
       decision_justification,
       question_body,
-      recommended_resolution: `If correct, link this thread to wedding ${input.candidateWeddingId}.`,
+      recommended_resolution: `If correct, link this thread to project ${input.candidateWeddingId}.`,
       status: "open",
       operator_delivery: "dashboard_only",
     })

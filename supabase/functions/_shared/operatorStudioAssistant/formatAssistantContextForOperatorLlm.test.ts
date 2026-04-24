@@ -5,7 +5,7 @@ import {
   IDLE_ASSISTANT_STUDIO_OFFER_BUILDER,
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
-  type AssistantFocusedProjectFacts,
+  type AssistantFocusedProjectSummary,
   type AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
@@ -15,6 +15,7 @@ import {
   formatStudioInvoiceSetupForOperatorLlm,
   formatStudioOfferBuilderForOperatorLlm,
   formatStudioProfileForOperatorLlm,
+  OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST,
 } from "./formatAssistantContextForOperatorLlm.ts";
 import { investigationSpecialistToolPayload } from "./tools/operatorAssistantReadOnlyLookupTools.ts";
 import { playbookAuditSpecialistToolPayload } from "./tools/operatorAssistantPlaybookAuditSpecialist.ts";
@@ -354,7 +355,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
 
   it("omits full app catalog JSON for non-app-help queries (deterministic gate)", () => {
     const s = formatAssistantContextForOperatorLlm(minimalCtx());
-    expect(s).not.toContain("## Matched entities / likely project matches");
+    expect(s).not.toContain("## Matched entities (bounded resolver");
     expect(s).not.toContain("## Recent thread & email activity");
     expect(s).not.toContain("## Inquiry counts / comparisons");
     expect(s).toContain("## Operator question");
@@ -380,8 +381,9 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).not.toContain("## Weather lookup");
     expect(s).not.toContain("## Studio analysis snapshot");
     expect(s).toContain("## Playbook coverage summary");
-    expect(s).toContain("## Playbook (effective rules - authoritative over memory)");
-    expect(s).toContain("(no active rules returned)");
+    expect(s).toContain("## Playbook (effective rules — domain-first, authoritative over memory / knowledge)");
+    expect(s).toContain("operator_lookup_playbook_rules");
+    expect(s).toContain("- **Rules in prompt:** (no active rules returned)");
     expect(s).toContain('"playbookCoverage"');
     expect(s).not.toContain("## CRM digest (structured - recent projects & people)");
     expect(s).not.toContain("### Recent weddings");
@@ -407,7 +409,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
     };
     const s = formatAssistantContextForOperatorLlm(minimalCtx({ playbookRules: [r] }));
     const covIdx = s.indexOf("## Playbook coverage summary");
-    const listIdx = s.indexOf("## Playbook (effective rules - authoritative over memory)");
+    const listIdx = s.indexOf("## Playbook (effective rules — domain-first, authoritative over memory / knowledge)");
     expect(covIdx).toBeGreaterThan(-1);
     expect(listIdx).toBeGreaterThan(covIdx);
     expect(s).toContain("**wedding_travel**");
@@ -563,7 +565,8 @@ describe("formatAssistantContextForOperatorLlm", () => {
         },
       }),
     );
-    expect(s).toContain("## Calendar lookup (read-only");
+    expect(s).toContain("## Calendar lookup (read-only — Slice 5 domain-first, `calendar_events`)");
+    expect(s).toContain("**Question-shaped evidence only:**");
     expect(s).toContain("**Evidence contract:**");
     expect(s).toContain("**Lookup mode:** `upcoming`");
     expect(s).toContain("Timeline chat");
@@ -608,6 +611,14 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).toContain("Sofia & Marco");
     expect(s).toContain("Row cap hit");
     expect(s).toContain("`about_call`");
+  });
+
+  it("omits calendar lookup section when snapshot did not run (no implied schedule in user Context)", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({ queryText: "How is our studio doing overall?", operatorCalendarSnapshot: IDLE_ASSISTANT_CALENDAR_SNAPSHOT }),
+    );
+    expect(s).not.toMatch(/^## Calendar lookup/m);
+    expect(s).not.toContain("## Calendar lookup (read-only");
   });
 
   it("Slice 5: app catalog JSON in the user message is parseable; excerpt is never empty (anti-drift)", () => {
@@ -740,9 +751,10 @@ describe("formatAssistantContextForOperatorLlm", () => {
       },
     });
     expect(s).toContain("## Recent thread & email activity");
+    expect(s).toMatch(/orienting envelope — Slice 4/);
     expect(s).toMatch(/Envelope only/);
-    expect(s).toMatch(/not.*message bodies|message bodies.*not/i);
-    expect(s).toMatch(/Do not.*summarize.*title alone|title alone/i);
+    expect(s).toMatch(/messages\.body/);
+    expect(s).toMatch(/subject lines as proof|Do not.*treat subject lines/i);
     expect(s).toContain("last inbound");
     expect(s).toContain("last outbound");
     expect(s).toContain("`t1`");
@@ -803,7 +815,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
           uniqueWeddingId: "w-x",
           weddingCandidates: [],
           personMatches: [],
-          queryResolvedProjectFacts: null,
+          queryResolvedProjectSummary: null,
         },
         operatorThreadMessageLookup: {
           didRun: true,
@@ -824,7 +836,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
       }),
     );
     const iThread = s.indexOf("## Recent thread & email activity");
-    const iMatched = s.indexOf("## Matched entities / likely project matches");
+    const iMatched = s.indexOf("## Matched entities (bounded resolver — CRM project / people index)");
     expect(iThread).toBeGreaterThan(0);
     expect(iMatched).toBeGreaterThan(0);
     expect(iThread).toBeLessThan(iMatched);
@@ -863,7 +875,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).toContain('"inquiryCountSnapshot"');
   });
 
-  it("includes Matched entities / likely project matches when didRun and there is a wedding or person signal", () => {
+  it("includes Matched entities (bounded resolver) when didRun and there is a wedding or person signal", () => {
     const s = formatAssistantContextForOperatorLlm(
       minimalCtx({
         queryText: "Elena and Marco",
@@ -873,7 +885,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
           uniqueWeddingId: "w-em",
           weddingCandidates: [],
           personMatches: [],
-          queryResolvedProjectFacts: null,
+          queryResolvedProjectSummary: null,
         },
         retrievalLog: {
           ...minimalCtx().retrievalLog,
@@ -883,13 +895,13 @@ describe("formatAssistantContextForOperatorLlm", () => {
             uniqueWeddingId: "w-em",
             weddingCandidateCount: 0,
             personMatchCount: 0,
-            queryResolvedProjectFactsLoaded: false,
+            queryResolvedProjectSummaryLoaded: false,
           },
         },
       }),
     );
     const scope = s.indexOf("## Effective scope");
-    const matched = s.indexOf("## Matched entities / likely project matches");
+    const matched = s.indexOf("## Matched entities (bounded resolver — CRM project / people index)");
     const analysis = s.indexOf("## Studio analysis snapshot");
     expect(matched).toBeGreaterThan(scope);
     if (analysis > 0) {
@@ -916,7 +928,7 @@ describe("formatAssistantContextForOperatorLlm", () => {
     const state = s.indexOf("## Operator state (Today / Inbox — read-only snapshot)");
     const focused = s.indexOf("## Focused project (summary — call operator_lookup_project_details for specifics)");
     const playbook = s.indexOf("## Playbook (effective rules");
-    const mem = s.indexOf("## Durable memory");
+    const mem = s.indexOf("## Durable memory (read-only — domain-first, bounded `memories`)");
     expect(appHelp).toBeGreaterThan(scope);
     expect(state).toBeGreaterThan(appHelp);
     expect(focused).toBeGreaterThan(state);
@@ -931,6 +943,45 @@ describe("formatAssistantContextForOperatorLlm", () => {
     expect(s).not.toContain("**Couple / project name:**");
     expect(s).not.toContain("### Recent weddings");
     expect(s).toContain("## CRM digest (omitted in prompt — Slice 4)");
+  });
+
+  it("Global knowledge block is framed as bounded supporting reference (not full KB)", () => {
+    const s = formatAssistantContextForOperatorLlm(minimalCtx({ globalKnowledge: [] }));
+    expect(s).toContain("## Global knowledge excerpts (tenant KB — domain-first, supporting reference only)");
+    expect(s).toMatch(/not.*entire KB|semantic.*knowledge_base|capped/i);
+    expect(s).toContain("operator_lookup_knowledge");
+    expect(s).toContain("- **Excerpts in prompt:** (none retrieved)");
+    expect(s).toContain(OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST);
+  });
+
+  it("thin-context cleanup: shared authority footnote repeats in playbook coverage, playbook lines, memory, and knowledge", () => {
+    const s = formatAssistantContextForOperatorLlm(minimalCtx());
+    const n = s.split(OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST).length - 1;
+    expect(n).toBeGreaterThanOrEqual(4);
+  });
+
+  it("thin-context cleanup: effective scope labels CRM project id for all project_type (not wedding-only)", () => {
+    const s = formatAssistantContextForOperatorLlm(minimalCtx());
+    expect(s).toContain("- Focused project id (`weddings.id`, all `project_type`):");
+    expect(s).toContain("- Focused person id:");
+    expect(s).not.toMatch(/Focused wedding \(validated\)/);
+  });
+
+  it("Durable memory block is framed as bounded domain-first evidence (not full corpus)", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        retrievalLog: {
+          ...minimalCtx().retrievalLog,
+          selectedMemoryIds: [],
+        },
+        selectedMemories: [],
+      }),
+    );
+    expect(s).toContain("## Durable memory (read-only — domain-first, bounded `memories`)");
+    expect(s).toMatch(/not.*full memory database|keyword-ranked subset/i);
+    expect(s).toContain("operator_lookup_memories");
+    expect(s).toContain("**selectedMemoryIds** this turn: **0**");
+    expect(s).toContain("- **Snippets:** (none selected)");
   });
 
   it("Slice 4: non-rendering of digest holds even when crmDigest has many rows (no competing recent-list)", () => {
@@ -957,102 +1008,80 @@ describe("formatAssistantContextForOperatorLlm", () => {
   });
 });
 
-const BASE_FACTS = (
-  project_type: "wedding" | "commercial" | "video" | "other",
-  title: string,
-): AssistantFocusedProjectFacts => ({
-  weddingId: "550e8400-e29b-41d4-a716-446655440000",
-  couple_names: title,
-  stage: "inquiry",
-  project_type,
-  wedding_date: "2026-09-01",
-  event_start_date: null,
-  event_end_date: null,
-  location: "Test Location",
-  package_name: "Pkg",
-  contract_value: 1000,
-  balance_due: 200,
-  story_notes: null,
-  package_inclusions: [],
-  people: [
-    {
-      person_id: "p1",
-      role_label: "Contact",
-      is_primary_contact: true,
-      display_name: "Person One",
-      kind: "client",
-    },
-  ],
-  contactPoints: [],
-  counts: { openTasks: 0, openEscalations: 0, pendingApprovalDrafts: 0 },
+const BASE_SUMMARY = (
+  projectType: "wedding" | "commercial" | "video" | "other",
+  displayTitle: string,
+  stage = "inquiry",
+): AssistantFocusedProjectSummary => ({
+  projectId: "550e8400-e29b-41d4-a716-446655440000",
+  projectType,
+  stage,
+  displayTitle,
 });
 
 describe("formatAssistantContextForOperatorLlm — Slice 5 project type", () => {
-  it("query-resolved project facts: projectType first line; commercial uses Event/schedule not Wedding date label", () => {
+  it("query-resolved project summary: projectType visible; no preloaded deep CRM (domain-first)", () => {
     const s = formatAssistantContextForOperatorLlm(
       minimalCtx({
         queryText: "brand work",
         operatorQueryEntityResolution: {
           didRun: true,
           weddingSignal: "unique",
-          uniqueWeddingId: BASE_FACTS("commercial", "Nocera").weddingId,
+          uniqueWeddingId: BASE_SUMMARY("commercial", "Nocera brand").projectId,
           weddingCandidates: [],
           personMatches: [],
-          queryResolvedProjectFacts: BASE_FACTS("commercial", "Nocera brand"),
+          queryResolvedProjectSummary: BASE_SUMMARY("commercial", "Nocera brand"),
         },
         retrievalLog: {
           ...minimalCtx().retrievalLog,
           entityResolution: {
             didRun: true,
             weddingSignal: "unique",
-            uniqueWeddingId: BASE_FACTS("commercial", "Nocera").weddingId,
+            uniqueWeddingId: BASE_SUMMARY("commercial", "Nocera brand").projectId,
             weddingCandidateCount: 0,
             personMatchCount: 0,
-            queryResolvedProjectFactsLoaded: true,
+            queryResolvedProjectSummaryLoaded: true,
           },
         },
       }),
     );
-    expect(s).toContain("### Query-resolved project facts");
-    expect(s).toMatch(/Project type \(Slice 5/);
-    expect(s).toContain("commercial (brand / client work)");
-    expect(s).toContain("**Event / schedule date:**");
-    expect(s).not.toContain("**Wedding date:**");
-    expect(s).toContain("**Client / project title:**");
-    expect(s).toContain("project roster + people");
+    expect(s).toContain("### Query-resolved project (summary");
+    expect(s).toContain("**projectType:** commercial");
+    expect(s).toContain("operator_lookup_project_details");
+    expect(s).not.toContain("**Contract value:**");
+    expect(s).not.toContain("**Package:**");
+    expect(s).not.toContain("Person One");
   });
 
-  it("wedding type keeps wedding-specific labels and Wedding date", () => {
+  it("wedding type still exposes projectType on query-resolved summary pointer", () => {
     const s = formatAssistantContextForOperatorLlm(
       minimalCtx({
         operatorQueryEntityResolution: {
           didRun: true,
           weddingSignal: "unique",
-          uniqueWeddingId: BASE_FACTS("wedding", "A & B").weddingId,
+          uniqueWeddingId: BASE_SUMMARY("wedding", "A & B").projectId,
           weddingCandidates: [],
           personMatches: [],
-          queryResolvedProjectFacts: BASE_FACTS("wedding", "A & B"),
+          queryResolvedProjectSummary: BASE_SUMMARY("wedding", "A & B"),
         },
         retrievalLog: {
           ...minimalCtx().retrievalLog,
           entityResolution: {
             didRun: true,
             weddingSignal: "unique",
-            uniqueWeddingId: BASE_FACTS("wedding", "A & B").weddingId,
+            uniqueWeddingId: BASE_SUMMARY("wedding", "A & B").projectId,
             weddingCandidateCount: 0,
             personMatchCount: 0,
-            queryResolvedProjectFactsLoaded: true,
+            queryResolvedProjectSummaryLoaded: true,
           },
         },
       }),
     );
-    expect(s).toMatch(/wedding/);
-    expect(s).toContain("**Wedding date:**");
-    expect(s).toContain("Couple / project name (wedding)");
-    expect(s).toContain("wedding_people + people");
+    expect(s).toContain("**projectType:** wedding");
+    expect(s).not.toContain("**Contract value:**");
   });
 
-  it("video and other types avoid wedding date label and wedding people header", () => {
+  it("video and other types carry projectType on summary without facts-block date labels", () => {
     for (const pt of ["video", "other"] as const) {
       const s = formatAssistantContextForOperatorLlm(
         minimalCtx({
@@ -1062,7 +1091,7 @@ describe("formatAssistantContextForOperatorLlm — Slice 5 project type", () => 
             uniqueWeddingId: "550e8400-e29b-41d4-a716-446655440000",
             weddingCandidates: [],
             personMatches: [],
-            queryResolvedProjectFacts: BASE_FACTS(pt, pt === "video" ? "Doc shoot" : "Misc"),
+            queryResolvedProjectSummary: BASE_SUMMARY(pt, pt === "video" ? "Doc shoot" : "Misc"),
           },
           retrievalLog: {
             ...minimalCtx().retrievalLog,
@@ -1072,13 +1101,14 @@ describe("formatAssistantContextForOperatorLlm — Slice 5 project type", () => 
               uniqueWeddingId: "550e8400-e29b-41d4-a716-446655440000",
               weddingCandidateCount: 0,
               personMatchCount: 0,
-              queryResolvedProjectFactsLoaded: true,
+              queryResolvedProjectSummaryLoaded: true,
             },
           },
         }),
       );
+      expect(s).toContain(`**projectType:** ${pt}`);
       expect(s).not.toContain("**Wedding date:**");
-      expect(s).toContain("**Event / schedule date:**");
+      expect(s).not.toContain("**Event / schedule date:**");
     }
   });
 
@@ -1096,6 +1126,38 @@ describe("formatAssistantContextForOperatorLlm — Slice 5 project type", () => 
     );
     expect(s).toMatch(/## Focused project \(summary/);
     expect(s).toContain("**projectType:** commercial");
+  });
+
+  it("Projects domain-first: focused block is pointer-only — no legacy facts heading or deep CRM lines", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        focusedWeddingId: "550e8400-e29b-41d4-a716-446655440000",
+        focusedProjectSummary: {
+          projectId: "550e8400-e29b-41d4-a716-446655440000",
+          projectType: "video",
+          stage: "inquiry",
+          displayTitle: "Doc project",
+        },
+        /** Row hints exist for weather/tools but must not inflate the prompt into a dossier. */
+        focusedProjectRowHints: {
+          location: "Milan HQ",
+          wedding_date: null,
+          event_start_date: "2026-05-01",
+          event_end_date: null,
+        },
+      }),
+    );
+    expect(s).not.toMatch(/## Focused project facts/i);
+    const i = s.indexOf("## Focused project (summary");
+    expect(i).toBeGreaterThan(-1);
+    const rest = s.slice(i);
+    const end = rest.search(/\n## /);
+    const focusedSection = end === -1 ? rest : rest.slice(0, end);
+    expect(focusedSection).not.toContain("Milan HQ");
+    expect(focusedSection).not.toContain("**Venue / location:**");
+    expect(focusedSection).not.toContain("**Contract value:**");
+    expect(focusedSection).toContain("operator_lookup_project_details");
+    expect(focusedSection).toContain("**projectType:** video");
   });
 });
 
@@ -1116,10 +1178,29 @@ describe("formatAssistantContextForOperatorLlm — Slice 6 carry-forward", () =>
         },
       }),
     );
-    expect(s).toMatch(/## Carry-forward pointer/);
+    expect(s).toMatch(/## Carry-forward pointer \(from prior turn; advisory for follow-up resolution\)/);
     expect(s).toContain("lastFocusedProjectId");
     expect(s).toContain("advisoryHint");
     expect(s).toContain("short_cue_detected");
+  });
+
+  it("carry-forward JSON includes lastFocusedProjectType for non-wedding follow-up framing", () => {
+    const s = formatAssistantContextForOperatorLlm(
+      minimalCtx({
+        queryText: "Why?",
+        carryForward: {
+          lastDomain: "projects",
+          lastFocusedProjectId: "a0eebc99-9c0b-4ef8-8bb2-111111111111",
+          lastFocusedProjectType: "commercial",
+          lastMentionedPersonId: null,
+          lastThreadId: null,
+          lastEntityAmbiguous: false,
+          ageSeconds: 2,
+          advisoryHint: { likelyFollowUp: true, reason: "short_cue_detected", confidence: "medium" },
+        },
+      }),
+    );
+    expect(s).toContain('"lastFocusedProjectType": "commercial"');
   });
 });
 

@@ -5,6 +5,7 @@
 > **Category:** Correctness. No new capability; tightens the existing session-history mechanism.
 > **Depends on:** `V3_OPERATOR_ANA_DOMAIN_FIRST_RETRIEVAL_PLAN.md` — the handler set from that plan is what the carry-forward pointer targets.
 > **Independent of:** Project-type slice, Projects-domain execution slice. Safe to ship any order after the plan.
+> **Follow-on:** `V3_OPERATOR_ANA_POST_IMPLEMENTATION_HARDENING_SLICES.md` — Slice A there completes tool coverage in `DOMAIN_BY_TOOL` / `mergeToolIntoData` and fixes unfocus-to-null pointer drift.
 
 ---
 

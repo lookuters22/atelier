@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
-  fetchMessageIdsWithStructuredAttachments,
+  fetchAttachmentContextBatch,
   redactMessageBodyForModelContext,
 } from "./attachmentSafetyForModelContext.ts";
 import { fetchThreadSummary } from "./fetchThreadSummary.ts";
@@ -68,7 +68,7 @@ async function loadRecentMessageLines(
 
   const chronological = [...(rows ?? [])].reverse();
   const ids = chronological.map((r) => r.id as string).filter(Boolean);
-  const withAttachments = await fetchMessageIdsWithStructuredAttachments(
+  const { messagesWithAttachments, rollups } = await fetchAttachmentContextBatch(
     supabase,
     photographerId,
     ids,
@@ -79,7 +79,8 @@ async function loadRecentMessageLines(
     const who = d === "in" ? "Client" : "Studio";
     const id = r.id as string;
     const layered = redactMessageBodyForModelContext(String(r.body ?? ""), {
-      hasStructuredAttachments: withAttachments.has(id),
+      hasStructuredAttachments: messagesWithAttachments.has(id),
+      attachmentRollup: rollups.get(id) ?? null,
     });
     const body = sanitizeInboundTextForModelContext(layered);
     return `${who}: ${body.trim()}`;

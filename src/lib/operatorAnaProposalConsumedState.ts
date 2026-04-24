@@ -4,6 +4,8 @@ import type {
   OperatorAssistantProposedActionCalendarEventReschedule,
   OperatorAssistantProposedActionEscalationResolve,
   OperatorAssistantProposedActionInvoiceSetupChangeProposal,
+  OperatorAssistantProposedActionProjectCommercialAmendmentProposal,
+  OperatorAssistantProposedActionPublicationRightsRecord,
   OperatorAssistantProposedActionMemoryNote,
   OperatorAssistantProposedActionOfferBuilderChangeProposal,
   OperatorAssistantProposedActionPlaybookRuleCandidate,
@@ -21,7 +23,8 @@ export function taskProposalKey(p: OperatorAssistantProposedActionTask): string 
 }
 
 export function memoryProposalKey(p: OperatorAssistantProposedActionMemoryNote): string {
-  return `memory:${p.memoryScope}:${p.title}:${p.outcome}:${p.weddingId ?? ""}:${p.personId ?? ""}`;
+  const tier = p.audienceSourceTier ?? "client_visible";
+  return `memory:${p.memoryScope}:${p.title}:${p.outcome}:${p.weddingId ?? ""}:${p.personId ?? ""}:${p.captureChannel ?? ""}:${p.captureOccurredOn ?? ""}:${tier}`;
 }
 
 export function caseExceptionProposalKey(p: OperatorAssistantProposedActionAuthorizedCaseException): string {
@@ -38,6 +41,16 @@ export function offerBuilderChangeProposalKey(p: OperatorAssistantProposedAction
 
 export function invoiceSetupChangeProposalKey(p: OperatorAssistantProposedActionInvoiceSetupChangeProposal): string {
   return `inv_setup:${p.rationale.slice(0, 80)}:${JSON.stringify(p.template_patch)}`;
+}
+
+export function projectCommercialAmendmentProposalKey(
+  p: OperatorAssistantProposedActionProjectCommercialAmendmentProposal,
+): string {
+  return `proj_amd:${p.weddingId}:${p.clientThreadId ?? ""}:${JSON.stringify(p.changeCategories)}:${JSON.stringify(p.deltas)}`;
+}
+
+export function publicationRightsRecordProposalKey(p: OperatorAssistantProposedActionPublicationRightsRecord): string {
+  return `pub_rights:${p.weddingId}:${p.permissionStatus}:${JSON.stringify(p.permittedUsageChannels)}:${p.attributionRequired}:${p.evidenceSource}:${p.operatorConfirmationSummary.slice(0, 80)}`;
 }
 
 export function calendarEventCreateProposalKey(p: OperatorAssistantProposedActionCalendarEventCreate): string {

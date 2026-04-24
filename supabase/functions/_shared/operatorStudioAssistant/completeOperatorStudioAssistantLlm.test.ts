@@ -22,7 +22,7 @@ vi.mock("./tools/operatorAssistantReadOnlyLookupTools.ts", async (importOriginal
 
 import type {
   AssistantContext,
-  AssistantFocusedProjectFacts,
+  AssistantOperatorCalendarSnapshot,
   AssistantOperatorStateSummary,
 } from "../../../../src/types/assistantContext.types.ts";
 import {
@@ -41,7 +41,10 @@ import { IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY } from "../context/fetchAssistant
 import { deriveAssistantPlaybookCoverageSummary } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
 import { IDLE_OPERATOR_ANA_TRIAGE } from "../../../../src/lib/operatorAnaTriage.ts";
 import { IDLE_OPERATOR_QUERY_ENTITY_RESOLUTION } from "../context/resolveOperatorQueryEntitiesFromIndex.ts";
-import type { OperatorAnaCarryForwardForLlm } from "../../../../src/types/operatorAnaCarryForward.types.ts";
+import type {
+  OperatorAnaCarryForwardForLlm,
+  OperatorAnaCarryForwardProjectType,
+} from "../../../../src/types/operatorAnaCarryForward.types.ts";
 import {
   inferLlmHandlerUsingPointerHeuristic,
 } from "./operatorAssistantCarryForward.ts";
@@ -172,6 +175,393 @@ function expectReplyNoWeddingBleedUnlessInOperatorQuery(reply: string, operatorQ
   }
 }
 
+/** Tool name is the 4th argument to the mocked {@link executeOperatorReadOnlyLookupTool}. */
+function expectLookupToolNamesInOrder(names: string[]) {
+  const got = lookupExecuteMock.mock.calls.map((c) => String(c[3]));
+  expect(got).toEqual(names);
+}
+
+function qaCarryForwardProject(projectId: string, projectType: OperatorAnaCarryForwardProjectType): OperatorAnaCarryForwardForLlm {
+  return {
+    lastDomain: "projects",
+    lastFocusedProjectId: projectId,
+    lastFocusedProjectType: projectType,
+    lastMentionedPersonId: null,
+    lastThreadId: null,
+    lastEntityAmbiguous: false,
+    ageSeconds: 12,
+    advisoryHint: { likelyFollowUp: true, reason: "short_cue_detected", confidence: "medium" },
+  };
+}
+
+function qaCarryForwardThread(projectId: string, threadId: string): OperatorAnaCarryForwardForLlm {
+  return {
+    lastDomain: "threads",
+    lastFocusedProjectId: projectId,
+    lastFocusedProjectType: "wedding",
+    lastMentionedPersonId: null,
+    lastThreadId: threadId,
+    lastEntityAmbiguous: false,
+    ageSeconds: 8,
+    advisoryHint: { likelyFollowUp: true, reason: "short_cue_detected", confidence: "medium" },
+  };
+}
+
+function qaRichCalendarSnapshot(): AssistantOperatorCalendarSnapshot {
+  return {
+    ...IDLE_ASSISTANT_CALENDAR_SNAPSHOT,
+    didRun: true,
+    lookupMode: "upcoming",
+    lookupBasis: "QA harness: bounded upcoming window",
+    windowStartIso: "2026-04-20T00:00:00.000Z",
+    windowEndIso: "2026-05-04T00:00:00.000Z",
+    windowLabel: "14d forward (test)",
+    windowDays: 14,
+    rowCountReturned: 1,
+    truncated: false,
+    semanticsNote:
+      "QA: schedule question should be answerable from this block without read-only tools when events are present.",
+    events: [
+      {
+        id: "evt-qa-1",
+        title: "Commercial brand session — Nocera",
+        startTime: "2026-04-25T15:00:00.000Z",
+        endTime: "2026-04-25T17:00:00.000Z",
+        eventType: "other",
+        eventTypeLabel: "Other",
+        weddingId: null,
+        coupleNames: null,
+        meetingLink: null,
+      },
+    ],
+  };
+}
+
+function createOpenAiTwoPassFetchMock(opts: {
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  finalReply: string;
+  toolCallId?: string;
+}) {
+  const fetchMock = vi.fn().mockImplementation(async () => {
+    if (fetchMock.mock.calls.length === 1) {
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: opts.toolCallId ?? "call_qa",
+                      type: "function",
+                      function: {
+                        name: opts.toolName,
+                        arguments: JSON.stringify(opts.toolArgs),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+      };
+    }
+    return {
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ reply: opts.finalReply, proposedActions: [] }),
+              },
+            },
+          ],
+        }),
+    };
+  });
+  return fetchMock;
+}
+
+function createGeminiTwoPassFetchMock(opts: {
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  finalReply: string;
+}) {
+  const fetchMock = vi.fn().mockImplementation(() => {
+    if (fetchMock.mock.calls.length === 1) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  role: "model",
+                  parts: [{ functionCall: { name: opts.toolName, args: opts.toolArgs } }],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: JSON.stringify({ reply: opts.finalReply, proposedActions: [] }) }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  });
+  return fetchMock;
+}
+
+function expectStableOperatorWidgetJsonContract(
+  out: Awaited<ReturnType<typeof completeOperatorStudioAssistantLlm>>,
+) {
+  expect(Array.isArray(out.proposedActions)).toBe(true);
+  expect(typeof out.reply).toBe("string");
+  expect(out.reply.length).toBeGreaterThan(0);
+}
+
+/**
+ * Real-usage QA harness: realistic operator prompts × domain-first tool routing (mocked LLM).
+ * Each case assumes a well-behaved model that picks the tool the system prompt recommends for that shape.
+ * Gaps by design: no live APIs; weather / investigation specialist / corpus-only flows have separate slices.
+ */
+describe("Operator Ana real-usage QA harness (domain-first; mocked model)", () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  beforeEach(() => {
+    delete process.env.ANA_LLM_PROVIDER;
+    delete process.env.ANA_LLM_MODEL;
+    process.env.OPENAI_API_KEY = "test-key-qa-harness";
+    lookupExecuteMock.mockReset();
+    lookupExecuteMock.mockResolvedValue(JSON.stringify({ tool: "qa_mock", result: { ok: true } }));
+  });
+  afterEach(() => {
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+    vi.restoreAllMocks();
+  });
+
+  it("project deep fact — commercial / video-style economics → operator_lookup_project_details", async () => {
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-aaaaaaaaaaaa";
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_project_details",
+      toolArgs: { projectId: wid },
+      finalReply: "Contract value on file is 12000 with 3000 balance due.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What is the contract value and balance due on this corporate retainer?",
+        focusedWeddingId: wid,
+        focusedProjectSummary: {
+          projectId: wid,
+          projectType: "commercial",
+          stage: "booked",
+          displayTitle: "Nocera annual",
+        },
+        focusedProjectRowHints: { location: "Berlin", wedding_date: null, event_start_date: null, event_end_date: null },
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_project_details"]);
+    expect(out.readOnlyLookupToolTrace).toEqual([{ name: "operator_lookup_project_details", ok: true }]);
+    expectStableOperatorWidgetJsonContract(out);
+    expectReplyNoWeddingBleedUnlessInOperatorQuery(out.reply, "What is the contract value and balance due on this corporate retainer?");
+  });
+
+  it("terse carry-forward follow-up → operator_lookup_project_details (bounded UUID args)", async () => {
+    const wid = "b0eebc99-9c0b-4ef8-8bb2-bbbbbbbbbbbb";
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_project_details",
+      toolArgs: { projectId: wid },
+      toolCallId: "cf_qa",
+      finalReply: "Story notes mention rooftop delivery.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "and the venue note?",
+        carryForward: qaCarryForwardProject(wid, "video"),
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_project_details"]);
+    expect(String(lookupExecuteMock.mock.calls[0]![4])).toContain(wid);
+    expectStableOperatorWidgetJsonContract(out);
+  });
+
+  it("thread body-meaning question → operator_lookup_thread_messages", async () => {
+    const pid = "c0eebc99-9c0b-4ef8-8bb2-cccccccccccc";
+    const tid = "d0eebc99-9c0b-4ef8-8bb2-dddddddddddd";
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_thread_messages",
+      toolArgs: { threadId: tid },
+      finalReply: "They asked to move the timeline to June.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What did they say about the timeline?",
+        carryForward: qaCarryForwardThread(pid, tid),
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_thread_messages"]);
+    expect(out.readOnlyLookupToolTrace).toEqual([{ name: "operator_lookup_thread_messages", ok: true }]);
+    expectStableOperatorWidgetJsonContract(out);
+  });
+
+  it("calendar schedule question — events already in Context → no lookup tools", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  reply: "You have a Commercial brand session — Nocera on 2026-04-25 UTC in the calendar block.",
+                  proposedActions: [],
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What's on my calendar next week for shoots?",
+        operatorCalendarSnapshot: qaRichCalendarSnapshot(),
+      }),
+      { supabase: fakeSupabase },
+    );
+    expect(lookupExecuteMock).not.toHaveBeenCalled();
+    expect(out.readOnlyLookupToolTrace).toBeUndefined();
+    expectStableOperatorWidgetJsonContract(out);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("policy / rule question with thin Playbook in Context → operator_lookup_playbook_rules", async () => {
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_playbook_rules",
+      toolArgs: { query: "rush delivery fee" },
+      finalReply: "Matching rules mention rush fees only when the playbook row explicitly lists them.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "Do we have a playbook rule about rush delivery fees?",
+        playbookRules: [],
+        rawPlaybookRules: [],
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_playbook_rules"]);
+    expectStableOperatorWidgetJsonContract(out);
+  });
+
+  it("memory-heavy recall with empty durable memory block → operator_lookup_memories", async () => {
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_memories",
+      toolArgs: { query: "coordinator parking", scope: "studio" },
+      finalReply: "No rows in the tool excerpt for this turn; Context had no memory headers.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What did we save in durable memory about coordinator parking?",
+        memoryHeaders: [],
+        selectedMemories: [],
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_memories"]);
+    expectStableOperatorWidgetJsonContract(out);
+  });
+
+  it("knowledge / reference question with thin Global knowledge → operator_lookup_knowledge", async () => {
+    const fetchMock = createOpenAiTwoPassFetchMock({
+      toolName: "operator_lookup_knowledge",
+      toolArgs: { query: "brand voice formal client emails" },
+      finalReply: "KB excerpts emphasize warm-professional tone per the retrieved rows.",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What does our knowledge base say about brand voice in client emails?",
+        globalKnowledge: [],
+      }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_knowledge"]);
+    expectStableOperatorWidgetJsonContract(out);
+  });
+
+  const parityPlaybookToolScenario = {
+    toolName: "operator_lookup_playbook_rules",
+    toolArgs: { query: "deposit timing" },
+    finalReply: "Playbook tool row: deposits due at signing for this tenant scope.",
+  };
+
+  it("provider parity (OpenAI): operator_lookup_playbook_rules + same args shape", async () => {
+    const fetchMock = createOpenAiTwoPassFetchMock(parityPlaybookToolScenario);
+    vi.stubGlobal("fetch", fetchMock);
+    await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({ queryText: "What does policy say about deposit timing?" }),
+      { supabase: fakeSupabase },
+    );
+    expectLookupToolNamesInOrder(["operator_lookup_playbook_rules"]);
+    expect(JSON.parse(String(lookupExecuteMock.mock.calls[0]![4]))).toMatchObject({ query: "deposit timing" });
+  });
+
+  it("provider parity (Gemini): same operator_lookup_playbook_rules + args as OpenAI path", async () => {
+    const prevProvider = process.env.ANA_LLM_PROVIDER;
+    const prevModel = process.env.ANA_LLM_MODEL;
+    const prevGemini = process.env.GEMINI_API_KEY;
+    const prevOpenai = process.env.OPENAI_API_KEY;
+    try {
+      process.env.ANA_LLM_PROVIDER = "google";
+      delete process.env.ANA_LLM_MODEL;
+      process.env.GEMINI_API_KEY = "gemini-qa-parity";
+      delete process.env.OPENAI_API_KEY;
+      const fetchMock = createGeminiTwoPassFetchMock(parityPlaybookToolScenario);
+      vi.stubGlobal("fetch", fetchMock);
+      const out = await completeOperatorStudioAssistantLlm(
+        minimalAssistantContext({ queryText: "What does policy say about deposit timing?" }),
+        { supabase: fakeSupabase },
+      );
+      expectLookupToolNamesInOrder(["operator_lookup_playbook_rules"]);
+      expect(JSON.parse(String(lookupExecuteMock.mock.calls[0]![4]))).toMatchObject({ query: "deposit timing" });
+      expectStableOperatorWidgetJsonContract(out);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      if (prevProvider === undefined) delete process.env.ANA_LLM_PROVIDER;
+      else process.env.ANA_LLM_PROVIDER = prevProvider;
+      if (prevModel === undefined) delete process.env.ANA_LLM_MODEL;
+      else process.env.ANA_LLM_MODEL = prevModel;
+      if (prevGemini === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = prevGemini;
+      if (prevOpenai === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prevOpenai;
+    }
+  });
+});
+
 describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
   it("allows short natural handling of greetings / small talk without terminal-style refusal", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
@@ -277,8 +667,9 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/optional.*dueDate|dueDate.*optional/i);
     expect(p).toContain('**"memory_note"**');
     expect(p).toContain("**memoryScope**");
+    expect(p).toContain("**audienceSourceTier**");
     expect(p).toMatch(
-      /[Nn]ever claim a rule, task, memory, exception, profile field, offer document, invoice template, or calendar row|proposes what they can confirm/,
+      /[Nn]ever claim a rule, task, memory, exception, profile field, offer document, invoice template, commercial amendment row, publication rights row, or calendar row|proposes what they can confirm/,
     );
   });
 
@@ -296,6 +687,12 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/nothing is written to memories until|Save memory on the proposal card/i);
     expect(p).toMatch(/\*\*personId\*\*/);
     expect(p).toMatch(/\*\*outcome\*\*/);
+    expect(p).toMatch(/Audience on save|audienceSourceTier/i);
+    expect(p).toMatch(/internal_team/);
+    expect(p).toMatch(/operator_only/);
+    expect(p).toMatch(/already got this on WhatsApp|on a call they agreed/i);
+    expect(p).toMatch(/advisory context|off-email verbal capture|formal amendment/i);
+    expect(p).toMatch(/Instagram DM|video_call|Zoom/i);
   });
 
   it("safe case exception write promotion — manager phrasing + confirm + project scope in system prompt", () => {
@@ -331,6 +728,20 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toMatch(/logoDataUrl|never.*logo|no.*logo/i);
   });
 
+  it("Project commercial amendment — project_commercial_amendment_proposal in system prompt (enqueue, distinct from memory)", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toContain("project_commercial_amendment_proposal");
+    expect(p).toMatch(/changeCategories|payment_schedule/);
+    expect(p).toMatch(/memory_note.*alone|does \*\*not\*\* replace/);
+  });
+
+  it("P13 — publication_rights_record in system prompt (enqueue, distinct from memory / playbook / amendments / case exceptions)", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toContain("publication_rights_record");
+    expect(p).toMatch(/project_publication_rights|publication.*rights/i);
+    expect(p).toMatch(/withheld_pending_client_approval|permitted_narrow|permitted_broad/);
+  });
+
   it("Recovery slice — read-only lookup tools named in prompt (bounded second pass)", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
     expect(p).toContain("operator_lookup_projects");
@@ -344,6 +755,9 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toContain("operator_lookup_offer_builder");
     expect(p).toContain("operator_lookup_invoice_setup");
     expect(p).toContain("operator_lookup_corpus");
+    expect(p).toContain("operator_lookup_memories");
+    expect(p).toContain("operator_lookup_playbook_rules");
+    expect(p).toContain("operator_lookup_knowledge");
     expect(p).toMatch(/read-only lookup tools|Read-only lookup tools/i);
     expect(p).toMatch(/Project CRM|resolver vs detail|Slice 3/);
     expect(p).toMatch(/never more than three|more than three/i);
@@ -352,6 +766,9 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
   it("Slice 3 — project domain: resolver (text) vs detail (UUID); focused summary is pointer, not deep source", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
     expect(p).toMatch(/Project CRM.*Slice 3|Slice 3.*Project CRM/);
+    expect(p).toMatch(/\*\*Project questions\.\*\*/);
+    expect(p).toMatch(/query-resolved project \(summary\)/i);
+    expect(p).toMatch(/pointer.*not a source|not a source/i);
     expect(p).toMatch(/operator_lookup_projects.*resolver|resolver.*operator_lookup_projects/i);
     expect(p).toMatch(/operator_lookup_project_details|detail/);
     expect(p).toMatch(/natural language|name.*couple|venue|location|vague|ambiguous/i);
@@ -380,19 +797,60 @@ describe("OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT (Slice 2)", () => {
     expect(p).toContain("**Triage (v1 hint — Slice A2):**");
     const n = p.match(/\*\*Follow-up resolution \(Slice 6 — carry-forward pointer\):\*\*/g)?.length;
     expect(n).toBe(1);
+    expect(p).toMatch(/lastFocusedProjectType/);
+    expect(p).toMatch(/advisoryHint.*nudge|nudge only/i);
+  });
+
+  it("Durable memory — domain-first: bounded Context + operator_lookup_memories recovery", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Durable memory \(Context — domain-first, bounded first-pass\):\*\*/);
+    expect(p).toMatch(/operator_lookup_memories/);
+    expect(p).toMatch(/not.*every note|keyword-ranked|bounded first-pass/i);
+    expect(p).toMatch(/Do not.*invent note text|invent note text/i);
+  });
+
+  it("Knowledge / reference — domain-first: bounded Context + operator_lookup_knowledge recovery", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toContain("operator_lookup_knowledge");
+    expect(p).toMatch(/Global knowledge|knowledge_base|reference.*KB/i);
+    expect(p).toMatch(/Playbook.*authoritative|authoritative.*automation/i);
+  });
+
+  it("thin-context cleanup: calendar block forbids inferring schedule from CRM date fields alone (not wedding-only)", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/CRM \*\*date fields\*\*|wedding_date.*event dates/i);
+    expect(p).toMatch(/knowledge excerpts/);
+  });
+
+  it("thin-context cleanup: tasks paragraph uses project UUID wording (weddings.id), not wedding-only", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/project UUID.*weddings\.id/i);
+    expect(p).not.toMatch(/gives a \*\*wedding UUID\*\*/i);
+  });
+
+  it("Playbook / policy — domain-first: bounded Context + operator_lookup_playbook_rules recovery", () => {
+    const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
+    expect(p).toMatch(/\*\*Playbook \(Context — domain-first, bounded effective rules\):\*\*/);
+    expect(p).toContain("operator_lookup_playbook_rules");
+    expect(p).toMatch(/authoritative.*automation|automation behavior/i);
+    expect(p).toMatch(/memory.*supporting|supporting.*only/i);
+    expect(p).toMatch(/project type discipline/i);
   });
 
   it("Calendar — system prompt stresses DB window evidence (no “free day” inference)", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
-    expect(p).toMatch(/\*\*Calendar \(database calendar_events — reads \+ staged writes\):\*\*/);
-    expect(p).toContain("lookup mode");
-    expect(p).toContain("UTC time window");
-    expect(p).toMatch(/no rows|free/i);
+    expect(p).toMatch(/\*\*Calendar \(database calendar_events — Slice 5 domain-first, reads \+ staged writes\):\*\*/);
+    expect(p).toMatch(/Calendar lookup/);
+    expect(p).toContain("UTC window");
+    expect(p).toMatch(/no calendar snapshot was loaded/i);
+    expect(p).toMatch(/no matching rows in this window/);
+    expect(p).toMatch(/\*\*not\*\* a list of events/);
   });
 
-  it("thread / email honesty: bounded bodies + title is not a substitute when excerpts absent", () => {
+  it("thread / email honesty: Slice 4 domain-first + resolver vs detail paragraph", () => {
     const p = OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT;
-    expect(p).toMatch(/\*\*Thread & email \(Context — honesty \+ bounded bodies\):\*\*/);
+    expect(p).toMatch(/\*\*Thread & email \(Context — Slice 4 domain-first\):\*\*/);
+    expect(p).toMatch(/\*\*Thread & inbox — resolver vs message detail \(Slice 4\):\*\*/);
     expect(p).toMatch(/\*\*Corpus search \(Context — phase 1/);
     expect(p).toContain("Communication history by name");
     expect(p).toMatch(/Thread message excerpts/);
@@ -508,7 +966,40 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     expect(body.messages[1].content).toContain("Where do I find drafts?");
   });
 
-  it("user Context includes Thread message excerpts when first-pass bodies snapshot ran", async () => {
+  it("Slice 4 — body-meaning question: user Context omits thread activity when lookup idle (domain-first)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  reply: "I need a thread id to read bodies — use the thread tool.",
+                  proposedActions: [],
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = minimalAssistantContext({
+      queryText: "What did they say in the email?",
+      operatorThreadMessageLookup: IDLE_ASSISTANT_THREAD_MESSAGE_LOOKUP,
+      operatorThreadMessageBodies: IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
+    });
+    await completeOperatorStudioAssistantLlm(ctx);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    const user = body.messages[1]!.content;
+    expect(user).not.toContain("## Recent thread & email activity");
+    expect(user).not.toContain("### Thread message excerpts");
+  });
+
+  it("Slice 4 — rare: Thread message excerpts still render when bodies explicitly injected in Context", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -529,7 +1020,7 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
 
     const tid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const ctx = minimalAssistantContext({
-      queryText: "What did they say in the email?",
+      queryText: "Anything else on pricing?",
       operatorThreadMessageLookup: {
         didRun: true,
         selectionNote: "single",
@@ -568,9 +1059,87 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     expect(out.reply).toContain("June 14");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
-    const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
-    expect(body.messages[1]!.content).toContain("### Thread message excerpts");
-    expect(body.messages[1]!.content).toContain("We would love to book June 14.");
+    const parsed = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
+    expect(parsed.messages[1]!.content).toContain("### Thread message excerpts");
+    expect(parsed.messages[1]!.content).toContain("We would love to book June 14.");
+  });
+
+  it("Slice 4 — carry-forward lastThreadId: model can target operator_lookup_thread_messages (detail)", async () => {
+    const tid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let call = 0;
+    lookupExecuteMock.mockImplementation(async (_sb, _pid, _fp, name) => {
+      expect(name).toBe("operator_lookup_thread_messages");
+      return JSON.stringify({ tool: "operator_lookup_thread_messages", result: { excerpt: "June 14" } });
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "c_tm",
+                        type: "function",
+                        function: {
+                          name: "operator_lookup_thread_messages",
+                          arguments: JSON.stringify({ threadId: tid }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+        };
+      }
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    reply: "They asked about June 14.",
+                    proposedActions: [],
+                  }),
+                },
+              },
+            ],
+          }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const cf: OperatorAnaCarryForwardForLlm = {
+      lastDomain: "threads",
+      lastFocusedProjectId: null,
+      lastFocusedProjectType: null,
+      lastMentionedPersonId: null,
+      lastThreadId: tid,
+      lastEntityAmbiguous: false,
+      ageSeconds: 4,
+      advisoryHint: { likelyFollowUp: true, reason: "short_cue_detected", confidence: "medium" },
+    };
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({
+        queryText: "What did they say?",
+        carryForward: cf,
+        operatorThreadMessageLookup: IDLE_ASSISTANT_THREAD_MESSAGE_LOOKUP,
+      }),
+      { supabase: fakeSupabase },
+    );
+    expect(out.reply).toMatch(/June 14/);
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(1);
+    const exec = lookupExecuteMock.mock.calls[0]!;
+    expect(exec[3]).toBe("operator_lookup_thread_messages");
+    expect(String(exec[4])).toContain(tid);
+    expect(out.readOnlyLookupToolTrace).toEqual([{ name: "operator_lookup_thread_messages", ok: true }]);
   });
 
   it("Slice 6: parses proposed playbook_rule_candidate actions from the model JSON", async () => {
@@ -803,6 +1372,44 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     }
   });
 
+  it("Slice 8: proposed memory_note may include audienceSourceTier", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  reply: "Saved as internal-team memory when you confirm.",
+                  proposedActions: [
+                    {
+                      kind: "memory_note",
+                      memoryScope: "project",
+                      title: "Planner handoff",
+                      outcome: "Day-of coordinator is external vendor X.",
+                      summary: "Vendor contact in ops",
+                      fullContent: "External coordinator — internal reference only.",
+                      weddingId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                      audienceSourceTier: "internal_team",
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({ queryText: "Remember coordinator is vendor X" }),
+    );
+    expect(out.proposedActions).toHaveLength(1);
+    if (out.proposedActions[0]!.kind === "memory_note") {
+      expect(out.proposedActions[0].audienceSourceTier).toBe("internal_team");
+    }
+  });
+
   it("Bounded session: [system+addendum, ...history, user with formatted context only] — history not in context block", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -949,6 +1556,109 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     const execArgs = lookupExecuteMock.mock.calls[0]!;
     expect(execArgs[1]).toBe("p1");
     expect(execArgs[3]).toBe("operator_lookup_projects");
+  });
+
+  it("with supabase: parallel tool_calls respect lookup cap; trace/outcomes record tool_budget_exhausted (Gemini parity)", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const n = fetchMock.mock.calls.length;
+      if (n === 1) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: ["a", "b", "c", "d"].map((id) => ({
+                      id: `call_${id}`,
+                      type: "function",
+                      function: {
+                        name: "operator_lookup_projects",
+                        arguments: JSON.stringify({ query: id }),
+                      },
+                    })),
+                  },
+                },
+              ],
+            }),
+        };
+      }
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({ reply: "Capped openai.", proposedActions: [] }),
+                },
+              },
+            ],
+          }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(minimalAssistantContext({ queryText: "batch lookup" }), {
+      supabase: fakeSupabase,
+    });
+    expect(out.reply).toBe("Capped openai.");
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(3);
+    expect(out.readOnlyLookupToolTrace).toEqual([
+      { name: "operator_lookup_projects", ok: true },
+      { name: "operator_lookup_projects", ok: true },
+      { name: "operator_lookup_projects", ok: true },
+      { name: "operator_lookup_projects", ok: false, detail: "tool_budget_exhausted" },
+    ]);
+    const exhausted = out.readOnlyLookupToolOutcomes!.filter((o) => o.content.includes("tool_budget_exhausted"));
+    expect(exhausted).toHaveLength(1);
+  });
+
+  it("with supabase: empty tool name records missing_tool_name in trace/outcomes (Gemini rejects at parse; OpenAI continues)", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const n = fetchMock.mock.calls.length;
+      if (n === 1) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_x",
+                        type: "function",
+                        function: { name: "", arguments: "{}" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+        };
+      }
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({ reply: "Recovered.", proposedActions: [] }),
+                },
+              },
+            ],
+          }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(minimalAssistantContext(), { supabase: fakeSupabase });
+    expect(out.reply).toBe("Recovered.");
+    expect(lookupExecuteMock).not.toHaveBeenCalled();
+    expect(out.readOnlyLookupToolTrace).toEqual([{ name: "", ok: false, detail: "missing_tool_name" }]);
+    expect(out.readOnlyLookupToolOutcomes?.[0]?.content).toContain("missing_tool_name");
   });
 
   it("Slice 3: with supabase, name-in-text project question can be routed to operator_lookup_projects (mocked model)", async () => {
@@ -1138,7 +1848,7 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     expectReplyNoWeddingBleedUnlessInOperatorQuery(out.reply, queryText);
   });
 
-  it("Slice 5: no-supabase path — other with query-resolved project facts, mock reply passes anti-bleed", async () => {
+  it("Slice 5: no-supabase path — other with query-resolved project summary, mock reply passes anti-bleed", async () => {
     const projectId = "a0eebc99-9c0b-4ef8-8bb2-333333333333";
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -1160,46 +1870,23 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const queryText = "What stage is the Matera small-event project in?";
-    const queryResolvedFacts: AssistantFocusedProjectFacts = {
-      weddingId: projectId,
-      couple_names: "Garcia family",
-      stage: "inquiry",
-      project_type: "other",
-      wedding_date: null,
-      event_start_date: null,
-      event_end_date: null,
-      location: "Matera",
-      package_name: null,
-      contract_value: null,
-      balance_due: null,
-      story_notes: null,
-      package_inclusions: [],
-      people: [],
-      contactPoints: [],
-      counts: { openTasks: 0, openEscalations: 0, pendingApprovalDrafts: 0 },
-    };
     const ctx = minimalAssistantContext({
       queryText,
-      focusedWeddingId: projectId,
-      focusedProjectSummary: {
-        projectId,
-        projectType: "other",
-        stage: "inquiry",
-        displayTitle: "Matera fam gathering",
-      },
-      focusedProjectRowHints: {
-        location: "Matera",
-        wedding_date: null,
-        event_start_date: null,
-        event_end_date: null,
-      },
+      focusedWeddingId: null,
+      focusedProjectSummary: null,
+      focusedProjectRowHints: null,
       operatorQueryEntityResolution: {
         didRun: true,
         weddingSignal: "unique",
         uniqueWeddingId: projectId,
         weddingCandidates: [],
         personMatches: [],
-        queryResolvedProjectFacts: queryResolvedFacts,
+        queryResolvedProjectSummary: {
+          projectId,
+          projectType: "other",
+          stage: "inquiry",
+          displayTitle: "Garcia family",
+        },
       },
     });
 
@@ -1209,9 +1896,10 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     const body = JSON.parse(String(init.body)) as { messages: { role: string; content: string }[] };
     expect(body.messages[0]!.content).toMatch(/Project type discipline \(Slice 5\)/);
     const user = body.messages[1]!.content;
-    expect(user).toMatch(/Query-resolved project facts/);
-    expect(user).toMatch(/Slice 5/);
+    expect(user).toMatch(/Query-resolved project \(summary/);
+    expect(user).toContain("**projectType:** other");
     expect(user).toMatch(/\bother\b/i);
+    expect(user).not.toContain("**Contract value:**");
 
     expectReplyNoWeddingBleedUnlessInOperatorQuery(result.reply, queryText);
   });
@@ -1341,6 +2029,63 @@ describe("completeOperatorStudioAssistantLlm (mocked OpenAI)", () => {
     );
     expect(h.value).toBe(true);
     expect(h.note).toBe("project_details_arg_matches_pointer_no_resolver");
+  });
+
+  it("Slice 7 — carry-forward includes lastFocusedProjectType in Context (non-wedding)", async () => {
+    const wid = "b0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_cf2",
+                        type: "function",
+                        function: {
+                          name: "operator_lookup_project_details",
+                          arguments: JSON.stringify({ projectId: wid }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+        };
+      }
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({ reply: "Booked.", proposedActions: [] }),
+                },
+              },
+            ],
+          }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const cf: OperatorAnaCarryForwardForLlm = {
+      ...carryForwardForProjectPointer(wid),
+      lastFocusedProjectType: "commercial",
+    };
+    await completeOperatorStudioAssistantLlm(
+      minimalAssistantContext({ queryText: "and the balance?", carryForward: cf }),
+      { supabase: fakeSupabase },
+    );
+    const first = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body)) as {
+      messages: { content: string }[];
+    };
+    expect(first.messages[1]!.content).toContain('"lastFocusedProjectType": "commercial"');
   });
 
   it("Slice 7 — “did they email too?”: threads only is compatible (no project resolver; heuristic on)", async () => {
@@ -1655,51 +2400,168 @@ describe("completeOperatorStudioAssistantLlm (mocked Google Gemini)", () => {
     expect(body.systemInstruction.parts[0]!.text).toContain("You are Ana in the studio operator dashboard");
   });
 
-  it("does not run read-only lookup tools when supabase is set (Gemini has no tool round yet)", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
+  it("runs read-only lookup tools when supabase is set (two generateContent passes)", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => {
+      if (fetchMock.mock.calls.length === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    role: "model",
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "operator_lookup_projects",
+                          args: { query: "Como" },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({ reply: "After Gemini tool.", proposedActions: [] }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(minimalAssistantContext({ queryText: "Which project is Como?" }), {
+      supabase: fakeSupabase,
+    });
+    expect(out.reply).toBe("After Gemini tool.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(":generateContent");
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(1);
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body)) as {
+      tools?: unknown[];
+      generationConfig: Record<string, unknown>;
+    };
+    expect(firstBody.tools).toBeDefined();
+    expect(firstBody.generationConfig.responseMimeType).toBeUndefined();
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body)) as {
+      generationConfig: { responseMimeType?: string };
+    };
+    expect(secondBody.generationConfig.responseMimeType).toBe("application/json");
+  });
+
+  it("Gemini + supabase: malformed function call (missing name) fails safely", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
           candidates: [
             {
               content: {
-                parts: [
-                  {
-                    text: JSON.stringify({ reply: "Context-only", proposedActions: [] }),
-                  },
-                ],
+                role: "model",
+                parts: [{ functionCall: { args: { query: "x" } } }],
               },
             },
           ],
         }),
-    });
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
-    await completeOperatorStudioAssistantLlm(minimalAssistantContext({ queryText: "lookup?" }), {
-      supabase: fakeSupabase,
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]![0])).toContain("generativelanguage.googleapis.com");
+    await expect(
+      completeOperatorStudioAssistantLlm(minimalAssistantContext({ queryText: "lookup?" }), { supabase: fakeSupabase }),
+    ).rejects.toThrow(/malformed function-call/);
     expect(lookupExecuteMock).not.toHaveBeenCalled();
   });
 
-  it("streaming uses one Gemini request then emits reply tokens from the JSON payload", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          candidates: [
-            {
-              content: {
-                parts: [
-                  {
-                    text: JSON.stringify({ reply: "Stream gemini", proposedActions: [] }),
+  it("Gemini + supabase: respects lookup cap when model emits parallel function calls", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => {
+      if (fetchMock.mock.calls.length === 1) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    role: "model",
+                    parts: [
+                      { functionCall: { name: "operator_lookup_projects", args: { query: "a" } } },
+                      { functionCall: { name: "operator_lookup_projects", args: { query: "b" } } },
+                      { functionCall: { name: "operator_lookup_projects", args: { query: "c" } } },
+                      { functionCall: { name: "operator_lookup_projects", args: { query: "d" } } },
+                    ],
                   },
-                ],
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: JSON.stringify({ reply: "Capped.", proposedActions: [] }) }],
+                },
               },
-            },
-          ],
-        }),
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
     });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await completeOperatorStudioAssistantLlm(minimalAssistantContext({ queryText: "batch lookup" }), {
+      supabase: fakeSupabase,
+    });
+    expect(out.reply).toBe("Capped.");
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(3);
+    const exhausted = out.readOnlyLookupToolOutcomes!.filter((o) => o.content.includes("tool_budget_exhausted"));
+    expect(exhausted).toHaveLength(1);
+  });
+
+  it("streaming uses streamGenerateContent (SSE) and emits incremental deltas before final parse", async () => {
+    const te = new TextEncoder();
+    const finalJson = { reply: "Stream gemini", proposedActions: [] };
+    const raw = JSON.stringify(finalJson);
+    const mid = Math.max(1, Math.floor(raw.length / 2));
+    const pieces = [raw.slice(0, mid), raw.slice(mid)];
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const text of pieces) {
+              const line =
+                "data: " +
+                JSON.stringify({
+                  candidates: [{ content: { parts: [{ text }] } }],
+                }) +
+                "\n";
+              c.enqueue(te.encode(line));
+            }
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const toks: string[] = [];
     const out = await completeOperatorStudioAssistantLlmStreaming(
@@ -1709,7 +2571,137 @@ describe("completeOperatorStudioAssistantLlm (mocked Google Gemini)", () => {
     );
     expect(out.reply).toBe("Stream gemini");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = String((fetchMock.mock.calls[0] as [string, RequestInit])[0]);
+    expect(url).toContain("streamGenerateContent");
+    expect(url).toContain("alt=sse");
+    expect(toks.length).toBeGreaterThan(0);
     expect(toks.join("")).toContain("Stream gemini");
+  });
+
+  it("streaming + supabase: SSE tool first pass then SSE json final pass", async () => {
+    const te = new TextEncoder();
+    const finalJson = { reply: "Gemini stream after tool", proposedActions: [] };
+    const raw = JSON.stringify(finalJson);
+    const mid = Math.max(1, Math.floor(raw.length / 2));
+    const pieces = [raw.slice(0, mid), raw.slice(mid)];
+    let streamPass = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("streamGenerateContent")) {
+        streamPass += 1;
+        if (streamPass === 1) {
+          const toolLine =
+            "data: " +
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    role: "model",
+                    parts: [
+                      {
+                        functionCall: {
+                          name: "operator_lookup_projects",
+                          args: { query: "z" },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }) +
+            "\n";
+          return Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(c) {
+                  c.enqueue(te.encode(toolLine));
+                  c.close();
+                },
+              }),
+              { status: 200, headers: { "Content-Type": "text/event-stream" } },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(c) {
+                for (const text of pieces) {
+                  c.enqueue(
+                    te.encode(
+                      "data: " +
+                        JSON.stringify({
+                          candidates: [{ content: { parts: [{ text }] } }],
+                        }) +
+                        "\n",
+                    ),
+                  );
+                }
+                c.close();
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("unexpected non-stream URL", { status: 500 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const toks: string[] = [];
+    const out = await completeOperatorStudioAssistantLlmStreaming(
+      minimalAssistantContext({ queryText: "lookup stream?" }),
+      { supabase: fakeSupabase },
+      (d) => toks.push(d),
+    );
+    expect(out.reply).toBe("Gemini stream after tool");
+    expect(lookupExecuteMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("streamGenerateContent");
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("streamGenerateContent");
+    expect(toks.length).toBeGreaterThan(0);
+  });
+
+  it("streaming + supabase: no-tool first pass streams JSON over SSE (Slice D)", async () => {
+    const te = new TextEncoder();
+    const finalJson = { reply: "No tool stream", proposedActions: [] };
+    const raw = JSON.stringify(finalJson);
+    const mid = Math.max(1, Math.floor(raw.length / 2));
+    const pieces = [raw.slice(0, mid), raw.slice(mid)];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      expect(String(url)).toContain("streamGenerateContent");
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              for (const text of pieces) {
+                c.enqueue(
+                  te.encode(
+                    "data: " +
+                      JSON.stringify({
+                        candidates: [{ content: { parts: [{ text }] } }],
+                      }) +
+                      "\n",
+                  ),
+                );
+              }
+              c.close();
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const toks: string[] = [];
+    const out = await completeOperatorStudioAssistantLlmStreaming(
+      minimalAssistantContext({ queryText: "hello there" }),
+      { supabase: fakeSupabase },
+      (d) => toks.push(d),
+    );
+    expect(out.reply).toBe("No tool stream");
+    expect(lookupExecuteMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(toks.length).toBeGreaterThan(0);
+    expect(toks.join("")).toContain("No tool stream");
   });
 });
 

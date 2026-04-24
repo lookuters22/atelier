@@ -1,5 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { hasOperatorCalendarScheduleIntent } from "./operatorAssistantCalendarScheduleIntent";
+import {
+  hasOperatorCalendarContinuityIntent,
+  hasOperatorCalendarScheduleIntent,
+} from "./operatorAssistantCalendarScheduleIntent";
+
+describe("hasOperatorCalendarContinuityIntent", () => {
+  const cfCal = { lastDomain: "calendar" as const, ageSeconds: 10 };
+
+  it("is true for elliptical day follow-ups after a calendar-domain prior turn", () => {
+    expect(hasOperatorCalendarContinuityIntent("and friday?", cfCal)).toBe(true);
+    // "next week" wording trips primary schedule intent via the `next` content cue — use a day ref only.
+    expect(hasOperatorCalendarContinuityIntent("same for saturday?", cfCal)).toBe(true);
+    expect(hasOperatorCalendarContinuityIntent("and saturday?", cfCal)).toBe(true);
+  });
+
+  it("is false when primary schedule intent already covers the query (continuity is redundant)", () => {
+    expect(hasOperatorCalendarContinuityIntent("what about tomorrow?", cfCal)).toBe(false);
+  });
+
+  it("is false without calendar lastDomain or when age is stale", () => {
+    expect(hasOperatorCalendarContinuityIntent("and friday?", { lastDomain: "projects", ageSeconds: 10 })).toBe(
+      false,
+    );
+    expect(hasOperatorCalendarContinuityIntent("and friday?", { lastDomain: "calendar", ageSeconds: 200 })).toBe(
+      false,
+    );
+  });
+
+  it("is false when primary schedule or thread/inquiry intent wins", () => {
+    expect(hasOperatorCalendarContinuityIntent("What's on Friday?", cfCal)).toBe(false);
+    expect(hasOperatorCalendarContinuityIntent("did they email friday?", cfCal)).toBe(false);
+    expect(
+      hasOperatorCalendarContinuityIntent("how many leads came in today?", {
+        lastDomain: "calendar",
+        ageSeconds: 10,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("hasOperatorCalendarScheduleIntent", () => {
   it("is true for upcoming schedule / what’s on questions", () => {

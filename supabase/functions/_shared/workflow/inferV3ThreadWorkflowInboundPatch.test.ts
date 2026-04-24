@@ -31,6 +31,27 @@ describe("inferV3ThreadWorkflowInboundPatch", () => {
     expect(p.stalled_inquiry?.client_marked_at).toBeDefined();
     expect(p.stalled_inquiry?.nudge_due_at).toBeDefined();
   });
+
+  it("detects questionnaire submitted (P18)", () => {
+    const p = inferV3ThreadWorkflowInboundPatch(
+      "Hi — we have completed the Google Form questionnaire you sent.",
+    );
+    expect(p.readiness?.questionnaire?.status).toBe("complete");
+    expect(p.readiness?.questionnaire?.completed_at).toBeDefined();
+  });
+
+  it("detects email timeline attachment (P14)", () => {
+    const p = inferV3ThreadWorkflowInboundPatch(
+      "Please find attached the day-of timeline and run of show for your review.",
+    );
+    expect(p.timeline?.received_channel).toBe("email");
+    expect(p.readiness?.timeline?.status).toBe("complete");
+  });
+
+  it("detects consultation booked", () => {
+    const p = inferV3ThreadWorkflowInboundPatch("Our consultation is scheduled for next Tuesday at 3pm.");
+    expect(p.readiness?.consultation?.status).toBe("complete");
+  });
 });
 
 describe("mergeV3ThreadWorkflow + next due", () => {
@@ -43,5 +64,15 @@ describe("mergeV3ThreadWorkflow + next due", () => {
       },
     });
     expect(computeV3ThreadWorkflowNextDueAt(merged)).toBe("2026-01-03T12:00:00.000Z");
+  });
+
+  it("computes next_due including readiness milestone due_at", () => {
+    const merged = mergeV3ThreadWorkflow(emptyV3ThreadWorkflowV1(), {
+      readiness: {
+        questionnaire: { status: "pending", due_at: "2026-01-02T00:00:00.000Z" },
+      },
+      payment_wire: { promised_at: "2026-01-01T00:00:00.000Z", chase_due_at: "2026-01-05T00:00:00.000Z" },
+    });
+    expect(computeV3ThreadWorkflowNextDueAt(merged)).toBe("2026-01-02T00:00:00.000Z");
   });
 });

@@ -9,11 +9,13 @@ import { tryParseLlmProposedAuthorizedCaseException } from "./validateOperatorAs
 import { tryParseLlmProposedOfferBuilderChange } from "../../../../src/lib/operatorAssistantOfferBuilderChangeProposalFromLlm.ts";
 import { tryParseLlmProposedStudioProfileChange } from "../../../../src/lib/operatorAssistantStudioProfileChangeProposalFromLlm.ts";
 import { tryParseLlmProposedInvoiceSetupChange } from "../../../../src/lib/operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
+import { tryParseLlmProposedProjectCommercialAmendment } from "../../../../src/lib/operatorAssistantProjectCommercialAmendmentProposalFromLlm.ts";
 import {
   tryParseLlmProposedCalendarEventCreate,
   tryParseLlmProposedCalendarEventReschedule,
 } from "./validateOperatorAssistantCalendarEventPayload.ts";
 import { tryParseLlmProposedEscalationResolve } from "./validateOperatorAssistantEscalationResolvePayload.ts";
+import { tryParseLlmProposedPublicationRightsRecord } from "./validateOperatorAssistantPublicationRightsPayload.ts";
 
 export type ReadOnlyLookupToolOutcome = {
   name: string;
@@ -119,6 +121,16 @@ export function parseOperatorStudioAssistantLlmResponse(rawContent: string): Ope
         actions.push(inv.value);
         continue;
       }
+      const amd = tryParseLlmProposedProjectCommercialAmendment(item);
+      if (amd.ok) {
+        actions.push(amd.value);
+        continue;
+      }
+      const pub = tryParseLlmProposedPublicationRightsRecord(item);
+      if (pub.ok) {
+        actions.push(pub.value);
+        continue;
+      }
       const calC = tryParseLlmProposedCalendarEventCreate(item);
       if (calC.ok) {
         actions.push(calC.value);
@@ -137,7 +149,7 @@ export function parseOperatorStudioAssistantLlmResponse(rawContent: string): Ope
       console.warn(
         JSON.stringify({
           type: "operator_studio_assistant_dropped_proposal",
-          reason: `${rule.reason}; ${task.reason}; ${mem.reason}; ${exc.reason}; ${sp.reason}; ${ob.reason}; ${inv.reason}; ${calC.reason}; ${calR.reason}; ${esc.reason}`,
+          reason: `${rule.reason}; ${task.reason}; ${mem.reason}; ${exc.reason}; ${sp.reason}; ${ob.reason}; ${inv.reason}; ${amd.reason}; ${pub.reason}; ${calC.reason}; ${calR.reason}; ${esc.reason}`,
         }),
       );
     }

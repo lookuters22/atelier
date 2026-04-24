@@ -515,4 +515,24 @@ describe("proposeClientOrchestratorCandidateActions — context injection", () =
     const pb = proposals.find((p) => p.playbook_rule_ids?.includes("r1"));
     expect(pb?.blockers_or_missing_facts).not.toContain("no_hydrated_memories_or_global_knowledge_rows_in_context");
   });
+
+  it("adds billing/payer workflow constraints when CRM roles diverge from thread sender", () => {
+    const inj = buildOrchestratorSupportingContextInjection({
+      selectedMemories: [],
+      globalKnowledge: [],
+      retrievalTrace: traceBase(),
+      playbookRules: [ruleNoFinancialGrounding],
+      audience: baseAudience({
+        billingPayerWorkflow: {
+          payerPersonIds: ["javier"],
+          billingContactPersonIds: [],
+          inboundSenderPersonId: "belen",
+          counterpartyMismatchRisk: "sender_may_not_be_payer",
+          hasDistinctPayerAndBillingContactParties: false,
+        },
+      }),
+      inquiryReplyPlan: null,
+    });
+    expect(inj.action_constraints.some((c) => c.includes("is_payer"))).toBe(true);
+  });
 });

@@ -14,6 +14,10 @@ import { detectBankingComplianceOrchestratorException } from "../orchestrator/de
 import { detectVisualAssetVerificationOrchestratorRequest } from "../orchestrator/detectVisualAssetVerificationOrchestratorRequest.ts";
 import { detectIdentityEntityRoutingAmbiguity } from "../orchestrator/detectIdentityEntityRoutingAmbiguity.ts";
 import { detectAuthorityPolicyRisk } from "../orchestrator/detectAuthorityPolicyRisk.ts";
+import {
+  verifyMemoryNarrowsPayerOrScopeAuthority,
+  type AuthorityMemoryRow,
+} from "../orchestrator/detectMultiActorAuthorityRefinement.ts";
 import { detectIrregularSettlementOrchestratorRequest } from "../orchestrator/detectIrregularSettlementOrchestratorRequest.ts";
 import { detectHighMagnitudeClientConcessionOrchestratorRequest } from "../orchestrator/detectHighMagnitudeClientConcessionOrchestratorRequest.ts";
 import { detectSensitivePersonalDocumentOrchestratorRequest } from "../orchestrator/detectSensitivePersonalDocumentOrchestratorRequest.ts";
@@ -297,6 +301,11 @@ export type StressReplayDecisionPoint = {
    * (`client_primary`) so legacy batch DPs are not tripped by Phase-1 commercial authority gating.
    */
   inboundSenderAuthority?: InboundSenderAuthoritySnapshot;
+  /**
+   * Mirrors production `ClientOrchestratorProposalInput.selectedMemorySummaries` for AP1
+   * (`detectAuthorityPolicyRisk` → multi-actor verify-note scan). Omit → `[]` (legacy batch points unchanged).
+   */
+  selectedMemorySummaries?: readonly AuthorityMemoryRow[];
 };
 
 export function minimalAudience(overrides: Partial<DecisionAudienceSnapshot> = {}): DecisionAudienceSnapshot {
@@ -327,6 +336,36 @@ const FAKE_WEDDING_B = "00000000-0000-4000-8000-0000000000d4";
 const FAKE_THREAD = "00000000-0000-4000-8000-0000000000b2";
 const FAKE_PHOTOGRAPHER = "00000000-0000-4000-8000-0000000000c3";
 
+/** Batch-1: planner/venue sender + approval contact on thread (non-sender) for multi-actor signer loop-in. */
+export function audiencePlannerWithApprovalContactNonSender(): DecisionAudienceSnapshot {
+  const approverId = "00000000-0000-4000-8000-0000000000ac";
+  const plannerSenderId = "00000000-0000-4000-8000-0000000000pl";
+  return minimalAudience({
+    recipientCount: 3,
+    approvalContactPersonIds: [approverId],
+    threadParticipants: [
+      {
+        id: "00000000-0000-4000-8000-000000000101",
+        person_id: plannerSenderId,
+        thread_id: FAKE_THREAD,
+        visibility_role: "to",
+        is_cc: false,
+        is_recipient: true,
+        is_sender: true,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000102",
+        person_id: approverId,
+        thread_id: FAKE_THREAD,
+        visibility_role: "cc",
+        is_cc: true,
+        is_recipient: true,
+        is_sender: false,
+      },
+    ],
+  });
+}
+
 function simulatedV3WorkflowAfterInbound(rawMessage: string): V3ThreadWorkflowV1 {
   const patch = inferV3ThreadWorkflowInboundPatch(rawMessage);
   return mergeV3ThreadWorkflow(emptyV3ThreadWorkflowV1(), patch);
@@ -356,6 +395,7 @@ export function buildProposalInput(dp: StressReplayDecisionPoint): ClientOrchest
       : dp.candidateWeddingIds,
     inboundSenderIdentity: dp.inboundSenderIdentity ?? null,
     inboundSenderAuthority: dp.inboundSenderAuthority ?? HARNESS_DEFAULT_SENDER_AUTHORITY,
+    selectedMemorySummaries: dp.selectedMemorySummaries ?? [],
   };
 }
 
@@ -386,6 +426,11 @@ export type StressReplayEvalResult = {
   identityEntityPhase2Detected: boolean;
   /** True when Phase-1 authority policy detector matched (commercial / ambiguous approval). */
   authorityPolicyDetected: boolean;
+  /**
+   * True when AP1 hit is `multi_actor_payer_scope_spend_signer` and loaded memories matched
+   * {@link verifyMemoryNarrowsPayerOrScopeAuthority} (production verify-note path).
+   */
+  authorityPolicyVerifyNoteMemoryMatched: boolean;
   /** True when high-magnitude client/payer concession detector matched (after AP1 in orchestrator). */
   highMagnitudeClientConcessionDetected: boolean;
   /** True when strategic trust-repair / contradiction-expectation detector matched (after CCM, before NC). */
@@ -508,11 +553,21 @@ export async function evaluateDecisionPoint(
     inboundSenderEmail: input.inboundSenderIdentity?.email ?? undefined,
   }).hit;
 
-  const authorityPolicyDetected = detectAuthorityPolicyRisk({
+  const memoryRows = dp.selectedMemorySummaries ?? [];
+  const authorityPolicyDetection = detectAuthorityPolicyRisk({
     rawMessage: input.rawMessage,
     threadContextSnippet: input.threadContextSnippet,
     authority: input.inboundSenderAuthority ?? HARNESS_DEFAULT_SENDER_AUTHORITY,
-  }).hit;
+    selectedMemorySummaries: memoryRows,
+    audience: dp.audience,
+  });
+  const authorityPolicyDetected = authorityPolicyDetection.hit;
+  let authorityPolicyVerifyNoteMemoryMatched = false;
+  if (authorityPolicyDetection.hit) {
+    authorityPolicyVerifyNoteMemoryMatched =
+      authorityPolicyDetection.primaryClass === "multi_actor_payer_scope_spend_signer" &&
+      verifyMemoryNarrowsPayerOrScopeAuthority(memoryRows);
+  }
   const highMagnitudeClientConcessionDetected = detectHighMagnitudeClientConcessionOrchestratorRequest({
     rawMessage: input.rawMessage,
     threadContextSnippet: input.threadContextSnippet,
@@ -561,6 +616,7 @@ export async function evaluateDecisionPoint(
     sensitivePersonalDocumentDetected,
     identityEntityPhase2Detected,
     authorityPolicyDetected,
+    authorityPolicyVerifyNoteMemoryMatched,
     highMagnitudeClientConcessionDetected,
     strategicTrustRepairDetected,
     nonCommercialDetected,
@@ -622,6 +678,84 @@ export const BATCH1_DECISION_POINTS: StressReplayDecisionPoint[] = [
     expectedProductBehavior:
       "Phase-1 authority policy escalates commercial-shaped asks from non-client/planner/payer senders.",
     primaryGapIfUnmet: "routing_identity_bug",
+  },
+  {
+    id: "st1-planner-timeline-reduction-signer-loopin",
+    stressTest: 1,
+    title: "Multi-actor: B2B venue/planner cuts day-of portrait time; approval contact on thread (non-sender)",
+    rawMessage:
+      "From the venue coordinator side: we'd like to cut the couple portrait block from 40 minutes to 15 before ceremony — please confirm for your team.",
+    inboundSenderIdentity: {
+      email: "events@luxvenue.test",
+      displayName: "LuxVenue Coordinator",
+      domain: "luxvenue.test",
+    },
+    inboundSenderAuthority: {
+      bucket: "planner",
+      personId: "00000000-0000-4000-8000-0000000000ven",
+      isApprovalContact: false,
+      source: "thread_sender",
+    },
+    audience: audiencePlannerWithApprovalContactNonSender(),
+    requestedExecutionMode: "draft_only",
+    weddingCrmParityHints: null,
+    expectedProductBehavior:
+      "AP1 multi-actor timeline reduction: signer/approval loop-in — same path production evaluates with audience + memories (memories empty here by default).",
+    primaryGapIfUnmet: "missing_memory_grounding",
+  },
+  {
+    id: "st1-payer-addon-verify-note-memory",
+    stressTest: 1,
+    title: "Authority-via-memory: payer add-on / fee confirm + verify_note narrows binding (MOB slice)",
+    rawMessage:
+      "Please add two extra hours of coverage and confirm the $800 add-on fee on the invoice today so we can pay.",
+    inboundSenderAuthority: {
+      bucket: "payer",
+      personId: "00000000-0000-4000-8000-0000000000mob",
+      isApprovalContact: false,
+      source: "thread_sender",
+    },
+    selectedMemorySummaries: [
+      {
+        type: "verify_note",
+        title: "MOB / payer authority boundary",
+        summary:
+          "Ops verify_note: payer status does not authorize add-on hours or fee confirmation without a change order signed by the couple (approval contact).",
+      },
+    ],
+    audience: minimalAudience({ recipientCount: 2 }),
+    requestedExecutionMode: "draft_only",
+    weddingCrmParityHints: null,
+    expectedProductBehavior:
+      "Multi-actor payer scope/spend AP1; loaded summaries must flow through detectAuthorityPolicyRisk like production (verify-note scan).",
+    primaryGapIfUnmet: "missing_memory_grounding",
+  },
+  {
+    id: "st1-payer-rush-fee-budget-cap-memory",
+    stressTest: 1,
+    title: "Authority-via-memory: rush fee confirm + file note caps spend approval to couple",
+    rawMessage:
+      "Please confirm the $950 rush editing add-on on the next invoice — we need it for the parent album deadline.",
+    inboundSenderAuthority: {
+      bucket: "payer",
+      personId: "00000000-0000-4000-8000-0000000000pay2",
+      isApprovalContact: false,
+      source: "thread_sender",
+    },
+    selectedMemorySummaries: [
+      {
+        type: "verify_note",
+        title: "Spend / authority cap",
+        summary:
+          "Wedding file: any fee or scope increase above $500 must be approved by the bride (approval contact) — payer emails alone do not bind pricing.",
+      },
+    ],
+    audience: minimalAudience({ recipientCount: 2 }),
+    requestedExecutionMode: "draft_only",
+    weddingCrmParityHints: null,
+    expectedProductBehavior:
+      "Same AP1 payer-scope path with budget/authority-cap grounding from stored memory (real-thread MOB/payer constraint).",
+    primaryGapIfUnmet: "missing_memory_grounding",
   },
   {
     id: "st1-bulk-discount",

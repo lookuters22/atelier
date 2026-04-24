@@ -25,6 +25,15 @@ import {
   redactPlannerPrivateCommercialText,
 } from "../context/applyAudiencePrivateCommercialRedaction.ts";
 import { ORCHESTRATOR_CLIENT_V1_SCHEMA_VERSION } from "../inngest.ts";
+import {
+  readWeddingAutomationPauseFreshForTenant,
+  WEDDING_PAUSE_STATE_DB_ERROR,
+} from "../fetchWeddingPauseFlags.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../weddingAutomationPause.ts";
 
 export type OrchestratorStubDraftAudienceOptions = Pick<
   DecisionAudienceSnapshot,
@@ -130,6 +139,18 @@ export type AttemptOrchestratorDraftParams = {
   playbookRules: PlaybookRuleContextRow[];
   /** When set from `buildDecisionContext`, client-visible runs get stub redaction at insert time. */
   audience?: OrchestratorStubDraftAudienceOptions | null;
+  /**
+   * CRM slice for {@link isWeddingAutomationPaused} — when paused, no automated orchestrator draft insert.
+   */
+  crmSnapshotForPause?: {
+    compassion_pause?: boolean | null;
+    strategic_pause?: boolean | null;
+  } | null;
+  /**
+   * When known, enables a fresh `weddings` pause read immediately before `drafts` insert (stale CRM safe).
+   * When omitted, resolved from `threads.wedding_id` when possible.
+   */
+  weddingId?: string | null;
 };
 
 /**
@@ -192,6 +213,92 @@ export async function attemptOrchestratorDraft(
       draftId: null,
       chosenCandidate: null,
       skipReason: "outcome_auto_no_draft_in_slice_a2",
+    };
+  }
+
+  let weddingIdForPauseGate: string | null =
+    params.weddingId !== undefined && params.weddingId !== null && String(params.weddingId).trim() !== ""
+      ? String(params.weddingId).trim()
+      : null;
+
+  if (weddingIdForPauseGate == null) {
+    const { data: threadRow, error: threadErr } = await supabase
+      .from("threads")
+      .select("wedding_id")
+      .eq("id", threadId)
+      .eq("photographer_id", photographerId)
+      .maybeSingle();
+    if (threadErr) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_draft_skipped",
+        skip_reason: WEDDING_PAUSE_STATE_DB_ERROR,
+        inngest_function_id: "client-orchestrator-v1",
+        photographer_id: photographerId,
+        thread_id: threadId,
+        detail: "thread_wedding_resolve_for_pause_gate",
+      });
+      return {
+        draftCreated: false,
+        draftId: null,
+        chosenCandidate: null,
+        skipReason: WEDDING_PAUSE_STATE_DB_ERROR,
+      };
+    }
+    const wid = (threadRow?.wedding_id as string | null) ?? null;
+    weddingIdForPauseGate = wid != null && String(wid).trim() !== "" ? String(wid).trim() : null;
+  }
+
+  if (weddingIdForPauseGate != null) {
+    const fresh = await readWeddingAutomationPauseFreshForTenant(
+      supabase,
+      weddingIdForPauseGate,
+      photographerId,
+    );
+    if (!fresh.ok) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_draft_skipped",
+        skip_reason: fresh.reason,
+        inngest_function_id: "client-orchestrator-v1",
+        photographer_id: photographerId,
+        thread_id: threadId,
+        wedding_id: weddingIdForPauseGate,
+      });
+      return {
+        draftCreated: false,
+        draftId: null,
+        chosenCandidate: null,
+        skipReason: fresh.reason,
+      };
+    }
+    if (fresh.paused) {
+      logAutomationPauseObservation({
+        observation_type: "orchestrator_draft_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "client-orchestrator-v1",
+        photographer_id: photographerId,
+        thread_id: threadId,
+        wedding_id: weddingIdForPauseGate,
+      });
+      return {
+        draftCreated: false,
+        draftId: null,
+        chosenCandidate: null,
+        skipReason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+      };
+    }
+  } else if (isWeddingAutomationPaused(params.crmSnapshotForPause ?? undefined)) {
+    logAutomationPauseObservation({
+      observation_type: "orchestrator_draft_skipped",
+      skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+      inngest_function_id: "client-orchestrator-v1",
+      photographer_id: photographerId,
+      thread_id: threadId,
+    });
+    return {
+      draftCreated: false,
+      draftId: null,
+      chosenCandidate: null,
+      skipReason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
     };
   }
 

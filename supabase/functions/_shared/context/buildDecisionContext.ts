@@ -25,6 +25,12 @@ import { buildAgentContext } from "../memory/buildAgentContext.ts";
 import { fetchThreadParticipantPersonIdsForMemory } from "./fetchThreadParticipantPersonIdsForMemory.ts";
 import { fetchSelectedMemoriesFull } from "../memory/fetchSelectedMemoriesFull.ts";
 import {
+  combineThreadAudienceTierWithVisibilityClass,
+  filterSelectedMemoriesForThreadAudienceTier,
+  parseThreadAudienceTier,
+  type ThreadAudienceTier,
+} from "../memory/memoryAudienceTierPolicy.ts";
+import {
   MAX_SELECTED_MEMORIES,
   selectRelevantMemoryIdsDeterministic,
 } from "../memory/selectRelevantMemoriesForDecisionContext.ts";
@@ -45,6 +51,9 @@ import {
   type InquiryFirstStepStyle,
 } from "../../../../src/lib/inquiryFirstStepStyle.ts";
 import { readPhotographerSettings } from "../../../../src/lib/photographerSettings.ts";
+import {
+  buildBillingPayerWorkflowSnapshot,
+} from "./billingPayerWorkflowContext.ts";
 
 export type { BuildDecisionContextOptions } from "../../../../src/types/decisionContext.types.ts";
 
@@ -109,6 +118,18 @@ export async function buildDecisionContext(
     threadId,
   );
 
+  const audienceBundle = await loadAudienceSnapshot(
+    supabase,
+    tenantPhotographerId,
+    weddingId,
+    threadId,
+    options?.inboundSenderEmail,
+  );
+  const effectiveReplyThreadAudienceTier = combineThreadAudienceTierWithVisibilityClass(
+    audienceBundle.threadAudienceTierFromDb,
+    audienceBundle.audience.visibilityClass,
+  );
+
   const base = await buildAgentContext(
     supabase,
     tenantPhotographerId,
@@ -116,7 +137,10 @@ export async function buildDecisionContext(
     threadId,
     replyChannel,
     rawMessage,
-    { replyModeParticipantPersonIds },
+    {
+      replyModeParticipantPersonIds,
+      replyThreadAudienceTierResolved: effectiveReplyThreadAudienceTier,
+    },
   );
 
   const memoryIds = resolveMemoryIdsForDecisionContext(
@@ -129,7 +153,9 @@ export async function buildDecisionContext(
   );
   const selectedMemoriesPromise =
     memoryIds.length > 0
-      ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds)
+      ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds, {
+          replyThreadAudienceTier: effectiveReplyThreadAudienceTier,
+        })
       : Promise.resolve(base.selectedMemories);
 
   const globalKnowledgeGate = decideGlobalKnowledgeBaseQuery({
@@ -150,7 +176,6 @@ export async function buildDecisionContext(
       : Promise.resolve([]);
 
   const [
-    audienceBundle,
     candidateWeddingIds,
     rawPlaybookRules,
     authorizedCaseExceptions,
@@ -159,13 +184,6 @@ export async function buildDecisionContext(
     globalKnowledge,
     photographerSettingsRead,
   ] = await Promise.all([
-    loadAudienceSnapshot(
-      supabase,
-      tenantPhotographerId,
-      weddingId,
-      threadId,
-      options?.inboundSenderEmail,
-    ),
     loadCandidateWeddingIds(supabase, tenantPhotographerId, threadId),
     fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
     fetchAuthorizedCaseExceptionsForDecisionContext(
@@ -179,7 +197,8 @@ export async function buildDecisionContext(
     globalKnowledgePromise,
     readPhotographerSettings(supabase, tenantPhotographerId),
   ]);
-  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
+  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad, threadAudienceTierFromDb } =
+    audienceBundle;
 
   const effectivePlaybookRules = deriveEffectivePlaybook(rawPlaybookRules, authorizedCaseExceptions);
 
@@ -206,6 +225,7 @@ export async function buildDecisionContext(
     globalKnowledge,
     retrievalTrace,
     inquiryFirstStepStyle,
+    threadAudienceTierFromDb,
     options,
   });
   return applyAudiencePrivateCommercialRedaction(merged);
@@ -232,6 +252,18 @@ export async function buildDecisionContextQaProofPair(
     threadId,
   );
 
+  const audienceBundle = await loadAudienceSnapshot(
+    supabase,
+    tenantPhotographerId,
+    weddingId,
+    threadId,
+    options?.inboundSenderEmail,
+  );
+  const effectiveReplyThreadAudienceTier = combineThreadAudienceTierWithVisibilityClass(
+    audienceBundle.threadAudienceTierFromDb,
+    audienceBundle.audience.visibilityClass,
+  );
+
   const base = await buildAgentContext(
     supabase,
     tenantPhotographerId,
@@ -239,7 +271,10 @@ export async function buildDecisionContextQaProofPair(
     threadId,
     replyChannel,
     rawMessage,
-    { replyModeParticipantPersonIds },
+    {
+      replyModeParticipantPersonIds,
+      replyThreadAudienceTierResolved: effectiveReplyThreadAudienceTier,
+    },
   );
 
   const memoryIds = resolveMemoryIdsForDecisionContext(
@@ -252,7 +287,9 @@ export async function buildDecisionContextQaProofPair(
   );
   const selectedMemoriesPromise =
     memoryIds.length > 0
-      ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds)
+      ? fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds, {
+          replyThreadAudienceTier: effectiveReplyThreadAudienceTier,
+        })
       : Promise.resolve(base.selectedMemories);
 
   const globalKnowledgeGate = decideGlobalKnowledgeBaseQuery({
@@ -273,7 +310,6 @@ export async function buildDecisionContextQaProofPair(
       : Promise.resolve([]);
 
   const [
-    audienceBundle,
     candidateWeddingIds,
     rawPlaybookRules,
     authorizedCaseExceptions,
@@ -282,13 +318,6 @@ export async function buildDecisionContextQaProofPair(
     globalKnowledge,
     photographerSettingsRead,
   ] = await Promise.all([
-    loadAudienceSnapshot(
-      supabase,
-      tenantPhotographerId,
-      weddingId,
-      threadId,
-      options?.inboundSenderEmail,
-    ),
     loadCandidateWeddingIds(supabase, tenantPhotographerId, threadId),
     fetchActivePlaybookRulesForDecisionContext(supabase, tenantPhotographerId),
     fetchAuthorizedCaseExceptionsForDecisionContext(
@@ -302,7 +331,8 @@ export async function buildDecisionContextQaProofPair(
     globalKnowledgePromise,
     readPhotographerSettings(supabase, tenantPhotographerId),
   ]);
-  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad } = audienceBundle;
+  const { audience, inboundSenderAuthority: inboundSenderAuthorityFromLoad, threadAudienceTierFromDb } =
+    audienceBundle;
 
   const effectivePlaybookRules = deriveEffectivePlaybook(rawPlaybookRules, authorizedCaseExceptions);
 
@@ -329,6 +359,7 @@ export async function buildDecisionContextQaProofPair(
     globalKnowledge,
     retrievalTrace,
     inquiryFirstStepStyle,
+    threadAudienceTierFromDb,
     options,
   });
   return {
@@ -355,6 +386,7 @@ function mergeDecisionContextWithoutRedaction(
     globalKnowledge: AgentContext["globalKnowledge"];
     retrievalTrace: DecisionContextRetrievalTrace;
     inquiryFirstStepStyle: InquiryFirstStepStyle;
+    threadAudienceTierFromDb: ThreadAudienceTier;
     options?: BuildDecisionContextOptions;
   },
 ): DecisionContext {
@@ -372,6 +404,19 @@ function mergeDecisionContextWithoutRedaction(
     };
   }
 
+  const finalReplyThreadAudienceTier = combineThreadAudienceTierWithVisibilityClass(
+    parts.threadAudienceTierFromDb,
+    audience.visibilityClass,
+  );
+  const selectedMemories = filterSelectedMemoriesForThreadAudienceTier(
+    parts.selectedMemories,
+    finalReplyThreadAudienceTier,
+  );
+  const retrievalTrace: DecisionContextRetrievalTrace = {
+    ...parts.retrievalTrace,
+    selectedMemoriesLoadedCount: selectedMemories.length,
+  };
+
   const inboundSenderIdentity = buildInboundSenderIdentityFromIngress({
     inboundSenderEmail: parts.options?.inboundSenderEmail,
     inboundSenderDisplayName: parts.options?.inboundSenderDisplayName,
@@ -385,7 +430,8 @@ function mergeDecisionContextWithoutRedaction(
     ...base,
     photographerId: canonicalTenantPhotographerId,
     contextVersion: 1,
-    selectedMemories: parts.selectedMemories,
+    replyThreadAudienceTier: finalReplyThreadAudienceTier,
+    selectedMemories,
     audience,
     candidateWeddingIds: parts.candidateWeddingIds,
     rawPlaybookRules: parts.rawPlaybookRules,
@@ -393,7 +439,7 @@ function mergeDecisionContextWithoutRedaction(
     playbookRules: parts.effectivePlaybookRules,
     threadDraftsSummary: parts.threadDraftsSummary,
     globalKnowledge: parts.globalKnowledge,
-    retrievalTrace: parts.retrievalTrace,
+    retrievalTrace,
     inboundSenderIdentity,
     inboundSenderAuthority,
     inquiryFirstStepStyle: parts.inquiryFirstStepStyle,
@@ -432,6 +478,7 @@ async function fetchWeddingPeopleByWedding(
       person_id: row.person_id as string,
       role_label: typeof row.role_label === "string" ? row.role_label : "",
       is_payer: Boolean(row.is_payer),
+      is_billing_contact: Boolean(row.is_billing_contact),
     });
   }
   return m;
@@ -446,6 +493,7 @@ async function loadAudienceSnapshot(
 ): Promise<{
   audience: DecisionAudienceSnapshot;
   inboundSenderAuthority: InboundSenderAuthoritySnapshot;
+  threadAudienceTierFromDb: ThreadAudienceTier;
 }> {
   if (!threadId) {
     const agencyCcLock = weddingId
@@ -463,17 +511,22 @@ async function loadAudienceSnapshot(
       recipientCount: 0,
       approvalContactPersonIds,
       inboundSuppression: null,
+      billingPayerWorkflow: buildBillingPayerWorkflowSnapshot({
+        weddingPeopleByPersonId: new Map(),
+        inboundSenderPersonId: null,
+      }),
       ...DEFAULT_VISIBILITY,
     };
     return {
       audience,
       inboundSenderAuthority: deriveInboundSenderAuthority([], new Map(), approvalContactPersonIds),
+      threadAudienceTierFromDb: "client_visible",
     };
   }
 
   const { data: threadRow, error: threadErr } = await supabase
     .from("threads")
-    .select("id, wedding_id")
+    .select("id, wedding_id, audience_tier")
     .eq("id", threadId)
     .eq("photographer_id", photographerId)
     .maybeSingle();
@@ -494,13 +547,22 @@ async function loadAudienceSnapshot(
       recipientCount: 0,
       approvalContactPersonIds,
       inboundSuppression: null,
+      billingPayerWorkflow: buildBillingPayerWorkflowSnapshot({
+        weddingPeopleByPersonId: new Map(),
+        inboundSenderPersonId: null,
+      }),
       ...DEFAULT_VISIBILITY,
     };
     return {
       audience,
       inboundSenderAuthority: deriveInboundSenderAuthority([], new Map(), approvalContactPersonIds),
+      threadAudienceTierFromDb: "client_visible",
     };
   }
+
+  const threadAudienceTierFromDb = parseThreadAudienceTier(
+    (threadRow as { audience_tier?: unknown }).audience_tier,
+  );
 
   const effectiveWeddingId = weddingId ?? threadRow.wedding_id ?? null;
   const weddingPeopleByPersonId = await fetchWeddingPeopleByWedding(
@@ -512,7 +574,7 @@ async function loadAudienceSnapshot(
   const { data: parts, error: partErr } = await supabase
     .from("thread_participants")
     .select(
-      "id, person_id, thread_id, visibility_role, is_cc, is_recipient, is_sender",
+      "id, person_id, thread_id, visibility_role, participant_role, is_cc, is_recipient, is_sender",
     )
     .eq("thread_id", threadId)
     .eq("photographer_id", photographerId);
@@ -527,6 +589,7 @@ async function loadAudienceSnapshot(
       person_id: p.person_id,
       thread_id: p.thread_id,
       visibility_role: p.visibility_role,
+      participant_role: typeof p.participant_role === "string" ? p.participant_role : undefined,
       is_cc: p.is_cc,
       is_recipient: p.is_recipient,
       is_sender: p.is_sender,
@@ -591,9 +654,15 @@ async function loadAudienceSnapshot(
     inboundSenderEmailFromIngress,
   );
 
+  const billingPayerWorkflow = buildBillingPayerWorkflowSnapshot({
+    weddingPeopleByPersonId,
+    inboundSenderPersonId: inboundSenderAuthority.personId,
+  });
+
   return {
-    audience,
+    audience: { ...audience, billingPayerWorkflow },
     inboundSenderAuthority,
+    threadAudienceTierFromDb,
   };
 }
 

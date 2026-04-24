@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   fetchAssistantThreadQueueExplanation,
   MAX_WORKFLOW_JSON_CHARS,
@@ -151,5 +151,119 @@ describe("fetchAssistantThreadQueueExplanation", () => {
     expect(snap.informationalNotes.some((n) => n.includes("needs_human"))).toBe(true);
     const payload = threadQueueExplanationToolPayload(snap);
     expect(String(payload.semanticsNote)).toMatch(/Review.*Zen tab/i);
+  });
+
+  it("surfaces workflow readiness milestone lines (P14/P18) in informationalNotes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-01T12:00:00.000Z"));
+    try {
+      const wf = {
+        v: 1,
+        readiness: {
+          questionnaire: { status: "pending", due_at: "2026-03-10T00:00:00.000Z" },
+        },
+      };
+      const meta = { sender_role: "customer", routing_disposition: "x" };
+      const supabase = {
+        from: (table: string) => {
+          if (table === "threads") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: () =>
+                      Promise.resolve({
+                        data: {
+                          id: TID,
+                          title: "Client",
+                          kind: "email",
+                          channel: "email",
+                          wedding_id: "w1",
+                          needs_human: false,
+                          automation_mode: "auto",
+                          v3_operator_automation_hold: false,
+                          v3_operator_hold_escalation_id: null,
+                          ai_routing_metadata: meta,
+                          last_activity_at: "2026-01-01T00:00:00Z",
+                          status: "open",
+                        },
+                        error: null,
+                      }),
+                  }),
+                }),
+              }),
+            } as never;
+          }
+          if (table === "escalation_requests") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => Promise.resolve({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            } as never;
+          }
+          if (table === "drafts") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      order: () => ({
+                        limit: () => Promise.resolve({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            } as never;
+          }
+          if (table === "v3_thread_workflow_state") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: () =>
+                      Promise.resolve({
+                        data: { next_due_at: null, updated_at: "2026-01-01T01:00:00Z", workflow: wf },
+                        error: null,
+                      }),
+                  }),
+                }),
+              }),
+            } as never;
+          }
+          if (table === "weddings") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: () =>
+                      Promise.resolve({ data: { stage: "booked" }, error: null }),
+                  }),
+                }),
+              }),
+            } as never;
+          }
+          return {} as never;
+        },
+      } as never;
+
+      const snap = await fetchAssistantThreadQueueExplanation(supabase, PHOTO, TID);
+      expect(snap.selectionNote).toBe("ok");
+      expect(
+        snap.informationalNotes.some(
+          (n) => n.includes("Readiness (workflow)") && /questionnaire/i.test(n) && /overdue/i.test(n),
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

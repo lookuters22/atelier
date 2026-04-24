@@ -87,6 +87,9 @@ async function main(): Promise<void> {
     lines.push(
       `- Identity/entity Phase 2 (B2B sender + follow-up cues, or multi-booking text without Phase 1): **${r.identityEntityPhase2Detected ? "yes" : "no"}** - when true, routine primary \`send_message\` is blocked and \`v3_identity_entity_routing_ambiguity\` plus clarification candidate are surfaced.`,
     );
+    lines.push(
+      `- Authority policy (AP1): **${r.authorityPolicyDetected ? "yes" : "no"}**; verify-note memory scan matched on payer scope/spend path: **${r.authorityPolicyVerifyNoteMemoryMatched ? "yes" : "no"}** (\`selectedMemorySummaries\` threaded through \`detectAuthorityPolicyRisk\` like production).`,
+    );
     lines.push("");
     lines.push("**What V3 already does well here**");
     lines.push("");

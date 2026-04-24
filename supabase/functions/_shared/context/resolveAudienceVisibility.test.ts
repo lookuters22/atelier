@@ -13,6 +13,7 @@ function tp(
     id: partial.id ?? "id",
     thread_id: partial.thread_id ?? "thread",
     visibility_role: partial.visibility_role ?? "",
+    participant_role: partial.participant_role,
     is_cc: partial.is_cc ?? false,
     is_recipient: partial.is_recipient ?? true,
     is_sender: partial.is_sender ?? false,
@@ -56,7 +57,20 @@ describe("resolveAudienceVisibility", () => {
     const m = new Map([
       [
         "pay",
-        { person_id: "pay", role_label: "family", is_payer: true },
+        { person_id: "pay", role_label: "family", is_payer: true, is_billing_contact: false },
+      ],
+    ]);
+    const r = resolveAudienceVisibility(participants, m);
+    expect(r.clientVisibleForPrivateCommercialRedaction).toBe(true);
+    expect(["client_visible", "mixed_audience"]).toContain(r.visibilityClass);
+  });
+
+  it("billing contact via wedding_people is_billing_contact — treated as client-family (visibility)", () => {
+    const participants = [tp({ person_id: "acct", visibility_role: "guest", is_sender: false })];
+    const m = new Map([
+      [
+        "acct",
+        { person_id: "acct", role_label: "Accounts", is_payer: false, is_billing_contact: true },
       ],
     ]);
     const r = resolveAudienceVisibility(participants, m);
@@ -70,6 +84,33 @@ describe("resolveAudienceVisibility", () => {
       tp({ person_id: "r", is_sender: false, is_recipient: true, is_cc: false }),
     ];
     expect(outgoingRecipientParticipants(participants)).toHaveLength(1);
+  });
+
+  it("participant_role=planner classifies planner thread without free-text hints", () => {
+    const participants = [
+      tp({
+        person_id: "p1",
+        visibility_role: "",
+        participant_role: "planner",
+        is_sender: false,
+      }),
+    ];
+    const r = resolveAudienceVisibility(participants, new Map());
+    expect(r.visibilityClass).toBe("planner_only");
+    expect(r.clientVisibleForPrivateCommercialRedaction).toBe(false);
+  });
+
+  it("participant_role=client forces client_visible (not planner_only)", () => {
+    const participants = [
+      tp({
+        person_id: "c1",
+        visibility_role: "coordinator",
+        participant_role: "client",
+        is_sender: false,
+      }),
+    ];
+    const r = resolveAudienceVisibility(participants, new Map());
+    expect(r.visibilityClass).toBe("client_visible");
   });
 });
 

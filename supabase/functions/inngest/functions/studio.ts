@@ -9,6 +9,11 @@
  */
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 type EditingStatus = {
   weeksPassed: number;
@@ -48,7 +53,7 @@ export const studioFunction = inngest.createFunction(
     const wedding = await step.run("fetch-wedding", async () => {
       const { data, error } = await supabaseAdmin
         .from("weddings")
-        .select("id, couple_names, wedding_date, stage")
+        .select("id, couple_names, wedding_date, stage, compassion_pause, strategic_pause")
         .eq("id", wedding_id)
         .eq("photographer_id", photographer_id)
         .single();
@@ -62,8 +67,25 @@ export const studioFunction = inngest.createFunction(
         couple_names: string;
         wedding_date: string;
         stage: string;
+        compassion_pause: boolean;
+        strategic_pause: boolean;
       };
     });
+
+    if (isWeddingAutomationPaused(wedding)) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "studio-worker",
+        wedding_id,
+        photographer_id,
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+      };
+    }
 
     const threadId = await step.run("resolve-thread", async () => {
       const { data } = await supabaseAdmin
@@ -79,16 +101,37 @@ export const studioFunction = inngest.createFunction(
       return id;
     });
 
-    const timeline = await step.run("calculate-timeline", () => {
-      return calculateEditingStatus(wedding.wedding_date);
-    });
+    const draftOutcome = await step.run("draft-response", async () => {
+      const { data: weddingNow, error: wNowErr } = await supabaseAdmin
+        .from("weddings")
+        .select("couple_names, wedding_date, compassion_pause, strategic_pause")
+        .eq("id", wedding_id)
+        .eq("photographer_id", photographer_id)
+        .single();
 
-    const draftId = await step.run("draft-response", async () => {
+      if (wNowErr || !weddingNow) {
+        throw new Error(`Wedding not found before studio draft: ${wNowErr?.message ?? wedding_id}`);
+      }
+
+      if (isWeddingAutomationPaused(weddingNow)) {
+        logAutomationPauseObservation({
+          observation_type: "inngest_worker_skipped",
+          skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+          inngest_function_id: "studio-worker",
+          wedding_id,
+          photographer_id,
+          gate: "draft_pre_insert",
+        });
+        return { kind: "skipped_pause" as const };
+      }
+
+      const timelineNow = calculateEditingStatus(weddingNow.wedding_date as string);
+      const couple = (weddingNow.couple_names as string) || "there";
       const body =
-        `Hi ${wedding.couple_names},\n\n` +
-        `Your photos are currently in the ${timeline.status.toLowerCase()} phase! ` +
-        `It has been ${timeline.weeksPassed} week${timeline.weeksPassed === 1 ? "" : "s"} since your wedding, ` +
-        `and we are right on track to deliver your gallery in ${timeline.estimatedDelivery}.\n\n` +
+        `Hi ${couple},\n\n` +
+        `Your photos are currently in the ${timelineNow.status.toLowerCase()} phase! ` +
+        `It has been ${timelineNow.weeksPassed} week${timelineNow.weeksPassed === 1 ? "" : "s"} since your wedding, ` +
+        `and we are right on track to deliver your gallery in ${timelineNow.estimatedDelivery}.\n\n` +
         `If you'd like to discuss album options or wall art, just reply to this thread — ` +
         `we'd love to help you choose something beautiful.\n\n` +
         `Warmly,\nThe Studio`;
@@ -104,7 +147,7 @@ export const studioFunction = inngest.createFunction(
             {
               step: "studio",
               raw_message: raw_message.slice(0, 500),
-              editing_status: timeline,
+              editing_status: timelineNow,
             },
           ],
         })
@@ -112,15 +155,23 @@ export const studioFunction = inngest.createFunction(
         .single();
 
       if (error) throw new Error(`Failed to insert draft: ${error.message}`);
-      return data.id as string;
+      return { kind: "drafted" as const, draftId: data.id as string, timeline: timelineNow };
     });
+
+    if (draftOutcome.kind === "skipped_pause") {
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+      };
+    }
 
     return {
       status: "draft_pending_approval",
       wedding_id,
       threadId,
-      draftId,
-      timeline,
+      draftId: draftOutcome.draftId,
+      timeline: draftOutcome.timeline,
     };
   },
 );

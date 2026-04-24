@@ -72,6 +72,7 @@ export function extractInboundFieldsFromGmailMessage(
 ): InboundFieldsFromGmailMessage {
   const headers = msg.payload?.headers;
   const from = headerFromPayload(headers, "From") ?? "unknown";
+  const replyToHeader = headerFromPayload(headers, "Reply-To");
 
   const sentAtIso = sentAtIsoFromGmailMessage(msg);
 
@@ -91,6 +92,8 @@ export function extractInboundFieldsFromGmailMessage(
       delta_sync: true,
       gmail_label_ids: Array.isArray(msg.labelIds) ? msg.labelIds : [],
       routing_signals,
+      /** Raw `Reply-To` header when present — mirrors `extractReplyToFromRawEmailPayload` for cross-lane identity. */
+      reply_to_header: replyToHeader && replyToHeader.trim().length > 0 ? replyToHeader.trim().slice(0, 500) : null,
     },
   };
 

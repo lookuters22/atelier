@@ -3,6 +3,7 @@ import {
   MAX_INBOUND_TEXT_CHARS_FOR_MODEL,
   sanitizeInboundTextForModelContext,
 } from "./sanitizeInboundTextForModelContext.ts";
+import { SENSITIVE_DOCUMENT_REDACTION_TOKEN } from "./redactSensitiveDocumentPatternsForModelContext.ts";
 
 describe("sanitizeInboundTextForModelContext", () => {
   it("passes through normal short text", () => {
@@ -26,5 +27,11 @@ describe("sanitizeInboundTextForModelContext", () => {
   it("treats null/undefined as empty", () => {
     expect(sanitizeInboundTextForModelContext(null)).toBe("");
     expect(sanitizeInboundTextForModelContext(undefined)).toBe("");
+  });
+
+  it("applies sensitive-document / payment redaction before truncation", () => {
+    const pan = "Payment 5555 5555 5555 4444 thanks";
+    expect(sanitizeInboundTextForModelContext(pan)).toContain(SENSITIVE_DOCUMENT_REDACTION_TOKEN);
+    expect(sanitizeInboundTextForModelContext(pan)).not.toContain("5555");
   });
 });

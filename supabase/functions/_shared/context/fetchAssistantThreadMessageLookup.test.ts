@@ -8,7 +8,7 @@ const emptyEntity: AssistantOperatorQueryEntityResolution = {
   uniqueWeddingId: null,
   weddingCandidates: [],
   personMatches: [],
-  queryResolvedProjectFacts: null,
+  queryResolvedProjectSummary: null,
 };
 
 type ThreadMock = {
@@ -91,7 +91,7 @@ describe("fetchAssistantThreadMessageLookup", () => {
         uniqueWeddingId: "w-1",
         weddingCandidates: [],
         personMatches: [],
-        queryResolvedProjectFacts: null,
+        queryResolvedProjectSummary: null,
       },
     });
     expect(r).toEqual({
@@ -111,9 +111,23 @@ describe("fetchAssistantThreadMessageLookup", () => {
       operatorQueryEntityResolution: emptyEntity,
     });
     expect(r.didRun).toBe(true);
-    expect(r.threads.length).toBe(8);
+    expect(r.threads.length).toBe(4);
     expect(r.threads[0]!.weddingId).toBe("w-1");
     expect(r.selectionNote).toContain("wedding_id");
+  });
+
+  it("deepThreadMessageLookup uses wider row cap (8) for wedding-scoped fetch", async () => {
+    const many = Array.from({ length: 20 }, (_, i) => sampleThread(`t${i}`, "w-1"));
+    const s = makeSupabase({ threadRows: many, participantRows: [], viewRows: [] });
+    const r = await fetchAssistantThreadMessageLookup(s, "p1", {
+      queryText: "Did they email us about this project?",
+      weddingIdEffective: "w-1",
+      personIdEffective: null,
+      operatorQueryEntityResolution: emptyEntity,
+      deepThreadMessageLookup: true,
+    });
+    expect(r.didRun).toBe(true);
+    expect(r.threads.length).toBe(8);
   });
 
   it("resolves threads via thread_participants for person-scoped email questions", async () => {
@@ -288,7 +302,7 @@ describe("fetchAssistantThreadMessageLookup", () => {
         uniqueWeddingId: "w-other",
         weddingCandidates: [],
         personMatches: [],
-        queryResolvedProjectFacts: null,
+        queryResolvedProjectSummary: null,
       },
       now: new Date("2026-04-22T18:00:00.000Z"),
     });
@@ -306,6 +320,43 @@ describe("fetchAssistantThreadMessageLookup", () => {
     });
     expect(r.didRun).toBe(true);
     expect(r.threads).toHaveLength(0);
+  });
+
+  it("open inbox: generic inquiry/tomorrow question does not inbox_scored_prefer noisy recent rows", async () => {
+    const noisy = {
+      id: "th-noisy",
+      title: "Quick inquiry about something",
+      wedding_id: null,
+      last_activity_at: "2026-04-22T16:00:00.000Z",
+      kind: "client",
+      latest_sender: "x@test.com",
+      latest_body: "Following up on your inquiry.",
+    };
+    const hydrateNoisy = {
+      id: "th-noisy",
+      title: "Quick inquiry about something",
+      wedding_id: null,
+      channel: "email",
+      kind: "client",
+      last_activity_at: "2026-04-22T16:00:00.000Z",
+      last_inbound_at: "2026-04-22T15:00:00.000Z",
+      last_outbound_at: null,
+    };
+    const s = makeSupabase({
+      threadRows: [],
+      threadHydrateRows: [hydrateNoisy],
+      participantRows: [],
+      viewRows: [noisy],
+    });
+    const r = await fetchAssistantThreadMessageLookup(s, "p1", {
+      queryText: "did I get any inquiry tomorrow",
+      weddingIdEffective: null,
+      personIdEffective: null,
+      operatorQueryEntityResolution: emptyEntity,
+      now: new Date("2026-04-22T18:00:00.000Z"),
+    });
+    expect(r.didRun).toBe(true);
+    expect(r.selectionNote).not.toContain("inbox_scored_preferred");
   });
 
   it("force:true runs bounded lookup without thread-intent phrasing (operator recovery tools)", async () => {
@@ -406,7 +457,7 @@ describe("fetchAssistantThreadMessageLookup", () => {
         uniqueWeddingId: "w-other",
         weddingCandidates: [],
         personMatches: [],
-        queryResolvedProjectFacts: null,
+        queryResolvedProjectSummary: null,
       },
       now: new Date("2026-04-22T18:00:00.000Z"),
       deepThreadMessageLookup: true,

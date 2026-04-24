@@ -48,10 +48,33 @@
  * `comms/web.received` ingress shape, not a separate “client web intake” product lane. Returns may include `intake_legacy_dispatch` for observability only.
  *
  * **Unfiled / unresolved matching:** Main path returns `wedding_resolution_trace` and logs `[triage.routing_resolution]`.
- * Optional **bounded** matchmaker activation: `TRIAGE_BOUNDED_UNRESOLVED_EMAIL_MATCHMAKER_V1` — see
+ * **Deterministic inquiry dedup (default on):** `TRIAGE_DETERMINISTIC_INQUIRY_DEDUP_V1` — tenant-bounded roster pass (contact graph +
+ * conservative text signals, no LLM) before the conditional matchmaker; can auto-file or near-match escalate on **intake** cold leads.
+ * Rollback: set to `0` / `false` / `off` / `no`.
+ * Optional **bounded** LLM matchmaker: `TRIAGE_BOUNDED_UNRESOLVED_EMAIL_MATCHMAKER_V1` — see
  * `docs/v3/UNFILED_UNRESOLVED_MATCHING_SLICE.md`. Does not apply to dashboard web (`comms/web.received`).
- * Optional **near-match approval escalation:** `TRIAGE_BOUNDED_UNRESOLVED_EMAIL_MATCH_APPROVAL_ESCALATION_V1` (requires the
- * bounded matchmaker gate) — confidence in [75, 90) with a candidate id → `escalation_requests` + dashboard signal; no auto-file, no intake.
+ * **Near-match approval escalation:** `TRIAGE_BOUNDED_UNRESOLVED_EMAIL_MATCH_APPROVAL_ESCALATION_V1` — for LLM path, requires the
+ * bounded matchmaker gate; for **deterministic** near-matches, only this approval gate is required — confidence in [75, 90) with a
+ * candidate id → `escalation_requests` + dashboard signal; no auto-file, no intake dispatch.
+ *
+ * **Pre-LLM non-client suppression (`comms/email.received` only):** `classifyInboundSuppression` runs before triage LLM + matchmaker.
+ * When suppressed, persists thread + message with `promo_automated` / `suppression_classifier_v1` metadata and returns
+ * `suppressed_non_client_email` — no `ai/intent.*` or orchestrator dispatch (parity with Gmail post-ingest suppression gate).
+ *
+ * **Deterministic billing / account ingress (after suppression, before LLM / dedup):** human invoice / payment / banking-style
+ * mail that is not suppressible as promo/system is tagged `sender_role: billing_or_account_followup` and returns
+ * `deterministic_billing_account_operator_review` — no inquiry dedup or `ai/intent.*`.
+ *
+ * **Deterministic vendor / partnership ingress (after billing, before LLM / dedup):** conservative human pitch / agency /
+ * editorial outreach → `vendor_solicitation` or `partnership_or_collaboration`, return
+ * `deterministic_vendor_partnership_operator_review`. Billing/account matcher takes precedence when both could apply.
+ *
+ * **Deterministic recruiter / job ingress (after vendor/partnership, before LLM / dedup):** human talent / staffing /
+ * hiring outreach → `recruiter_or_job_outreach`, return `deterministic_recruiter_job_operator_review`. Billing and
+ * vendor/partnership matchers take precedence when they match.
+ *
+ * **Gmail post-ingest parity:** `inbox/thread.requires_triage.v1` runs the same `evaluateDeterministicHumanNonClientIngress`
+ * ordering after Layer-1/1b suppression and before the LLM (metadata-only update on the canonical thread).
  *
  * `ai/intent.intake` does not shadow-fanout. Operator WhatsApp → internal concierge only (unchanged).
  *
@@ -153,6 +176,17 @@ import {
   buildWebWidgetRetirementDispatchV1,
   logRetirementDispatchV1,
 } from "../../_shared/triage/retirementDispatchObservabilityV1.ts";
+import {
+  deterministicIngressPersistErrorLabel,
+  emailIngressSubjectLineFromPayload,
+  evaluateDeterministicHumanNonClientIngress,
+  persistDeterministicOperatorReviewIngressThread,
+} from "../../_shared/triage/deterministicOperatorReviewIngress.ts";
+import {
+  evaluateRawEmailIngressSuppression,
+  extractReplyToFromRawEmailPayload,
+} from "../../_shared/triage/rawEmailIngressSuppressionGate.ts";
+import { resolveIngressIdentitySenderEmail } from "../../_shared/triage/ingressSenderEmailNormalize.ts";
 
 // ── Stage gate + matchmaker: ../../_shared/triage/emailIngressClassification.ts ──
 
@@ -261,9 +295,25 @@ export const triageFunction = inngest.createFunction(
         ? ((payload as Record<string, unknown>).subject as string)
         : "";
 
+    const headerSourceForReplyTo =
+      "raw_email" in raw && raw.raw_email != null && typeof raw.raw_email === "object"
+        ? (raw.raw_email as Record<string, unknown>)
+        : typeof payload === "object" && payload !== null
+          ? (payload as Record<string, unknown>)
+          : null;
+    const replyToForIdentity = extractReplyToFromRawEmailPayload(headerSourceForReplyTo);
+    const senderEmailForIdentity = resolveIngressIdentitySenderEmail({
+      fromOrSenderRaw: sender,
+      replyToRaw: replyToForIdentity,
+    });
+
     // ── Step 1: Deterministic Identity + Stage ────────────────────
     const identity = await step.run("deterministic-identity", async () =>
-      resolveDeterministicIdentity(supabaseAdmin, { sender, payloadPhotographerId }),
+      resolveDeterministicIdentity(supabaseAdmin, {
+        sender,
+        replyToForIdentity,
+        payloadPhotographerId,
+      }),
     );
 
     // ── Web widget fast-path (known wedding) — CUT2 live orchestrator vs legacy ai/intent.concierge (CUT2-only D1) ──
@@ -450,6 +500,162 @@ export const triageFunction = inngest.createFunction(
       };
     }
 
+    // ── Step 1b: Non-client / non-inquiry suppression (`comms/email.received` only, before LLM) ──
+    if (event.name === "comms/email.received" && payloadPhotographerId) {
+      const nonClientSuppression = await step.run("raw-email-non-client-suppression", async () =>
+        evaluateRawEmailIngressSuppression({
+          rawEmail:
+            typeof payload === "object" && payload !== null
+              ? (payload as Record<string, unknown>)
+              : null,
+          senderRaw: sender,
+          subject: emailSubject,
+          body,
+        }),
+      );
+
+      if (nonClientSuppression.suppressed) {
+        const tenantId = identity.photographerId ?? payloadPhotographerId;
+        const suppressedPersist = await step.run("persist-suppressed-non-client-email", async () => {
+          const subjectLine =
+            typeof (payload as Record<string, unknown>).subject === "string"
+              ? ((payload as Record<string, unknown>).subject as string)
+              : body.slice(0, 60);
+
+          const routingMetadata: Record<string, unknown> = {
+            routing_disposition: "promo_automated",
+            heuristic_reasons: [...nonClientSuppression.reasons],
+            routing_layer: "suppression_classifier_v1",
+            suppression_verdict: nonClientSuppression.verdict,
+            suppression_confidence: nonClientSuppression.confidence,
+            suppression_ingress: "comms_email_received_pre_llm",
+          };
+
+          const { data: thread, error: threadErr } = await supabaseAdmin
+            .from("threads")
+            .insert({
+              wedding_id: identity.weddingId ?? undefined,
+              photographer_id: tenantId,
+              title: subjectLine,
+              kind: "group",
+              ai_routing_metadata: routingMetadata,
+            })
+            .select("id")
+            .single();
+
+          if (threadErr || !thread) {
+            throw new Error(`suppressed non-client email: thread insert failed: ${threadErr?.message}`);
+          }
+
+          const threadId = thread.id as string;
+
+          const { error: msgErr } = await supabaseAdmin.from("messages").insert({
+            thread_id: threadId,
+            photographer_id: tenantId,
+            direction: "in",
+            sender: sender || "unknown",
+            body,
+          });
+          if (msgErr) {
+            throw new Error(`suppressed non-client email: message insert failed: ${msgErr.message}`);
+          }
+
+          return { threadId };
+        });
+
+        console.log(
+          "[triage.suppressed_non_client_email]",
+          JSON.stringify({
+            photographer_id: tenantId,
+            thread_id: suppressedPersist.threadId,
+            verdict: nonClientSuppression.verdict,
+            reasons: nonClientSuppression.reasons,
+          }),
+        );
+
+        return {
+          status: "suppressed_non_client_email",
+          photographer_id: tenantId,
+          wedding_id: identity.weddingId,
+          thread_id: suppressedPersist.threadId,
+          suppression_verdict: nonClientSuppression.verdict,
+          suppression_reasons: nonClientSuppression.reasons,
+          reply_channel: replyChannel,
+        };
+      }
+
+      const humanNonClientIngress = await step.run("deterministic-human-non-client-ingress", async () =>
+        evaluateDeterministicHumanNonClientIngress({
+          subject: emailSubject,
+          body,
+        }),
+      );
+
+      if (humanNonClientIngress.match) {
+        const tenantId = identity.photographerId ?? payloadPhotographerId;
+        const ingressPersist = await step.run("persist-deterministic-human-non-client-ingress-thread", async () =>
+          persistDeterministicOperatorReviewIngressThread(supabaseAdmin, {
+            weddingId: identity.weddingId,
+            tenantId,
+            subjectLine: emailIngressSubjectLineFromPayload(payload as Record<string, unknown>, body),
+            sender,
+            body,
+            routingMetadata: humanNonClientIngress.routingMetadata,
+            errorLabel: deterministicIngressPersistErrorLabel(humanNonClientIngress.variant),
+          }),
+        );
+
+        const logTag =
+          humanNonClientIngress.variant === "billing"
+            ? "[triage.deterministic_billing_account_ingress]"
+            : humanNonClientIngress.variant === "vendor_partnership"
+              ? "[triage.deterministic_vendor_partnership_ingress]"
+              : "[triage.deterministic_recruiter_job_ingress]";
+        console.log(
+          logTag,
+          JSON.stringify({
+            photographer_id: tenantId,
+            thread_id: ingressPersist.threadId,
+            variant: humanNonClientIngress.variant,
+            reason_codes: humanNonClientIngress.reason_codes,
+            ...(humanNonClientIngress.variant === "vendor_partnership"
+              ? { sender_role: humanNonClientIngress.sender_role }
+              : {}),
+          }),
+        );
+
+        if (humanNonClientIngress.variant === "billing") {
+          return {
+            status: humanNonClientIngress.triageReturnStatus,
+            photographer_id: tenantId,
+            wedding_id: identity.weddingId,
+            thread_id: ingressPersist.threadId,
+            deterministic_billing_reason_codes: humanNonClientIngress.reason_codes,
+            reply_channel: replyChannel,
+          };
+        }
+        if (humanNonClientIngress.variant === "vendor_partnership") {
+          return {
+            status: humanNonClientIngress.triageReturnStatus,
+            photographer_id: tenantId,
+            wedding_id: identity.weddingId,
+            thread_id: ingressPersist.threadId,
+            deterministic_vendor_partnership_sender_role: humanNonClientIngress.sender_role,
+            deterministic_vendor_partnership_reason_codes: humanNonClientIngress.reason_codes,
+            reply_channel: replyChannel,
+          };
+        }
+        return {
+          status: humanNonClientIngress.triageReturnStatus,
+          photographer_id: tenantId,
+          wedding_id: identity.weddingId,
+          thread_id: ingressPersist.threadId,
+          deterministic_recruiter_job_reason_codes: humanNonClientIngress.reason_codes,
+          reply_channel: replyChannel,
+        };
+      }
+    }
+
     // ── Step 2: Traffic Cop (Intent Classification) ──────────────
     const llmIntent = await step.run("classify-intent", async () => {
       const raw = await runTriageAgent(body);
@@ -475,6 +681,8 @@ export const triageFunction = inngest.createFunction(
     const matchResult = await step.run("conditional-matchmaker", async (): Promise<MatchmakerStepResult> =>
       runConditionalMatchmakerForEmail(supabaseAdmin, {
         body,
+        subject: emailSubject,
+        senderEmail: senderEmailForIdentity,
         identity,
         stageGateIntent,
         boundedUnresolvedSubsetEligible,
@@ -585,7 +793,7 @@ export const triageFunction = inngest.createFunction(
           confidenceScore: matchConfidence,
           matchmakerReasoning: matchResult.match?.reasoning ?? "",
           llmIntent,
-          senderEmail: sender || "",
+          senderEmail: senderEmailForIdentity || sender || "",
         });
       },
     );
@@ -616,7 +824,7 @@ export const triageFunction = inngest.createFunction(
             llmIntent,
             dispatchIntent,
             channel: replyChannel === "web" ? "web" : "email",
-            senderEmail: sender || "",
+            senderEmail: senderEmailForIdentity || sender || "",
             body,
           });
         },

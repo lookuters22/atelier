@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { AssistantOperatorThreadMessageBodiesSnapshot } from "../../../../src/types/assistantContext.types.ts";
+import {
+  fetchAttachmentContextBatch,
+  redactMessageBodyForModelContext,
+} from "../memory/attachmentSafetyForModelContext.ts";
+import { sanitizeInboundTextForModelContext } from "../memory/sanitizeInboundTextForModelContext.ts";
 
 /** Most recent messages fetched (newest first from DB, reversed to chronological for display). */
 export const MAX_THREAD_MESSAGES_IN_SNAPSHOT = 8;
@@ -84,8 +89,22 @@ export async function fetchAssistantThreadMessageBodies(
   let truncatedOverall = list.length >= MAX_THREAD_MESSAGES_IN_SNAPSHOT;
   const chronological = [...list].reverse();
 
+  const messageIds = chronological.map((r) => String(r.id)).filter(Boolean);
+  const { messagesWithAttachments, rollups } = await fetchAttachmentContextBatch(
+    supabase,
+    photographerId,
+    messageIds,
+  );
+
   const messages = chronological.map((r) => {
-    const { text, clipped } = clipBody(String(r.body ?? ""), MAX_MESSAGE_BODY_CHARS_IN_SNAPSHOT);
+    const mid = String(r.id);
+    const raw = String(r.body ?? "");
+    const layered = redactMessageBodyForModelContext(raw, {
+      hasStructuredAttachments: messagesWithAttachments.has(mid),
+      attachmentRollup: rollups.get(mid) ?? null,
+    });
+    const sanitized = sanitizeInboundTextForModelContext(layered);
+    const { text, clipped } = clipBody(sanitized, MAX_MESSAGE_BODY_CHARS_IN_SNAPSHOT);
     if (clipped) truncatedOverall = true;
     return {
       messageId: String(r.id),

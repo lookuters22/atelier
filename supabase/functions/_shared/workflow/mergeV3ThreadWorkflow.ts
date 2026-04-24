@@ -1,5 +1,6 @@
 import type { V3ThreadWorkflowV1 } from "./v3ThreadWorkflowTypes.ts";
 import { emptyV3ThreadWorkflowV1, parseV3ThreadWorkflowV1 } from "./v3ThreadWorkflowTypes.ts";
+import { collectReadinessDueAtIsoTimes, mergeReadinessBlocks } from "./v3ThreadWorkflowReadiness.ts";
 
 function mergeTimeline(
   base: V3ThreadWorkflowV1["timeline"],
@@ -36,6 +37,7 @@ export function mergeV3ThreadWorkflow(
     timeline: mergeTimeline(b.timeline, patch.timeline),
     payment_wire: mergePaymentWire(b.payment_wire, patch.payment_wire),
     stalled_inquiry: mergeStalled(b.stalled_inquiry, patch.stalled_inquiry),
+    readiness: mergeReadinessBlocks(b.readiness, patch.readiness),
   };
 }
 
@@ -50,6 +52,7 @@ export function computeV3ThreadWorkflowNextDueAt(workflow: V3ThreadWorkflowV1): 
   if (st?.nudge_due_at && !st.nudge_task_created_at) {
     candidates.push(st.nudge_due_at);
   }
+  candidates.push(...collectReadinessDueAtIsoTimes(workflow));
   if (candidates.length === 0) return null;
   const times = candidates.map((iso) => Date.parse(iso)).filter((n) => !Number.isNaN(n));
   if (times.length === 0) return null;

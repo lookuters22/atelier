@@ -19,6 +19,7 @@ import { fetchAssistantOperatorCorpusSearch } from "../../context/fetchAssistant
 import { fetchAssistantThreadMessageLookup } from "../../context/fetchAssistantThreadMessageLookup.ts";
 import { fetchAssistantInquiryCountSnapshot } from "../../context/fetchAssistantInquiryCountSnapshot.ts";
 import {
+  isValidAssistantProjectIdUuid,
   readAssistantProjectDetailById,
 } from "../../context/fetchAssistantFocusedProjectFacts.ts";
 import {
@@ -41,8 +42,37 @@ import {
 } from "../../../../../src/lib/offerPuckAssistantSummary.ts";
 import { fetchInvoiceSetupRemote } from "../../../../../src/lib/invoiceSetupRemote.ts";
 import { mapInvoiceTemplateToAssistantRead, MAX_INVOICE_FOOTER_TOOL_CHARS } from "../../../../../src/lib/invoiceAssistantSummary.ts";
+import { fetchAssistantMemoryHeaders } from "../../memory/fetchAssistantMemoryHeaders.ts";
+import { selectAssistantMemoryIdsDeterministic } from "../../memory/selectAssistantMemoryIdsDeterministic.ts";
+import { fetchSelectedMemoriesFull } from "../../memory/fetchSelectedMemoriesFull.ts";
+import { filterMemoryHeadersForThreadAudienceTier } from "../../memory/memoryAudienceTierPolicy.ts";
+import { fetchActivePlaybookRulesForDecisionContext } from "../../context/fetchActivePlaybookRulesForDecisionContext.ts";
+import { fetchAuthorizedCaseExceptionsForDecisionContext } from "../../context/fetchAuthorizedCaseExceptionsForDecisionContext.ts";
+import { deriveEffectivePlaybook } from "../../policy/deriveEffectivePlaybook.ts";
+import {
+  OPERATOR_PLAYBOOK_LOOKUP_MAX_ROWS,
+  selectEffectivePlaybookRulesForOperatorLookup,
+} from "./operatorAssistantPlaybookRulesLookup.ts";
+import {
+  fetchOperatorKnowledgeLookupRows,
+  OPERATOR_KNOWLEDGE_LOOKUP_MAX_ROWS,
+} from "./operatorAssistantKnowledgeLookup.ts";
 
 export const MAX_LOOKUP_TOOL_QUERY_CHARS = 200;
+
+/**
+ * Minimum trimmed query length for **keyword / ilike-style** read-only lookups (thread envelope list,
+ * playbook keyword match, memory keyword ranker). Keep in sync with tool schema `query` descriptions.
+ */
+export const MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD = 3;
+
+/**
+ * Minimum trimmed query length for **phrase / semantic-style** lookups: CRM name resolver
+ * (`shouldRunOperatorQueryEntityResolution`), tenant corpus search, and pgvector knowledge.
+ * Project resolver minimum must stay aligned with `MIN_QUERY_LEN` in `resolveOperatorQueryEntitiesFromIndex.ts`.
+ */
+export const MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC = 4;
+
 export const MAX_LOOKUP_TOOL_CALLS_PER_TURN = 3;
 /** S4 — investigation mode allows more read-only lookups in one assistant turn (still bounded). */
 export const MAX_LOOKUP_TOOL_CALLS_INVESTIGATION_MODE = 5;
@@ -98,6 +128,14 @@ export function investigationSpecialistToolPayload(): Record<string, unknown> {
 }
 /** Max characters of `storyNotes` in tool JSON (row may be longer; slice contract: ~400 char excerpt). */
 export const MAX_PROJECT_DETAIL_STORY_NOTES_CHARS = 400;
+/** Bounded memory tool: max rows returned (subset of assistant first-pass caps). */
+export const OPERATOR_MEMORY_LOOKUP_TOOL_MAX_ROWS = 8;
+/** Bounded memory tool: max chars per title/summary/body excerpt in JSON. */
+export const OPERATOR_MEMORY_LOOKUP_TOOL_EXCERPT_CHARS = 480;
+/** Bounded playbook tool: max instruction chars per rule in JSON. */
+export const OPERATOR_PLAYBOOK_LOOKUP_INSTRUCTION_CHARS = 600;
+/** Bounded knowledge tool: max chars per row `content` in JSON. */
+export const OPERATOR_KNOWLEDGE_LOOKUP_CONTENT_CHARS = 720;
 
 export type OperatorLookupProjectDetailsPayload = {
   projectId: string;
@@ -127,6 +165,41 @@ function clipStory(notes: string | null, max: number): string | null {
 }
 
 /** Maps CRM facts to the operator project-details tool contract (all project_type values; not wedding-only). */
+function clipMemoryToolText(s: string | null | undefined, max: number): string {
+  const t = String(s ?? "").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function clipPlaybookInstructionForTool(s: string | null | undefined, max: number): string {
+  const t = String(s ?? "").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+/** Effective project/person focus for memory fetch (widget focus + carry-forward when present). */
+export function effectiveOperatorMemoryFocus(ctx: AssistantContext): {
+  weddingId: string | null;
+  personId: string | null;
+  focusedProjectType: string | null;
+} {
+  const wf = ctx.focusedWeddingId != null && String(ctx.focusedWeddingId).trim() !== "" ? String(ctx.focusedWeddingId).trim() : null;
+  const pf = ctx.focusedPersonId != null && String(ctx.focusedPersonId).trim() !== "" ? String(ctx.focusedPersonId).trim() : null;
+  const cf = ctx.carryForward;
+  const weddingId =
+    wf ??
+    (cf?.lastFocusedProjectId != null && String(cf.lastFocusedProjectId).trim() !== ""
+      ? String(cf.lastFocusedProjectId).trim()
+      : null);
+  const personId =
+    pf ??
+    (cf?.lastMentionedPersonId != null && String(cf.lastMentionedPersonId).trim() !== ""
+      ? String(cf.lastMentionedPersonId).trim()
+      : null);
+  const focusedProjectType = ctx.focusedProjectSummary?.projectType ?? cf?.lastFocusedProjectType ?? null;
+  return { weddingId, personId, focusedProjectType };
+}
+
 export function projectDetailsPayloadFromFocusedFacts(
   f: AssistantFocusedProjectFacts,
 ): OperatorLookupProjectDetailsPayload {
@@ -161,13 +234,14 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     function: {
       name: "operator_lookup_projects",
       description:
-        "Resolver only: match operator text (names, couple, place, project fragment) to a bounded list of project candidates in this tenant’s recent CRM index. Use when the operator names or describes a project and you need to disambiguate. Does **not** return full financial/people details; does **not** accept a UUID. For deep facts, call `operator_lookup_project_details` after you have a project id.",
+        "Resolver only: match operator text (names, couple, place, project fragment) to a bounded list of project candidates in this tenant’s recent CRM index. Use when the operator names or describes a project and you need to disambiguate. Does **not** return deep CRM (venue, money, people, story, counts); does **not** accept a **project UUID** — pass a natural-language **query** only. If you already have **weddings.id**, call `operator_lookup_project_details` with `{ projectId }` instead. **Query minimum:** trimmed **4+ characters** and at least one letter — shorter or non-name fragments return `query_too_short`.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Name fragment, couple, or place to match (max 200 characters).",
+            description:
+              "Name fragment, couple, or place to match (**min 4 characters** after trim; **max 200**). Must include at least one letter (digits-only fragments are rejected).",
           },
         },
         required: ["query"],
@@ -199,13 +273,13 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     function: {
       name: "operator_lookup_corpus",
       description:
-        "Phase-1 **tenant-wide indexed search** (read-only): threads/inbox view (title, sender, latest snippet; optional bounded `messages.body` probe), CRM `weddings` text fields, `memories` title/summary, offer-builder **names**, in-memory **playbook** + **case exception notes**, invoice template fields from Context. Returns **lightweight hits with ids** — not full bodies or Puck JSON. Use when the **Corpus search** block is missing, empty, or the operator asks a **find / search / anything about** question across the studio. Follow with **operator_lookup_project_details**, **operator_lookup_thread_messages**, or **operator_lookup_offer_builder** on **top hits** for phase-2 detail.",
+        "Phase-1 **tenant-wide indexed search** (read-only): threads/inbox view (title, sender, latest snippet; optional bounded `messages.body` probe), CRM `weddings` text fields, `memories` title/summary, offer-builder **names**, in-memory **playbook** + **case exception notes**, invoice template fields from Context. Returns **lightweight hits with ids** — not full bodies or Puck JSON. Use when the **Corpus search** block is missing, empty, or the operator asks a **find / search / anything about** question across the studio. Follow with **operator_lookup_project_details**, **operator_lookup_thread_messages**, or **operator_lookup_offer_builder** on **top hits** for phase-2 detail. **Query minimum:** trimmed **4+ characters** — shorter queries return `query_too_short` (use a longer substantive token).",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "Natural-language search query (max 200 characters).",
+            description: "Natural-language search query (**min 4 characters** after trim; **max 200**).",
           },
         },
         required: ["query"],
@@ -217,14 +291,14 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     function: {
       name: "operator_lookup_threads",
       description:
-        "Fetch a bounded list of recent threads with last inbound/outbound activity timestamps (**no** message bodies in this tool). Resolves people/projects from the query using the same index as first pass, and respects the operator’s focused wedding/person from context when relevant. Use when thread/email activity is missing from Context and the question is about who emailed, last contact, or a named inquiry/thread — including *did we talk to X* / *messages from X* when the first-pass Context list is empty or clearly not enough. For **full-tenant indexed hits** across threads + CRM + policy, prefer **operator_lookup_corpus** (or the **Corpus search** Context block). **Deep search** mode still uses a **wider** inbox scoring window than normal; this tool can add another targeted pass. For **what the email says**, follow with **operator_lookup_thread_messages** using a **threadId** from the result.",
+        "**Resolver (Slice 4):** Bounded list of thread **envelope** rows only — title, channel, kind, last activity / inbound / outbound timestamps, **thread id** — **no** `messages.body`. Input is **only** `{ query: string }` (natural language — names, topic, sender cues); **never** pass a thread UUID here. Use when the operator needs **which thread** or **recent contact metadata** and Context is missing, thin, or not targeted enough (*did we email X*, *messages from*, *last contact*, *did they reply* as **list/timing** questions). For **what the email says** / **what they want** at **body** level, follow with **operator_lookup_thread_messages** (`threadId` from this result, **Carry-forward**, Corpus, or queue). For **full-tenant indexed hits**, prefer **operator_lookup_corpus** or the **Corpus search** block. **Deep search** widens the scored inbox window; this tool can add another pass. **Query minimum:** trimmed **3+ characters** — shorter queries return `query_too_short`.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
             description:
-              "Sub-query for entity resolution + thread selection (e.g. couple name, inquiry topic). Max 200 characters.",
+              "Sub-query for entity resolution + thread selection (e.g. couple name, inquiry topic). **Min 3 characters** after trim; **max 200**.",
           },
         },
         required: ["query"],
@@ -236,7 +310,7 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     function: {
       name: "operator_lookup_thread_messages",
       description:
-        "Read-only: load **bounded recent message bodies** for **one** thread (**threads.id** UUID). Returns up to **8** most recent messages (chronological in the payload), each **body** excerpt capped at **900** characters — tenant-scoped, not guaranteed full thread history. Use when the operator asks what an email/thread **says** / **what they want** and excerpts are **not** already in the Context block. **threadId** must come from **Recent thread & email activity** or **operator_lookup_threads** — never guess.",
+        "**Detail (Slice 4):** Load **bounded** `messages.body` excerpts for **one** thread. Input is **only** `{ threadId: string }` — the **threads.id** UUID; **never** natural language. Returns up to **8** recent messages (chronological), each body **≤900** chars — tenant-scoped, not full history. **Primary path** for *what did they say*, *what do they want*, *what is this email about* — first-pass Context **usually has no** message excerpts (domain-first). **threadId** must come from **operator_lookup_threads**, **Carry-forward** `lastThreadId`, **Corpus** / **queue** samples, or a pasted id — **never** guess.",
       parameters: {
         type: "object",
         properties: {
@@ -341,6 +415,65 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "operator_lookup_playbook_rules",
+      description:
+        "**Playbook / policy domain only (read-only):** bounded **effective** `playbook_rules` rows (after **authorized case exception** merge for the **focused project** when set, else **carry-forward** `lastFocusedProjectId` when present — same scope idea as **operator_lookup_memories**). Keyword match on **action_key**, **topic**, and **instruction**. Use when the operator asks **what policy says**, **do we have a rule about…**, **which rule covers…**, or **automation behavior for…** and the **Playbook** block in Context is **missing**, **too thin**, or **does not** list the relevant **action_key**. **Not** a semantic search of threads or CRM — use project/thread tools for those. **Playbook** remains **authoritative** over **memory** and **knowledge**; this tool only surfaces **policy text**. Honor **project type discipline** when paraphrasing (wedding vs commercial / video / other). **Query minimum:** trimmed **3+ characters**.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Keywords to match rule text (**min 3 characters** after trim; **max 200**).",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_memories",
+      description:
+        "**Memory domain only (read-only):** bounded `memories` rows for this tenant — keyword overlap on title/summary (same deterministic ranker as first-pass Context). Returns **excerpts**, not the whole memory corpus. Use when the operator asks what the studio **saved**, **noted**, **remembered in durable memory**, or **stored as a memory** and the **Durable memory** block in Context is **empty**, **too thin**, or **obviously not** a full search. **Playbook** stays authoritative for automation — memory is **supporting**. Prefer **operator_lookup_corpus** for **tenant-wide light hits** across threads/CRM/memories; use **this** tool when you need **richer memory text** than corpus memory hits. Optional **scope** = `studio` | `project` | `person` narrows rows; **project** requires focused or carry-forward **project id**; **person** requires focused or carry-forward **person id**. **Does not** search email bodies or deep CRM — use thread/project tools. **Query minimum:** trimmed **3+ characters**.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Keywords to rank memories (**min 3 characters** after trim; **max 200**).",
+          },
+          scope: {
+            type: "string",
+            enum: ["studio", "project", "person"],
+            description: "Optional. Omit to search all in-scope scopes for current focus (studio always; project/person when ids available).",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "operator_lookup_knowledge",
+      description:
+        "**Knowledge / reference domain only (read-only):** bounded **semantic** search over tenant `knowledge_base` via pgvector (`match_knowledge`) — **brand_voice**, **past_email**, **contract**, etc. **Supporting background only**; **not** automation policy (**Playbook** is authoritative) and **not** durable **memories** (use **operator_lookup_memories** for saved operator notes). Use when the operator asks **what the KB says**, **our brand voice**, **contract language**, **reference doc**, or **studio reference** material and the **Global knowledge** block in Context is **missing**, **too thin**, or **clearly not** a full search. **Does not** scan threads, CRM bodies, or playbook rules — use **operator_lookup_corpus**, **operator_lookup_thread_messages**, or **operator_lookup_playbook_rules** for those. Honor **project type discipline** when applying generic KB text to a **specific** **projectType**. **Query minimum:** trimmed **4+ characters** (semantic embedding gate).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Natural-language query for semantic KB match (**min 4 characters** after trim; **max 200**).",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "operator_lookup_invoice_setup",
       description:
         "Read-only **invoice PDF template** for this tenant (`studio_invoice_setup` — **one** row): **legalName**, **invoicePrefix**, **paymentTerms**, **accentColor**, **footerNote** (longer cap than Context when clipped), **updatedAt**, and **logo** summary (**hasLogo**, MIME, data-URL length) — **never** raw image data. **Not** CRM project invoice amounts or line items — use **operator_lookup_project_details** for booking money. Use when the operator needs a **longer** footer or the same fields repeated for trust; normally **Invoice setup (grounded)** in Context is enough. Pass an **empty** JSON object **{}**.",
@@ -352,6 +485,19 @@ export const OPERATOR_READ_ONLY_LOOKUP_TOOLS = [
     },
   },
 ];
+
+/** Gemini `tools[0].functionDeclarations` — same names/schemas as OpenAI `OPERATOR_READ_ONLY_LOOKUP_TOOLS`. */
+export function operatorReadOnlyLookupToolGeminiFunctionDeclarations(): Array<{
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}> {
+  return OPERATOR_READ_ONLY_LOOKUP_TOOLS.map((t) => ({
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters as Record<string, unknown>,
+  }));
+}
 
 function normalizeToolQuery(raw: unknown): string {
   const s = String(raw ?? "")
@@ -456,10 +602,11 @@ export async function executeOperatorReadOnlyLookupTool(
 
   if (name === "operator_lookup_corpus") {
     const query = normalizeToolQuery(args.query);
-    if (query.length < 4) {
+    if (query.length < MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC) {
       return JSON.stringify({
         tool: name,
         error: "query_too_short",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC,
         note: "Provide at least 4 characters for corpus search.",
       });
     }
@@ -475,12 +622,20 @@ export async function executeOperatorReadOnlyLookupTool(
 
   if (name === "operator_lookup_projects") {
     const query = normalizeToolQuery(args.query);
+    if (isValidAssistantProjectIdUuid(query)) {
+      return JSON.stringify({
+        tool: name,
+        error: "invalid_arguments",
+        code: "uuid_not_allowed",
+        note: "`operator_lookup_projects` is for natural-language resolution only. Use `operator_lookup_project_details` with `{ projectId }` when you already have a `weddings.id` UUID.",
+      });
+    }
     if (!shouldRunOperatorQueryEntityResolution(query)) {
       return JSON.stringify({
         tool: name,
         error: "query_too_short",
-        minChars: 4,
-        note: "Provide a longer name or place fragment.",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC,
+        note: "Provide at least 4 characters including a letter (name or place fragment).",
       });
     }
     const index = await fetchAssistantQueryEntityIndex(supabase, photographerId);
@@ -535,10 +690,11 @@ export async function executeOperatorReadOnlyLookupTool(
 
   if (name === "operator_lookup_threads") {
     const query = normalizeToolQuery(args.query);
-    if (query.length < 3) {
+    if (query.length < MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD) {
       return JSON.stringify({
         tool: name,
         error: "query_too_short",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD,
         note: "Provide at least 3 characters for thread lookup.",
       });
     }
@@ -550,7 +706,7 @@ export async function executeOperatorReadOnlyLookupTool(
       uniqueWeddingId: resCore.uniqueWeddingId,
       weddingCandidates: resCore.weddingCandidates,
       personMatches: resCore.personMatches,
-      queryResolvedProjectFacts: null as null,
+      queryResolvedProjectSummary: null as null,
     };
     const lookup = await fetchAssistantThreadMessageLookup(supabase, photographerId, {
       queryText: query,
@@ -678,6 +834,164 @@ export async function executeOperatorReadOnlyLookupTool(
         detailedSummary: summarizeOfferPuckDataForAssistant(rec.data as unknown, MAX_OFFER_PUCK_ASSISTANT_SUMMARY_DETAILED_CHARS),
         note:
           "Factual: derived from stored Puck JSON only. Not a client-facing PDF; headings/package lines may be edited in Offer builder (Workspace).",
+      },
+    });
+  }
+
+  if (name === "operator_lookup_playbook_rules") {
+    const query = normalizeToolQuery(args.query);
+    if (query.length < MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD) {
+      return JSON.stringify({
+        tool: name,
+        error: "query_too_short",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD,
+        note: "Provide at least 3 characters to match playbook rules.",
+      });
+    }
+    const rawRules = await fetchActivePlaybookRulesForDecisionContext(supabase, photographerId);
+    const { weddingId: caseExceptionScopeWeddingId } = effectiveOperatorMemoryFocus(ctx);
+    const exceptions = await fetchAuthorizedCaseExceptionsForDecisionContext(
+      supabase,
+      photographerId,
+      caseExceptionScopeWeddingId,
+      null,
+    );
+    const effective = deriveEffectivePlaybook(rawRules, exceptions);
+    const picked = selectEffectivePlaybookRulesForOperatorLookup(effective, query);
+    const rules = picked.map((r) => ({
+      id: r.id,
+      action_key: r.action_key,
+      topic: r.topic,
+      decision_mode: r.decision_mode,
+      scope: r.scope,
+      channel: r.channel,
+      instruction: clipPlaybookInstructionForTool(r.instruction, OPERATOR_PLAYBOOK_LOOKUP_INSTRUCTION_CHARS),
+      effectiveDecisionSource: r.effectiveDecisionSource,
+      appliedAuthorizedExceptionId: r.appliedAuthorizedExceptionId,
+    }));
+    return JSON.stringify({
+      tool: name,
+      query,
+      result: {
+        didRun: true,
+        rowCount: rules.length,
+        totalEffectiveRules: effective.length,
+        maxRows: OPERATOR_PLAYBOOK_LOOKUP_MAX_ROWS,
+        caseExceptionScopeWeddingId,
+        rules,
+        semanticsNote:
+          "Keyword-ranked subset only — **not** proof there is no other rule on the topic. Prompt lists at most 24 effective rules; this fetch may return fewer matches. **Do not** invent **action_key** or instruction strings. **Memory** / **knowledge** do **not** override these rows.",
+      },
+    });
+  }
+
+  if (name === "operator_lookup_memories") {
+    const query = normalizeToolQuery(args.query);
+    if (query.length < MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD) {
+      return JSON.stringify({
+        tool: name,
+        error: "query_too_short",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD,
+        note: "Provide at least 3 characters to rank memories.",
+      });
+    }
+    const scopeRaw = args.scope;
+    let scopeFilter: "studio" | "project" | "person" | null = null;
+    if (scopeRaw != null && String(scopeRaw).trim() !== "") {
+      const s = String(scopeRaw).trim();
+      if (s !== "studio" && s !== "project" && s !== "person") {
+        return JSON.stringify({
+          tool: name,
+          error: "invalid_scope",
+          note: "scope must be studio, project, or person when set.",
+        });
+      }
+      scopeFilter = s as "studio" | "project" | "person";
+    }
+    const { weddingId, personId, focusedProjectType } = effectiveOperatorMemoryFocus(ctx);
+    if (scopeFilter === "project" && !weddingId) {
+      return JSON.stringify({
+        tool: name,
+        error: "missing_project_focus",
+        note: "scope=project requires a focused or carry-forward project id — use operator_lookup_projects or widen scope.",
+      });
+    }
+    if (scopeFilter === "person" && !personId) {
+      return JSON.stringify({
+        tool: name,
+        error: "missing_person_focus",
+        note: "scope=person requires a focused or carry-forward person id.",
+      });
+    }
+    let headers = await fetchAssistantMemoryHeaders(supabase, photographerId, weddingId, personId);
+    headers = filterMemoryHeadersForThreadAudienceTier(headers, "operator_only");
+    if (scopeFilter) {
+      headers = headers.filter((h) => h.scope === scopeFilter);
+    }
+    const memoryIds = selectAssistantMemoryIdsDeterministic({
+      queryText: query,
+      memoryHeaders: headers,
+      focusedWeddingId: weddingId,
+      focusedPersonId: personId,
+      focusedProjectType,
+    }).slice(0, OPERATOR_MEMORY_LOOKUP_TOOL_MAX_ROWS);
+    const full =
+      memoryIds.length > 0
+        ? await fetchSelectedMemoriesFull(supabase, photographerId, memoryIds, {
+            replyThreadAudienceTier: "operator_only",
+          })
+        : [];
+    const idToScope = new Map(headers.map((h) => [h.id, h.scope]));
+    const memories = full.map((row) => ({
+      id: row.id,
+      scope: idToScope.get(row.id) ?? "studio",
+      type: row.type,
+      title: clipMemoryToolText(row.title, 200),
+      excerpt: clipMemoryToolText(`${row.summary}\n${row.full_content ?? ""}`, OPERATOR_MEMORY_LOOKUP_TOOL_EXCERPT_CHARS),
+    }));
+    return JSON.stringify({
+      tool: name,
+      query,
+      scopeFilter,
+      result: {
+        didRun: true,
+        rowCount: memories.length,
+        maxRows: OPERATOR_MEMORY_LOOKUP_TOOL_MAX_ROWS,
+        focus: { weddingId, personId, focusedProjectType },
+        memories,
+        semanticsNote:
+          "Bounded keyword-ranked read — **not** exhaustive of all `memories` rows. Operator dashboard path uses **operator_only** audience visibility (all tiers). **project**-scope rows respect **projectType** anti-bleed when type is known. Empty list ⇒ no matching in-scope headers for this query — not “no memories exist”.",
+      },
+    });
+  }
+
+  if (name === "operator_lookup_knowledge") {
+    const query = normalizeToolQuery(args.query);
+    if (query.length < MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC) {
+      return JSON.stringify({
+        tool: name,
+        error: "query_too_short",
+        minChars: MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC,
+        note: "Provide at least 4 characters for knowledge base semantic search.",
+      });
+    }
+    const rawRows = await fetchOperatorKnowledgeLookupRows(supabase, photographerId, query);
+    const rows = rawRows.map((r) => ({
+      id: r.id,
+      document_type: r.document_type,
+      similarity: r.similarity,
+      content: clipPlaybookInstructionForTool(r.content, OPERATOR_KNOWLEDGE_LOOKUP_CONTENT_CHARS),
+    }));
+    return JSON.stringify({
+      tool: name,
+      query,
+      result: {
+        didRun: true,
+        rowCount: rows.length,
+        maxRows: OPERATOR_KNOWLEDGE_LOOKUP_MAX_ROWS,
+        rows,
+        semanticsNote:
+          "Semantic **knowledge_base** matches only — **not** the full KB, **not** automation policy (**Playbook** is authoritative). **Durable memory** is for saved notes; this tool is **reference** text. **Do not** invent excerpts; cite **content** from rows. Rows without embeddings never appear here.",
       },
     });
   }

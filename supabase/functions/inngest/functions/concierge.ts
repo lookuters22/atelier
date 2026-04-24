@@ -11,6 +11,11 @@
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
+import {
   truncateConciergeAssistantContent,
   truncateConciergeClientQuestion,
   truncateConciergeToolOutput,
@@ -104,13 +109,21 @@ export const conciergeFunction = inngest.createFunction(
     const context = await step.run("fetch-wedding-context", async () => {
       const { data: wedding, error: weddingErr } = await supabaseAdmin
         .from("weddings")
-        .select("id, photographer_id")
+        .select("id, photographer_id, compassion_pause, strategic_pause")
         .eq("id", wedding_id)
         .eq("photographer_id", photographer_id)
         .single();
 
       if (weddingErr || !wedding) {
         throw new Error(`Wedding not found: ${weddingErr?.message ?? wedding_id}`);
+      }
+
+      if (isWeddingAutomationPaused(wedding)) {
+        return {
+          photographerId: wedding.photographer_id as string,
+          threadId: null as string | null,
+          automationPaused: true as const,
+        };
       }
 
       const { data: threads } = await supabaseAdmin
@@ -129,8 +142,24 @@ export const conciergeFunction = inngest.createFunction(
       return {
         photographerId: wedding.photographer_id as string,
         threadId,
+        automationPaused: false as const,
       };
     });
+
+    if (context.automationPaused) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "concierge-worker",
+        wedding_id,
+        photographer_id,
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+      };
+    }
 
     // ── Agentic RAG loop — research the factual answer ───────────
     const rawFacts = await step.run("research-facts", async () => {

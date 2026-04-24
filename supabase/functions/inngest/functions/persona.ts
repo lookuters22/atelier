@@ -13,6 +13,12 @@
  */
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import { evaluatePersonaSaveDraftFreshPauseGate } from "../../_shared/inngestClientFreshPauseGates.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 import {
   searchPastCommunications,
   type RagToolParams,
@@ -239,16 +245,18 @@ export const personaFunction = inngest.createFunction(
       let studioName = "Atelier Studio";
       let managerName = "The Atelier Team";
       let photographerNames = "our team";
+      let automationPaused = false;
 
       if (wedding_id && photographer_id) {
         const { data: wedding } = await supabaseAdmin
           .from("weddings")
-          .select("couple_names, wedding_date, location, stage")
+          .select("couple_names, wedding_date, location, stage, compassion_pause, strategic_pause")
           .eq("id", wedding_id)
           .eq("photographer_id", photographer_id)
           .maybeSingle();
 
         if (wedding) {
+          automationPaused = isWeddingAutomationPaused(wedding);
           coupleNames = (wedding.couple_names as string) || coupleNames;
           weddingDate = wedding.wedding_date
             ? formatDate(wedding.wedding_date as string)
@@ -281,10 +289,32 @@ export const personaFunction = inngest.createFunction(
         studioName,
         managerName,
         photographerNames,
-      } satisfies PersonaContext;
+        automationPaused,
+      };
     });
 
-    const ctxForModel = boundPersonaContextForModel(ctx);
+    if (ctx.automationPaused) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "persona-agent",
+        wedding_id,
+        thread_id,
+        photographer_id,
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+        thread_id,
+      };
+    }
+
+    const {
+      automationPaused: _automationPaused,
+      ...personaCtx
+    } = ctx;
+    const ctxForModel = boundPersonaContextForModel(personaCtx as PersonaContext);
     const systemPrompt = buildSystemPrompt(ctxForModel);
 
     // ── Reasoning: writer/persona loop + bounded tool (RAG only) ──
@@ -373,6 +403,26 @@ export const personaFunction = inngest.createFunction(
     const usageTotals = draftResult.usage_totals;
 
     // ── Save draft for human approval ────────────────────────────
+    const saveGate = await step.run("save-draft-pause-gate", async () =>
+      evaluatePersonaSaveDraftFreshPauseGate(supabaseAdmin, {
+        wedding_id,
+        photographer_id,
+        thread_id,
+      }),
+    );
+
+    if (!saveGate.proceed) {
+      return {
+        status:
+          saveGate.skip_reason === WEDDING_AUTOMATION_PAUSED_SKIP_REASON
+            ? ("skipped_wedding_automation_paused" as const)
+            : ("skipped_wedding_pause_state_unconfirmed" as const),
+        skip_reason: saveGate.skip_reason,
+        wedding_id,
+        thread_id,
+      };
+    }
+
     const draftId = await step.run("save-draft", async () => {
       const { data, error } = await supabaseAdmin
         .from("drafts")

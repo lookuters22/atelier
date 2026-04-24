@@ -11,6 +11,7 @@ import {
   readInboxMetadataSenderRole,
   type InboxThreadBucket,
 } from "../../../../src/lib/inboxThreadBucket.ts";
+import { formatReadinessNotesForQueueExplanation } from "../workflow/v3ThreadWorkflowReadiness.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -355,6 +356,11 @@ export async function fetchAssistantThreadQueueExplanation(
     informationalNotes.push(
       `**v3_operator_hold_escalation_id** is set (escalation id: ${row.v3_operator_hold_escalation_id}) — use open escalations list for the question text when status is open.`,
     );
+  }
+
+  if (wfRes.data != null) {
+    const w = wfRes.data as { workflow: Json };
+    informationalNotes.push(...formatReadinessNotesForQueueExplanation(w.workflow));
   }
 
   return {

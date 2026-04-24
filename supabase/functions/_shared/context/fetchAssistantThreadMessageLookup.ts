@@ -13,7 +13,10 @@ import {
   type OperatorInboxThreadLookupSignals,
 } from "../../../../src/lib/operatorAssistantThreadMessageLookupIntent.ts";
 
+/** Hard cap when S4 deep-thread mode is on (wider scored window). */
 const MAX_THREADS = 8;
+/** Normal first-pass orienting list — thin shared context (domain-first Slice 4). */
+const MAX_THREADS_ORIENTING = 4;
 const MAX_PERSON_PARTICIPANT_THREADS = 24;
 const MAX_AMBIGUOUS_WEDDINGS = 2;
 const RECENT_TENANT_THREADS = 3;
@@ -250,6 +253,8 @@ function scoreInboxRow(
   const { blob, titleN, senderN, bodyN } = inboxHaystack(row);
   let score = 0;
   let topicHits = 0;
+  /** Topic keyword matched in title or sender (not body-only); avoids open-inbox strong from snippet noise + recency. */
+  let topicHitTitleOrSender = false;
   let senderHit = false;
 
   for (const kw of signals.topicKeywords) {
@@ -258,9 +263,11 @@ function scoreInboxRow(
     if (titleN.includes(kw)) {
       score += 7;
       hit = true;
+      topicHitTitleOrSender = true;
     } else if (senderN.includes(kw)) {
       score += 5;
       hit = true;
+      topicHitTitleOrSender = true;
     } else if (bodyN.includes(kw)) {
       score += 4;
       hit = true;
@@ -299,7 +306,7 @@ function scoreInboxRow(
     topicHits >= 1 &&
     signals.recency != null &&
     recencyOk &&
-    (!openInboxLookup || score >= 12);
+    (!openInboxLookup || (score >= 12 && topicHitTitleOrSender));
 
   const strong =
     topicHits >= 2 ||
@@ -395,6 +402,7 @@ export async function fetchAssistantThreadMessageLookup(
   },
 ): Promise<AssistantOperatorThreadMessageLookup> {
   const now = input.now ?? new Date();
+  const threadRowCap = input.deepThreadMessageLookup ? MAX_THREADS : MAX_THREADS_ORIENTING;
   const inboxCandidateCap = input.deepThreadMessageLookup
     ? MAX_INBOX_CANDIDATES_DEEP
     : MAX_INBOX_CANDIDATES_NORMAL;
@@ -426,7 +434,7 @@ export async function fetchAssistantThreadMessageLookup(
       .eq("photographer_id", photographerId)
       .in("wedding_id", weddingIds)
       .order("last_activity_at", { ascending: false })
-      .limit(MAX_THREADS);
+      .limit(threadRowCap);
     if (error) {
       throw new Error(`fetchAssistantThreadMessageLookup threads by wedding: ${error.message}`);
     }
@@ -457,7 +465,7 @@ export async function fetchAssistantThreadMessageLookup(
         .eq("photographer_id", photographerId)
         .in("id", threadIdList)
         .order("last_activity_at", { ascending: false })
-        .limit(MAX_THREADS);
+        .limit(threadRowCap);
       if (terr) {
         throw new Error(`fetchAssistantThreadMessageLookup threads by person: ${terr.message}`);
       }
@@ -560,7 +568,7 @@ export async function fetchAssistantThreadMessageLookup(
       }
       if (ordered.length > 0) {
         const strongCount = strong.length;
-        merged = mergePreferFirst(ordered, merged).slice(0, MAX_THREADS);
+        merged = mergePreferFirst(ordered, merged).slice(0, threadRowCap);
         if (strongCount > 0) {
           notes.push(
             `inbox_scored_preferred (${strongCount} strong / ${scored.length} scored; keywords=${signals.topicKeywords.length}; recency=${signals.recency ?? "none"})`,
@@ -578,7 +586,7 @@ export async function fetchAssistantThreadMessageLookup(
     }
   }
 
-  merged = merged.slice(0, MAX_THREADS);
+  merged = merged.slice(0, threadRowCap);
 
   if (merged.length === 0) {
     return {

@@ -10,10 +10,20 @@
  */
 import type { DecisionContext } from "../../../../src/types/decisionContext.types.ts";
 import { buildDecisionContext } from "../../_shared/context/buildDecisionContext.ts";
+import {
+  WEDDING_PAUSE_STATE_DB_ERROR,
+  WEDDING_PAUSE_STATE_UNREADABLE,
+} from "../../_shared/fetchWeddingPauseFlags.ts";
 import { inngest } from "../../_shared/inngest.ts";
 import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  AGENCY_CC_LOCK_SKIP_REASON,
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 export const contractFollowupFunction = inngest.createFunction(
   {
@@ -46,12 +56,11 @@ export const contractFollowupFunction = inngest.createFunction(
         return { proceed: false as const, reason: "wedding_missing" as const };
       }
 
-      const paused =
-        wedding.compassion_pause === true ||
-        wedding.strategic_pause === true ||
-        wedding.agency_cc_lock === true;
-      if (paused) {
-        return { proceed: false as const, reason: "wedding_paused" as const };
+      if (isWeddingAutomationPaused(wedding)) {
+        return { proceed: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+      }
+      if (wedding.agency_cc_lock === true) {
+        return { proceed: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
       }
 
       const { data: milestone, error: mErr } = await supabaseAdmin
@@ -109,6 +118,50 @@ export const contractFollowupFunction = inngest.createFunction(
     }
 
     await step.run("draft-contract-check-in", async () => {
+      const { data: weddingFresh, error: freshErr } = await supabaseAdmin
+        .from("weddings")
+        .select("compassion_pause, strategic_pause, agency_cc_lock")
+        .eq("id", weddingId)
+        .eq("photographer_id", photographerId)
+        .maybeSingle();
+
+      if (freshErr) {
+        logAutomationPauseObservation({
+          observation_type: "inngest_worker_skipped",
+          skip_reason: WEDDING_PAUSE_STATE_DB_ERROR,
+          inngest_function_id: "milestone-contract-followup",
+          wedding_id: weddingId,
+          photographer_id: photographerId,
+          gate: "draft_pre_insert",
+        });
+        return { drafted: false as const, reason: WEDDING_PAUSE_STATE_DB_ERROR };
+      }
+      if (!weddingFresh) {
+        logAutomationPauseObservation({
+          observation_type: "inngest_worker_skipped",
+          skip_reason: WEDDING_PAUSE_STATE_UNREADABLE,
+          inngest_function_id: "milestone-contract-followup",
+          wedding_id: weddingId,
+          photographer_id: photographerId,
+          gate: "draft_pre_insert",
+        });
+        return { drafted: false as const, reason: WEDDING_PAUSE_STATE_UNREADABLE };
+      }
+      if (isWeddingAutomationPaused(weddingFresh)) {
+        logAutomationPauseObservation({
+          observation_type: "inngest_worker_skipped",
+          skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+          inngest_function_id: "milestone-contract-followup",
+          wedding_id: weddingId,
+          photographer_id: photographerId,
+          gate: "draft_pre_insert",
+        });
+        return { drafted: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+      }
+      if (weddingFresh.agency_cc_lock === true) {
+        return { drafted: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
+      }
+
       /** Contract object from the shared builder only — no ad hoc context assembly. */
       const decisionContext: DecisionContext = await buildDecisionContext(
         supabaseAdmin,
@@ -144,6 +197,7 @@ export const contractFollowupFunction = inngest.createFunction(
       });
 
       if (error) throw new Error(`draft insert: ${error.message}`);
+      return { drafted: true as const };
     });
 
     return { ok: true as const };

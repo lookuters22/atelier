@@ -8,7 +8,7 @@ import { buildOperatorCalendarLookupPlan } from "../../../../src/lib/operatorAss
 const emptyEntity = {
   weddingSignal: "none" as const,
   uniqueWeddingId: null,
-  queryResolvedProjectFacts: null,
+  queryResolvedProjectSummary: null,
 };
 
 describe("fetchAssistantOperatorCalendarSnapshot", () => {

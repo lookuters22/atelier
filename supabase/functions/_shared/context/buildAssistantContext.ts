@@ -2,7 +2,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
   AssistantContext,
   AssistantCrmDigest,
-  AssistantFocusedProjectFacts,
+  AssistantFocusedProjectSummary,
   AssistantRetrievalLog,
   AssistantStudioAnalysisSnapshot,
   BuildAssistantContextInput,
@@ -14,10 +14,7 @@ import { fetchActivePlaybookRulesForDecisionContext } from "./fetchActivePlayboo
 import { fetchAuthorizedCaseExceptionsForDecisionContext } from "./fetchAuthorizedCaseExceptionsForDecisionContext.ts";
 /** Operator Ana: Slice 4 removed digest from the prompt; keep empty shape on context for compatibility. */
 const EMPTY_CRM_DIGEST: AssistantCrmDigest = { recentWeddings: [], recentPeople: [] };
-import {
-  fetchAssistantFocusedProjectFacts,
-  fetchAssistantFocusedProjectSummaryRow,
-} from "./fetchAssistantFocusedProjectFacts.ts";
+import { fetchAssistantFocusedProjectSummaryRow } from "./fetchAssistantFocusedProjectFacts.ts";
 import { fetchAssistantOperatorStateSummary } from "./fetchAssistantOperatorStateSummary.ts";
 import {
   fetchRelevantGlobalKnowledgeForDecisionContext,
@@ -35,10 +32,7 @@ import {
   resolveOperatorQueryEntitiesFromIndex,
   shouldRunOperatorQueryEntityResolution,
 } from "./resolveOperatorQueryEntitiesFromIndex.ts";
-import {
-  fetchAssistantThreadMessageBodies,
-  IDLE_ASSISTANT_THREAD_MESSAGE_BODIES,
-} from "./fetchAssistantThreadMessageBodies.ts";
+import { IDLE_ASSISTANT_THREAD_MESSAGE_BODIES } from "./fetchAssistantThreadMessageBodies.ts";
 import { fetchAssistantOperatorCorpusSearch } from "./fetchAssistantOperatorCorpusSearch.ts";
 import {
   fetchAssistantThreadMessageLookup,
@@ -56,7 +50,10 @@ import {
   hasOperatorInquiryCountIntent,
 } from "../../../../src/lib/operatorAssistantInquiryCountIntent.ts";
 import { classifyOperatorAnaTriage } from "../../../../src/lib/operatorAnaTriage.ts";
-import { hasOperatorCalendarScheduleIntent } from "../../../../src/lib/operatorAssistantCalendarScheduleIntent.ts";
+import {
+  hasOperatorCalendarContinuityIntent,
+  hasOperatorCalendarScheduleIntent,
+} from "../../../../src/lib/operatorAssistantCalendarScheduleIntent.ts";
 import { buildOperatorCalendarLookupPlan } from "../../../../src/lib/operatorAssistantCalendarLookupPlan.ts";
 import {
   fetchAssistantInquiryCountSnapshot,
@@ -293,35 +290,38 @@ export async function buildAssistantContext(
 
   const selectedMemories =
     memoryIds.length > 0
-      ? await fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds)
+      ? await fetchSelectedMemoriesFull(supabase, tenantPhotographerId, memoryIds, {
+          replyThreadAudienceTier: "operator_only",
+        })
       : [];
 
   const resCore = resolveOperatorQueryEntitiesFromIndex(queryText, entityIndex.weddings, entityIndex.people);
 
-  let queryResolvedProjectFacts: AssistantFocusedProjectFacts | null = null;
+  let queryResolvedProjectSummary: AssistantFocusedProjectSummary | null = null;
   if (shouldRunEntity && resCore.weddingSignal === "unique" && resCore.uniqueWeddingId) {
     if (weddingIdEffective === resCore.uniqueWeddingId) {
-      queryResolvedProjectFacts = null;
+      queryResolvedProjectSummary = null;
     } else {
-      queryResolvedProjectFacts = await fetchAssistantFocusedProjectFacts(
+      const row = await fetchAssistantFocusedProjectSummaryRow(
         supabase,
         tenantPhotographerId,
         resCore.uniqueWeddingId,
       );
+      queryResolvedProjectSummary = row?.summary ?? null;
     }
   }
   if (
-    queryResolvedProjectFacts != null &&
+    queryResolvedProjectSummary != null &&
     hasOperatorThreadMessageLookupIntent(queryText) &&
     querySuggestsCommercialOrNonWeddingInboundFocus(queryText)
   ) {
-    queryResolvedProjectFacts = null;
+    queryResolvedProjectSummary = null;
   }
 
   const operatorQueryEntityResolution = {
     didRun: shouldRunEntity,
     ...resCore,
-    queryResolvedProjectFacts,
+    queryResolvedProjectSummary,
   };
 
   const operatorTriage = classifyOperatorAnaTriage({
@@ -344,7 +344,11 @@ export async function buildAssistantContext(
     }),
   );
 
-  const loadThreadMessageLookup = hasOperatorThreadMessageLookupIntent(queryText);
+  /** Domain-first threads: body-meaning questions skip first-pass thread push (use tools); S4 investigation keeps orienting fetch. */
+  const skipThreadPushForBodyIntent =
+    hasOperatorThreadMessageBodyLookupIntent(queryText) && !investigationSpecialistRequested;
+  const loadThreadMessageLookup =
+    hasOperatorThreadMessageLookupIntent(queryText) && !skipThreadPushForBodyIntent;
   if (loadThreadMessageLookup) {
     scopesQueried.push("operator_thread_message_lookup");
   }
@@ -355,7 +359,9 @@ export async function buildAssistantContext(
     scopesQueried.push("operator_inquiry_count_snapshot");
   }
 
-  const loadCalendarSnapshot = hasOperatorCalendarScheduleIntent(queryText);
+  const loadCalendarSnapshot =
+    hasOperatorCalendarScheduleIntent(queryText) ||
+    hasOperatorCalendarContinuityIntent(queryText, carryForward);
   if (loadCalendarSnapshot) {
     scopesQueried.push("operator_calendar_snapshot");
   }
@@ -375,7 +381,7 @@ export async function buildAssistantContext(
           entityResolution: {
             weddingSignal: operatorQueryEntityResolution.weddingSignal,
             uniqueWeddingId: operatorQueryEntityResolution.uniqueWeddingId,
-            queryResolvedProjectFacts: operatorQueryEntityResolution.queryResolvedProjectFacts,
+            queryResolvedProjectSummary: operatorQueryEntityResolution.queryResolvedProjectSummary,
           },
           weddingIndexRows: shouldRunEntity ? entityIndex.weddings : [],
         })
@@ -413,21 +419,8 @@ export async function buildAssistantContext(
         : Promise.resolve(IDLE_ASSISTANT_OPERATOR_CORPUS_SEARCH),
     ]);
 
-  let operatorThreadMessageBodies = IDLE_ASSISTANT_THREAD_MESSAGE_BODIES;
-  if (
-    hasOperatorThreadMessageBodyLookupIntent(queryText) &&
-    operatorThreadMessageLookup.didRun &&
-    operatorThreadMessageLookup.threads.length === 1
-  ) {
-    operatorThreadMessageBodies = await fetchAssistantThreadMessageBodies(
-      supabase,
-      tenantPhotographerId,
-      operatorThreadMessageLookup.threads[0]!.threadId,
-    );
-    if (operatorThreadMessageBodies.didRun) {
-      scopesQueried.push("operator_thread_message_bodies");
-    }
-  }
+  /** Message bodies are not pre-loaded into Context — \`operator_lookup_thread_messages\` in the tool loop only (Slice 4). */
+  const operatorThreadMessageBodies = IDLE_ASSISTANT_THREAD_MESSAGE_BODIES;
 
   const retrievalLog: AssistantRetrievalLog = {
     mode: "assistant_query",
@@ -453,7 +446,7 @@ export async function buildAssistantContext(
       uniqueWeddingId: operatorQueryEntityResolution.uniqueWeddingId,
       weddingCandidateCount: operatorQueryEntityResolution.weddingCandidates.length,
       personMatchCount: operatorQueryEntityResolution.personMatches.length,
-      queryResolvedProjectFactsLoaded: operatorQueryEntityResolution.queryResolvedProjectFacts != null,
+      queryResolvedProjectSummaryLoaded: operatorQueryEntityResolution.queryResolvedProjectSummary != null,
     },
     threadMessageLookup: {
       didRun: operatorThreadMessageLookup.didRun,

@@ -10,6 +10,7 @@ import {
   shouldProbeMessageBodiesForCorpusSearch,
 } from "../../../../src/lib/operatorCorpusSearchIntent.ts";
 import { normalizeOperatorInboxMatchText } from "../../../../src/lib/operatorAssistantThreadMessageLookupIntent.ts";
+import { sanitizeInboundTextForModelContext } from "../memory/sanitizeInboundTextForModelContext.ts";
 
 const INBOX_VIEW_SELECT =
   "id, title, wedding_id, last_activity_at, kind, latest_sender, latest_body" as const;
@@ -43,6 +44,11 @@ function clip(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}…`;
+}
+
+/** Strip high-risk document/payment identifiers before clipping for operator-model snippets. */
+function clipSanitizedModelSnippet(raw: string, max: number): string {
+  return clip(sanitizeInboundTextForModelContext(raw), max);
 }
 
 async function fetchInboxHitsForTokens(
@@ -192,7 +198,7 @@ async function fetchMemoryHits(
         id,
         scope: String(row.scope ?? ""),
         title: String(row.title ?? ""),
-        snippet: clip(String(row.summary ?? ""), 200),
+        snippet: clipSanitizedModelSnippet(String(row.summary ?? ""), 200),
       });
       if (out.length >= maxTotal) return out;
     }
@@ -256,7 +262,7 @@ function matchPlaybookInMemory(
       actionKey: String(r.action_key ?? ""),
       topic: r.topic != null ? String(r.topic) : null,
       decisionMode: String(r.decision_mode ?? ""),
-      snippet: clip(String(r.instruction ?? ""), 220),
+      snippet: clipSanitizedModelSnippet(String(r.instruction ?? ""), 220),
     });
     if (hits.length >= maxHits) break;
   }
@@ -277,7 +283,7 @@ function matchCaseExceptionsInMemory(
       id: String(e.id ?? ""),
       weddingId: e.wedding_id != null ? String(e.wedding_id) : null,
       status: String(e.status ?? ""),
-      snippet: clip(String(e.notes ?? ""), 240),
+      snippet: clipSanitizedModelSnippet(String(e.notes ?? ""), 240),
     });
     if (hits.length >= maxHits) break;
   }
@@ -396,9 +402,9 @@ export async function fetchAssistantOperatorCorpusSearch(
     const row = meta.row;
     const snip =
       meta.matchedOn === "latest_body_snippet"
-        ? clip(String(row.latest_body ?? ""), 160)
+        ? clipSanitizedModelSnippet(String(row.latest_body ?? ""), 160)
         : meta.matchedOn === "latest_sender"
-          ? clip(String(row.latest_sender ?? ""), 120)
+          ? clipSanitizedModelSnippet(String(row.latest_sender ?? ""), 120)
           : null;
     threadHits.push({
       threadId: id,

@@ -3,6 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useWeddings } from "@/hooks/useWeddings";
 import { usePipelineMode } from "./PipelineModeContext";
 import { isNonWeddingProjectType, projectTypeBadgeLabel } from "@/lib/projectTypeDisplay";
+import { WeddingProjectMemoriesCard } from "@/components/wedding-detail/WeddingProjectMemoriesCard";
 import { usePipelineWedding } from "./PipelineWeddingContext";
 
 const INQUIRY_STAGES = new Set(["inquiry", "consultation", "proposal_sent", "contract_out"]);
@@ -111,7 +112,7 @@ export function PipelineInspector() {
     );
   }
 
-  const { detailState, entry, setTabAndUrl, projectType } = weddingState;
+  const { weddingId: projectWeddingId, detailState, entry, setTabAndUrl, projectType, showToast } = weddingState;
   const { weddingFields, people } = detailState;
   const venue = weddingFields.where || "Venue TBD";
   const whenLabel = weddingFields.when || entry.when || "—";
@@ -239,6 +240,14 @@ export function PipelineInspector() {
             </div>
           </div>
         </div>
+
+        {photographerId ? (
+          <WeddingProjectMemoriesCard
+            weddingId={projectWeddingId}
+            photographerId={photographerId}
+            showToast={showToast}
+          />
+        ) : null}
 
         <div
           className="p-insp-card pipeline-ana-read-card"

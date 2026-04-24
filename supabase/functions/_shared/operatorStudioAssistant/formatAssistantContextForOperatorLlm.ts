@@ -4,7 +4,6 @@
  */
 import type {
   AssistantContext,
-  AssistantFocusedProjectFacts,
   AssistantFocusedProjectSummary,
   AssistantOperatorStateSummary,
   AssistantPlaybookCoverageSummary,
@@ -20,12 +19,6 @@ import {
   hasOperatorThreadMessageLookupIntent,
   querySuggestsCommercialOrNonWeddingInboundFocus,
 } from "../../../../src/lib/operatorAssistantThreadMessageLookupIntent.ts";
-import {
-  displayTitleLabel,
-  keyPeopleSectionTitle,
-  primaryDateLabel,
-  projectTypeFramingLine,
-} from "./projectTypeOperatorFraming.ts";
 import { formatCarryForwardBlockForLlm } from "./operatorAssistantCarryForward.ts";
 
 const MAX_PLAYBOOK_RULES = 24;
@@ -34,8 +27,6 @@ const MAX_MEMORY_SNIPPETS = 8;
 const MAX_MEMORY_SNIPPET_CHARS = 320;
 const MAX_KB_ROWS = 5;
 const MAX_KB_CONTENT_CHARS = 500;
-const MAX_STORY_NOTES_CHARS = 400;
-const MAX_PACKAGE_INCLUSIONS_LISTED = 12;
 /** Catalog JSON includes procedural workflows; keep a ceiling in case the module grows. */
 /** App catalog can exceed 20k UTF-8 bytes; clipping mid-JSON breaks parseability (Slice 5 anti-drift test). */
 const MAX_APP_CATALOG_JSON_CHARS = 28000;
@@ -49,6 +40,13 @@ const MAX_PLAYBOOK_COVERAGE_TOPICS_IN_TABLE = 16;
 const MAX_STUDIO_OFFER_BUILDER_SECTION_CHARS = 14_000;
 const MAX_OFFER_PROJECT_COMPACT_SUMMARY_IN_PROMPT = 900;
 const MAX_STUDIO_INVOICE_SETUP_SECTION_CHARS = 4_000;
+
+/**
+ * Canonical truth-order hint for domain-first blocks (aligned with operator system prompt).
+ * Playbook = automation authority; memory & KB = supporting only.
+ */
+export const OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST =
+  "**Automation authority:** **Playbook** is **authoritative**; **durable memory** and **global knowledge** are **supporting** only and **must not** override stated rules.";
 
 export type FormatAssistantContextForOperatorLlmOptions = {
   /**
@@ -76,7 +74,7 @@ export function formatStudioProfileForOperatorLlm(sp: AssistantStudioProfile): s
   const lines: string[] = [];
   lines.push("## Studio profile (capability boundary, not playbook policy)");
   lines.push(
-    "*(**What the studio is / can do** from `studio_business_profiles` + key `photographers.settings`. **Not** automation policy — the **Playbook** block below still governs behavior. If something is *not set* or the business-profile row is missing, say so — **do not invent** services, travel, or currency.)*",
+    "*(**What the studio is / can do** from `studio_business_profiles` + key `photographers.settings`. **Not** automation policy — **Playbook** blocks below are **authoritative** for automation; this profile does **not** override them. If something is *not set* or the business-profile row is missing, say so — **do not invent** services, travel, or currency.)*",
   );
   lines.push("");
   lines.push("### Identity (`photographers.settings`)");
@@ -189,62 +187,6 @@ function formatFocusedProjectSummaryBlock(s: AssistantFocusedProjectSummary): st
   return lines.join("\n");
 }
 
-function formatFocusedProjectFactsBlock(f: AssistantFocusedProjectFacts): string {
-  const lines: string[] = [];
-  const pt = f.project_type.trim() || "other";
-  lines.push(
-    `(Structured CRM project row (table \`weddings\`, id \`${f.weddingId}\`) + linked tables — not inferred memory or KB.)`,
-  );
-  lines.push("");
-  lines.push(`- ${projectTypeFramingLine(pt)}`);
-  if (f.couple_names.trim()) {
-    lines.push(`- **${displayTitleLabel(pt)}:** ${f.couple_names}`);
-  }
-  if (f.stage.trim()) lines.push(`- **Stage:** ${f.stage}`);
-  if (f.wedding_date) {
-    lines.push(`- **${primaryDateLabel(pt)}:** ${f.wedding_date}`);
-  }
-  if (f.event_start_date || f.event_end_date) {
-    const start = f.event_start_date ?? "";
-    const end = f.event_end_date ?? "";
-    if (start && end) lines.push(`- **Event window:** ${start} → ${end}`);
-    else lines.push(`- **Event window:** ${start || end}`);
-  }
-  if (f.location.trim()) lines.push(`- **Venue / location:** ${f.location}`);
-  if (f.package_name) lines.push(`- **Package:** ${f.package_name}`);
-  if (f.contract_value != null) lines.push(`- **Contract value:** ${f.contract_value}`);
-  if (f.balance_due != null) lines.push(`- **Balance due:** ${f.balance_due}`);
-  if (f.package_inclusions.length > 0) {
-    const listed = f.package_inclusions.slice(0, MAX_PACKAGE_INCLUSIONS_LISTED);
-    lines.push(`- **Package inclusions:** ${listed.join("; ")}`);
-  }
-  if (f.story_notes?.trim()) {
-    lines.push(`- **Story / notes (clipped):** ${clip(f.story_notes, MAX_STORY_NOTES_CHARS)}`);
-  }
-  lines.push(
-    `- **Counts (tenant-scoped):** open tasks: ${f.counts.openTasks}; open escalations: ${f.counts.openEscalations}; pending-approval drafts (linked threads): ${f.counts.pendingApprovalDrafts}`,
-  );
-  if (f.people.length > 0) {
-    lines.push(`- **${keyPeopleSectionTitle(pt)}:**`);
-    for (const p of f.people) {
-      const tag = p.is_primary_contact ? " (primary contact)" : "";
-      lines.push(
-        `  - ${p.display_name} — ${p.role_label} [${p.kind}]${tag} — \`${p.person_id}\``,
-      );
-    }
-  }
-  if (f.contactPoints.length > 0) {
-    lines.push("- **Contact points (subset):**");
-    for (const c of f.contactPoints) {
-      const tag = c.is_primary ? " (primary)" : "";
-      lines.push(
-        `  - ${c.kind}: ${c.value_raw}${tag} — person \`${c.person_id}\``,
-      );
-    }
-  }
-  return lines.join("\n");
-}
-
 function formatOperatorStateSummary(s: AssistantOperatorStateSummary): string {
   const lines: string[] = [];
   lines.push(
@@ -339,12 +281,18 @@ function formatPlaybookCoverageSummaryForOperatorLlm(ctx: AssistantContext): str
   const c: AssistantPlaybookCoverageSummary =
     ctx.playbookCoverageSummary ?? EMPTY_ASSISTANT_PLAYBOOK_COVERAGE_SUMMARY;
   const lines: string[] = [];
-  lines.push("## Playbook coverage summary (effective rules — read-only aggregate)");
+  lines.push("## Playbook coverage summary (effective rules — read-only aggregate, domain-first)");
   lines.push(
-    "*(**Topics, keys, scopes,** and light **token** hints from active `playbook_rules` after **authorized case exception** merge. The numbered-style **Playbook** block below is still the authoritative instruction text — do not paraphrase rules from this section alone.)*",
+    "*(**Bounded index:** aggregate counts and hints from **effective** rules for this tenant — **not** an omniscient map of every edge case. The **Playbook (effective rules)** block below is capped (**max " +
+      MAX_PLAYBOOK_RULES +
+      "** lines) for prompt budget — **not** proof that no other rule exists. For **policy / rule text** when the operator names a topic not visible here, call **operator_lookup_playbook_rules** (keywords). **Do not** invent **action_key**s from this summary alone. " +
+      OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST +
+      ")*",
   );
   lines.push("");
-  lines.push(`- **Total active rules (dataset for this build):** ${c.totalActiveRules} *(detailed list below is capped at ${MAX_PLAYBOOK_RULES} lines for prompt budget.)*`);
+  lines.push(
+    `- **Total active rules (effective set for this build):** ${c.totalActiveRules} *(detailed rule lines below: at most ${MAX_PLAYBOOK_RULES} for prompt budget.)*`,
+  );
   lines.push(
     `- **Distinct topics (${c.uniqueTopics.length}):** ${clip(
       c.uniqueTopics.length ? c.uniqueTopics.map((t) => `\`${t}\``).join(", ") : "(none)",
@@ -404,17 +352,20 @@ function formatMatchedEntitiesForOperatorLlm(ctx: AssistantContext): string | nu
   const e = ctx.operatorQueryEntityResolution;
   if (!e.didRun) return null;
   const hasPeople = e.personMatches.length > 0;
-  const hasBoost = e.queryResolvedProjectFacts != null;
   const sameAsFocus =
     e.weddingSignal === "unique" &&
     e.uniqueWeddingId != null &&
     e.uniqueWeddingId === ctx.focusedWeddingId;
+  /** Domain-first: never duplicate the focused-project pointer as query-resolved when ids match. */
+  const queryResolvedSummaryForPrompt =
+    e.queryResolvedProjectSummary != null && !sameAsFocus ? e.queryResolvedProjectSummary : null;
+  const hasBoost = queryResolvedSummaryForPrompt != null;
   if (e.weddingSignal === "none" && !hasPeople && !hasBoost) return null;
 
   const lines: string[] = [];
-  lines.push("## Matched entities / likely project matches");
+  lines.push("## Matched entities (bounded resolver — CRM project / people index)");
   lines.push(
-    "*(Read-only, deterministic — recent `weddings` + `people` index only, tenant-bounded. Not inbox/message history, not all-time search.)*",
+    "*(**Resolver / index only** — read-only, deterministic recent `weddings` + `people` rows, tenant-bounded. **Not** inbox/message history, not all-time search, **not** deep CRM. After you have a **projectId**, use **operator_lookup_project_details** for venue, money, people, story, counts.)*",
   );
   lines.push("");
   if (
@@ -451,12 +402,13 @@ function formatMatchedEntitiesForOperatorLlm(ctx: AssistantContext): string | nu
       lines.push(`  - ${p.display_name} (${p.kind}) — \`${p.id}\``);
     }
   }
-  if (e.queryResolvedProjectFacts) {
-    lines.push("### Query-resolved project facts (from database, best match to this question)");
+  if (queryResolvedSummaryForPrompt) {
+    lines.push("### Query-resolved project (summary — call operator_lookup_project_details for specifics)");
     lines.push(
-      "*(**projectType** is on the first fact line — **Slice 5**; use it for non-wedding-safe wording; do not treat this as a wedding by default.)*",
+      "*(Same **pointer** contract as **Focused project (summary)** — **projectType** is for vocabulary; not venue, money, people, or counts.)*",
     );
-    lines.push(formatFocusedProjectFactsBlock(e.queryResolvedProjectFacts));
+    lines.push("");
+    lines.push(formatFocusedProjectSummaryBlock(queryResolvedSummaryForPrompt));
   }
   return lines.join("\n");
 }
@@ -507,13 +459,13 @@ function formatOperatorCalendarSnapshotForOperatorLlm(ctx: AssistantContext): st
   const s = ctx.operatorCalendarSnapshot;
   if (!s.didRun) return null;
   const lines: string[] = [];
-  lines.push("## Calendar lookup (read-only, `calendar_events`)");
+  lines.push("## Calendar lookup (read-only — Slice 5 domain-first, `calendar_events`)");
   lines.push(
-    "*(**This studio’s database events only** — not Google Calendar or other externals. **No writes** from this context: you cannot create, move, or delete events. **Tasks are not calendar events.** Answer **only** from the rows in this block for the stated window and filters.)*",
+    "*(**Question-shaped evidence only:** this block is the **bounded `calendar_events` read** for **this** UTC window and filters — **not** a full personal agenda, not other systems, and **not** implied by project summaries, queue, or memory. **No writes** here: creating/moving/deleting uses **calendar_event_*** proposals after confirm. **Tasks are not calendar events.**)*",
   );
   lines.push("");
   lines.push(
-    "- **Evidence contract:** If the event list is empty, say there are **no matching `calendar_events` rows** for this window — **not** that the operator is “free” in real life or on other systems. If rows exist, you may summarize them; do not invent additional appointments.",
+    "- **Evidence contract:** This list is **complete for this fetch only** — **not** your whole calendar everywhere. If empty, say **no matching rows in this window** — **not** “free,” not “nothing scheduled” outside this query. If rows exist, cite them; **never** invent times or events. **Do not** fill schedule gaps from **Focused project**, **Operator state**, memory, knowledge, or unrelated Context.",
   );
   lines.push(`- **Lookup mode:** \`${s.lookupMode}\``);
   lines.push(`- **Lookup basis:** ${clip(s.lookupBasis, 600)}`);
@@ -561,14 +513,20 @@ function formatThreadMessageLookupForOperatorLlm(ctx: AssistantContext): string 
   const bodies = ctx.operatorThreadMessageBodies;
   const hasExcerpts = bodies.didRun && bodies.messages.length > 0;
   const lines: string[] = [];
-  lines.push("## Recent thread & email activity (read-only, bounded)");
+  lines.push("## Recent thread & email activity (orienting envelope — Slice 4, read-only)");
   if (hasExcerpts) {
     lines.push(
-      "*(**Envelope block:** deterministic `threads` metadata — title, channel, kind, timestamps, thread id. **Bounded message excerpts** from `messages.body` appear under **Thread message excerpts** below when loaded — summarize body-level questions **only** from that subsection, not from the subject line alone.)*",
+      "*(**Rare:** excerpts appear only when explicitly injected into Context. Normally, **message bodies** come from the **operator_lookup_thread_messages** tool, not this block.)*",
+    );
+    lines.push(
+      "*(**Envelope:** deterministic `threads` metadata — title, channel, kind, timestamps, thread id. **Bounded message excerpts** from `messages.body` under **Thread message excerpts** below — summarize body-level questions **only** from that subsection, not from the subject line alone.)*",
     );
   } else {
     lines.push(
-      "*(Deterministic `threads` rows — last activity / inbound / outbound times from the database. **Envelope only:** subject/title, channel, kind, timestamps, thread id — **not** message bodies unless a **Thread message excerpts** subsection is present below or you used **operator_lookup_thread_messages** in this turn. **Do not** summarize “what the email is about” from the title alone; if asked for body-level content and there are **no** excerpts, say so honestly and use **operator_lookup_thread_messages** with a `threadId` from this list (or ask the operator to narrow to one thread). Not a search over all history.)*",
+      "*(**Domain-first:** this block is a **small, recency-biased orienting list** (envelope metadata only) when the question is about inbox/thread **activity**, not **message meaning**. **Do not** treat subject lines as proof of what someone **said** or **wanted**.)*",
+    );
+    lines.push(
+      "*(**Envelope only** — last activity / inbound / outbound times; **no** `messages.body` here unless a **Thread message excerpts** subsection appears (rare). For *what they said* / *what they want* / *email body* questions, call **operator_lookup_threads** (resolver) then **operator_lookup_thread_messages** with a **threadId**, or use **lastThreadId** from the **Carry-forward pointer** when clearly one thread. Not a full-history search.)*",
     );
   }
   lines.push("");
@@ -865,8 +823,8 @@ export function formatAssistantContextForOperatorLlm(
 
   parts.push("## Effective scope");
   parts.push(`- Studio (tenant): ${ctx.photographerId}`);
-  parts.push(`- Focused wedding (validated): ${ctx.focusedWeddingId ?? "none"}`);
-  parts.push(`- Focused person (validated): ${ctx.focusedPersonId ?? "none"}`);
+  parts.push(`- Focused project id (\`weddings.id\`, all \`project_type\`): ${ctx.focusedWeddingId ?? "none"}`);
+  parts.push(`- Focused person id: ${ctx.focusedPersonId ?? "none"}`);
   parts.push("");
 
   parts.push(formatStudioProfileForOperatorLlm(ctx.studioProfile));
@@ -948,7 +906,7 @@ export function formatAssistantContextForOperatorLlm(
     parts.push("## App help / navigation");
     parts.push(
       "*(Full in-repo app catalog **not** included for this question — the query was not treated as app-navigation, label, or in-product “where/how” help.)* " +
-        "**Do not invent** routes, tab names, or status labels, and **do not** give step-by-step UI walkthroughs from memory. If the user needs grounded navigation or label meanings, they can rephrase (e.g. *“Where do I find drafts in the app?”*); otherwise use playbook, memory, operator state, and project tools above.",
+        "**Do not invent** routes, tab names, or status labels, and **do not** give step-by-step UI walkthroughs from memory. If the user needs grounded navigation or label meanings, they can rephrase (e.g. *“Where do I find drafts in the app?”*); otherwise use **Playbook**, **Durable memory**, **Global knowledge** excerpts, operator state, and **project / thread** lookup tools above — all **bounded**; cite what loaded.",
     );
   }
   parts.push("");
@@ -985,10 +943,16 @@ export function formatAssistantContextForOperatorLlm(
   parts.push(formatPlaybookCoverageSummaryForOperatorLlm(ctx));
   parts.push("");
 
-  parts.push("## Playbook (effective rules - authoritative over memory)");
+  parts.push("## Playbook (effective rules — domain-first, authoritative over memory / knowledge)");
+  parts.push(
+    "*(**Automation policy:** these lines are **effective** `playbook_rules` after **authorized case exception** merge for the **focused project** when applicable. " +
+      OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST +
+      " This list is **capped** for this prompt — **not** the entire policy graph. **(no active rules returned)** means the effective set is empty in this read, not “the studio has no playbook”. If the operator needs rules on a **specific topic** not listed, use **operator_lookup_playbook_rules**.)*",
+  );
+  parts.push("");
   const rules = ctx.playbookRules.slice(0, MAX_PLAYBOOK_RULES);
   if (rules.length === 0) {
-    parts.push("(no active rules returned)");
+    parts.push("- **Rules in prompt:** (no active rules returned)");
   } else {
     for (const r of rules) {
       const line = `- **${r.action_key}** (${r.topic}): ${clip(r.instruction ?? "", MAX_PLAYBOOK_INSTRUCTION_CHARS)}`;
@@ -997,10 +961,21 @@ export function formatAssistantContextForOperatorLlm(
   }
   parts.push("");
 
-  parts.push("## Durable memory (supporting - titles/summaries; may be incomplete)");
+  parts.push("## Durable memory (read-only — domain-first, bounded `memories`)");
+  parts.push(
+    "*(**Slice — memory retrieval:** this block is a **keyword-ranked subset** for **this** turn only (caps per scope: studio + optional project/person when focus allows). It is **not** the full memory database, **not** proof of everything the studio ever saved. " +
+      OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST +
+      " **(none selected)** means **no rows matched this turn’s deterministic pick**, not “there are no memories”. For **memory-heavy** questions or when this list is too thin, call **operator_lookup_memories** (keywords + optional **scope**) or **operator_lookup_corpus** for tenant-wide light hits — then cite tool JSON.)*",
+  );
+  parts.push("");
+  const selCount = ctx.retrievalLog.selectedMemoryIds?.length ?? 0;
+  parts.push(
+    `- **Selection contract:** up to **${MAX_MEMORY_SNIPPETS}** snippets in prompt · **selectedMemoryIds** this turn: **${selCount}** (see Retrieval debug).`,
+  );
+  parts.push("");
   const mem = ctx.selectedMemories.slice(0, MAX_MEMORY_SNIPPETS);
   if (mem.length === 0) {
-    parts.push("(none selected)");
+    parts.push("- **Snippets:** (none selected)");
   } else {
     for (const m of mem) {
       parts.push(
@@ -1010,10 +985,18 @@ export function formatAssistantContextForOperatorLlm(
   }
   parts.push("");
 
-  parts.push("## Global knowledge excerpts (tenant KB - supporting)");
+  parts.push("## Global knowledge excerpts (tenant KB — domain-first, supporting reference only)");
+  parts.push(
+    "*(**Reference / background:** first-pass lines are **semantic** `knowledge_base` matches for **this** question — **capped** (**≤" +
+      MAX_KB_ROWS +
+      "** rows here), **not** the entire KB, **not** a complete studio reference corpus. **Durable memory** is for **saved notes**; **knowledge** here is **supporting** studio reference (e.g. brand voice, contract excerpts) only. " +
+      OPERATOR_CONTEXT_AUTHORITY_PLAYBOOK_FIRST +
+      " **(none retrieved)** means **no** match above the embedding threshold **in this read**, not “the KB is empty”. For **what does our KB say about…**, **brand voice**, **contract wording**, or other **reference** when this block is **thin or missing**, call **operator_lookup_knowledge** (bounded semantic rows) and cite tool JSON. Honor **project type discipline** when mapping generic KB text to a **specific** project.)*",
+  );
+  parts.push("");
   const kb = ctx.globalKnowledge.slice(0, MAX_KB_ROWS);
   if (kb.length === 0) {
-    parts.push("(none retrieved)");
+    parts.push("- **Excerpts in prompt:** (none retrieved)");
   } else {
     for (const row of kb) {
       const r = row as Record<string, unknown>;

@@ -162,7 +162,7 @@ export type OperatorStudioAssistantRequestBody = {
 
 export type OperatorStudioAssistantResponseBody = {
   reply: string;
-  /** Slice 6–11 — rule, task, memory, and/or case-exception proposals (confirm via the matching insert edge functions). */
+  /** Slice 6–11 + P13 — rule, task, memory, case-exception, publication-rights, and other proposals (confirm via matching insert edge functions). */
   proposedActions?: OperatorAssistantProposedAction[];
   clientFacingForbidden: true;
   retrievalLog: AssistantRetrievalLog;

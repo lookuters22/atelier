@@ -165,10 +165,10 @@ export type AssistantOperatorQueryEntityResolution = {
     kind: string;
   }>;
   /**
-   * Full `weddings` + links for the **query-resolved** project when the match is **unique** and
-   * distinct from the UI-focused project (or when there is no focused project). Omitted in memory when null.
+   * Minimal `weddings` pointer for the **query-resolved** project when the match is **unique** and
+   * distinct from the UI-focused project. Deep CRM: **operator_lookup_project_details** (domain-first).
    */
-  queryResolvedProjectFacts: AssistantFocusedProjectFacts | null;
+  queryResolvedProjectSummary: AssistantFocusedProjectSummary | null;
 };
 
 /**
@@ -515,7 +515,7 @@ export type AssistantRetrievalLog = {
     uniqueWeddingId: string | null;
     weddingCandidateCount: number;
     personMatchCount: number;
-    queryResolvedProjectFactsLoaded: boolean;
+    queryResolvedProjectSummaryLoaded: boolean;
   };
   /**
    * Bounded thread/message lookup (inbox-style questions). Optional on older log shapes.
@@ -791,8 +791,8 @@ export type AssistantContext = {
   crmDigest: AssistantCrmDigest;
   /**
    * Slice 1 full CRM row (people, counts, money, …). **Not** populated from `buildAssistantContext` in Slice 2+;
-   * reserved for other paths. Query-time unique match still uses
-   * `operatorQueryEntityResolution.queryResolvedProjectFacts`.
+   * reserved for other paths. Query-time unique matches use
+   * `operatorQueryEntityResolution.queryResolvedProjectSummary` + **operator_lookup_project_details**.
    */
   focusedProjectFacts: AssistantFocusedProjectFacts | null;
   /**

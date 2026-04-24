@@ -37,6 +37,11 @@ vi.mock("./recordV3OutputAuditorEscalation.ts", () => ({
 }));
 
 import { maybeRewriteOrchestratorDraftWithPersona } from "./maybeRewriteOrchestratorDraftWithPersona.ts";
+import {
+  WEDDING_PAUSE_STATE_DB_ERROR,
+  WEDDING_PAUSE_STATE_UNREADABLE,
+} from "../fetchWeddingPauseFlags.ts";
+import { WEDDING_AUTOMATION_PAUSED_SKIP_REASON } from "../weddingAutomationPause.ts";
 
 function baseDc(threadId: string | null): DecisionContext {
   return {
@@ -119,10 +124,19 @@ function buildSupabase(capture: { lastUpdate: Record<string, unknown> | null }) 
     eq: vi.fn(() => photographers),
     maybeSingle: vi.fn(async () => ({ data: { settings: {} }, error: null })),
   };
+  const weddings = {
+    select: vi.fn(() => weddings),
+    eq: vi.fn(() => weddings),
+    maybeSingle: vi.fn(async () => ({
+      data: { compassion_pause: false, strategic_pause: false },
+      error: null,
+    })),
+  };
   return {
     from: vi.fn((table: string) => {
       if (table === "drafts") return drafts;
       if (table === "photographers") return photographers;
+      if (table === "weddings") return weddings;
       throw new Error(`unexpected table ${table}`);
     }),
   } as unknown as SupabaseClient;
@@ -225,6 +239,203 @@ describe("maybeRewriteOrchestratorDraftWithPersona — persona structured output
     );
     const audit = (capture.lastUpdate?.instruction_history as unknown[])?.[1] as Record<string, unknown>;
     expect(audit?.escalation_id).toBeNull();
+  });
+});
+
+describe("maybeRewriteOrchestratorDraftWithPersona — fresh wedding pause gate", () => {
+  beforeEach(() => {
+    vi.stubEnv("ORCHESTRATOR_CLIENT_V1_PERSONA_DRAFT_BODY", "1");
+    draftPersonaMock.mockReset();
+    recordEsc.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("skips persona LLM and draft updates when fresh wedding read shows pause (pre-LLM)", async () => {
+    const capture = { lastUpdate: null as Record<string, unknown> | null };
+    const drafts = {
+      select: vi.fn(() => drafts),
+      eq: vi.fn(() => drafts),
+      single: vi.fn(async () => ({ data: { instruction_history: [] }, error: null })),
+      update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
+    };
+    const photographers = {
+      select: vi.fn(() => photographers),
+      eq: vi.fn(() => photographers),
+      maybeSingle: vi.fn(async () => ({ data: { settings: {} }, error: null })),
+    };
+    const weddings = {
+      select: vi.fn(() => weddings),
+      eq: vi.fn(() => weddings),
+      maybeSingle: vi.fn(async () => ({
+        data: { compassion_pause: true, strategic_pause: false },
+        error: null,
+      })),
+    };
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "drafts") return drafts;
+        if (table === "photographers") return photographers;
+        if (table === "weddings") return weddings;
+        throw new Error(`unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await maybeRewriteOrchestratorDraftWithPersona(supabase, {
+      decisionContext: baseDc("thread-live"),
+      draftAttempt: draftAttempt(),
+      rawMessage: "Hello",
+      playbookRules: [],
+      photographerId: "p1",
+      replyChannel: "email",
+      threadId: "thread-live",
+    });
+
+    expect(result).toEqual({ applied: false, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON });
+    expect(draftPersonaMock).not.toHaveBeenCalled();
+    expect(capture.lastUpdate).toBeNull();
+  });
+
+  it("skips persona LLM when fresh wedding row is missing (fail-closed)", async () => {
+    const capture = { lastUpdate: null as Record<string, unknown> | null };
+    const drafts = {
+      select: vi.fn(() => drafts),
+      eq: vi.fn(() => drafts),
+      single: vi.fn(async () => ({ data: { instruction_history: [] }, error: null })),
+      update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
+    };
+    const photographers = {
+      select: vi.fn(() => photographers),
+      eq: vi.fn(() => photographers),
+      maybeSingle: vi.fn(async () => ({ data: { settings: {} }, error: null })),
+    };
+    const weddings = {
+      select: vi.fn(() => weddings),
+      eq: vi.fn(() => weddings),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    };
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "drafts") return drafts;
+        if (table === "photographers") return photographers;
+        if (table === "weddings") return weddings;
+        throw new Error(`unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await maybeRewriteOrchestratorDraftWithPersona(supabase, {
+      decisionContext: baseDc("thread-live"),
+      draftAttempt: draftAttempt(),
+      rawMessage: "Hello",
+      playbookRules: [],
+      photographerId: "p1",
+      replyChannel: "email",
+      threadId: "thread-live",
+    });
+
+    expect(result).toEqual({ applied: false, reason: WEDDING_PAUSE_STATE_UNREADABLE });
+    expect(draftPersonaMock).not.toHaveBeenCalled();
+    expect(capture.lastUpdate).toBeNull();
+  });
+
+  it("skips persona LLM when fresh wedding read returns DB error (fail-closed)", async () => {
+    const capture = { lastUpdate: null as Record<string, unknown> | null };
+    const drafts = {
+      select: vi.fn(() => drafts),
+      eq: vi.fn(() => drafts),
+      single: vi.fn(async () => ({ data: { instruction_history: [] }, error: null })),
+      update: vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })),
+    };
+    const photographers = {
+      select: vi.fn(() => photographers),
+      eq: vi.fn(() => photographers),
+      maybeSingle: vi.fn(async () => ({ data: { settings: {} }, error: null })),
+    };
+    const weddings = {
+      select: vi.fn(() => weddings),
+      eq: vi.fn(() => weddings),
+      maybeSingle: vi.fn(async () => ({ data: null, error: { message: "db down" } })),
+    };
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "drafts") return drafts;
+        if (table === "photographers") return photographers;
+        if (table === "weddings") return weddings;
+        throw new Error(`unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await maybeRewriteOrchestratorDraftWithPersona(supabase, {
+      decisionContext: baseDc("thread-live"),
+      draftAttempt: draftAttempt(),
+      rawMessage: "Hello",
+      playbookRules: [],
+      photographerId: "p1",
+      replyChannel: "email",
+      threadId: "thread-live",
+    });
+
+    expect(result).toEqual({ applied: false, reason: WEDDING_PAUSE_STATE_DB_ERROR });
+    expect(draftPersonaMock).not.toHaveBeenCalled();
+    expect(capture.lastUpdate).toBeNull();
+  });
+
+  it("skips final draft update when pre-commit fresh read is unreadable after successful persona (fail-closed)", async () => {
+    const capture = { lastUpdate: null as Record<string, unknown> | null };
+    const drafts = {
+      select: vi.fn(() => drafts),
+      eq: vi.fn(() => drafts),
+      single: vi.fn(async () => ({ data: { instruction_history: [] }, error: null })),
+      update: vi.fn((row: Record<string, unknown>) => {
+        capture.lastUpdate = row;
+        return { eq: vi.fn(async () => ({ error: null })) };
+      }),
+    };
+    const photographers = {
+      select: vi.fn(() => photographers),
+      eq: vi.fn(() => photographers),
+      maybeSingle: vi.fn(async () => ({ data: { settings: {} }, error: null })),
+    };
+    const weddings = {
+      select: vi.fn(() => weddings),
+      eq: vi.fn(() => weddings),
+      maybeSingle: vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: { compassion_pause: false, strategic_pause: false },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null }),
+    };
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "drafts") return drafts;
+        if (table === "photographers") return photographers;
+        if (table === "weddings") return weddings;
+        throw new Error(`unexpected table ${table}`);
+      }),
+    } as unknown as SupabaseClient;
+
+    draftPersonaMock.mockResolvedValue({
+      email_draft: "Hello — thank you for your note.\n\nWarmly,\nStudio",
+      committed_terms: { package_names: [], deposit_percentage: null, travel_miles_included: null },
+    });
+
+    const result = await maybeRewriteOrchestratorDraftWithPersona(supabase, {
+      decisionContext: baseDc("thread-live"),
+      draftAttempt: draftAttempt(),
+      rawMessage: "Hello — can you share availability?",
+      playbookRules: [],
+      photographerId: "p1",
+      replyChannel: "email",
+      threadId: "thread-live",
+    });
+
+    expect(result).toEqual({ applied: false, reason: WEDDING_PAUSE_STATE_UNREADABLE });
+    expect(draftPersonaMock).toHaveBeenCalled();
+    expect(capture.lastUpdate).toBeNull();
   });
 });
 

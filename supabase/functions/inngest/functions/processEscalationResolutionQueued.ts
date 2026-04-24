@@ -3,6 +3,7 @@
  */
 import { resolveOperatorEscalationResolution } from "../../_shared/learning/resolveOperatorEscalationResolution.ts";
 import type { ResolveOperatorEscalationResolutionError } from "../../_shared/learning/resolveOperatorEscalationResolution.ts";
+import { executeBoundedNearMatchThreadWeddingLinkApproval } from "../../_shared/learning/executeBoundedNearMatchThreadWeddingLinkApproval.ts";
 import {
   OPS_ESCALATION_RESOLUTION_V1_EVENT,
   OPS_ESCALATION_RESOLUTION_V1_SCHEMA_VERSION,
@@ -60,7 +61,7 @@ export const processEscalationResolutionQueued = inngest.createFunction(
 
       const { data: job, error: jobErr } = await supabaseAdmin
         .from("escalation_resolution_jobs")
-        .select("id, status, resolution_summary, photographer_reply_raw")
+        .select("id, status, resolution_summary, photographer_reply_raw, approve_bounded_near_match_thread_link")
         .eq("id", jobId)
         .eq("photographer_id", photographerId)
         .eq("escalation_id", escalationId)
@@ -135,6 +136,7 @@ export const processEscalationResolutionQueued = inngest.createFunction(
 
       const resolutionSummary = String(job.resolution_summary ?? "").trim();
       const photographerReplyRaw = String(job.photographer_reply_raw ?? "").trim();
+      const approveNearMatchLink = job.approve_bounded_near_match_thread_link === true;
       if (!resolutionSummary) {
         await supabaseAdmin
           .from("escalation_resolution_jobs")
@@ -152,6 +154,52 @@ export const processEscalationResolutionQueued = inngest.createFunction(
           outcome: "missing_resolution_summary",
         });
         return { ok: false as const, terminal: true as const };
+      }
+
+      if (approveNearMatchLink) {
+        const linkResult = await executeBoundedNearMatchThreadWeddingLinkApproval(supabaseAdmin, {
+          photographerId,
+          escalationId,
+          resolutionSummary,
+        });
+
+        if (!linkResult.ok) {
+          const errText = linkResult.error.message;
+          await supabaseAdmin
+            .from("escalation_resolution_jobs")
+            .update({
+              status: "failed",
+              last_error: errText.slice(0, 2000),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", jobId)
+            .eq("photographer_id", photographerId);
+
+          logA4WorkerOpLatencyV1({
+            ...base,
+            ok: false,
+            duration_ms: Date.now() - t0,
+            failure_category: "bounded_near_match_link_failed",
+            outcome: errText.slice(0, 300),
+          });
+          return { ok: false as const, terminal: true as const, error: errText };
+        }
+
+        await supabaseAdmin.from("escalation_resolution_jobs").delete().eq("id", jobId);
+
+        logA4WorkerOpLatencyV1({
+          ...base,
+          ok: true,
+          duration_ms: Date.now() - t0,
+          outcome: "completed",
+          resolve_mode: "bounded_near_match_thread_link",
+        });
+
+        return {
+          ok: true as const,
+          mode: "bounded_near_match_thread_link" as const,
+          escalationId,
+        };
       }
 
       const result = await resolveOperatorEscalationResolution(supabaseAdmin, {

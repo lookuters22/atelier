@@ -5,12 +5,71 @@ vi.mock("../inngest.ts", () => ({
   ORCHESTRATOR_CLIENT_V1_SCHEMA_VERSION: 1,
 }));
 
+import { WEDDING_PAUSE_STATE_DB_ERROR } from "../fetchWeddingPauseFlags.ts";
+import { WEDDING_AUTOMATION_PAUSED_SKIP_REASON } from "../weddingAutomationPause.ts";
 import {
   ORCHESTRATOR_PENDING_DRAFT_BODY_PLACEHOLDER,
   attemptOrchestratorDraft,
   buildOrchestratorStubDraftBody,
 } from "./attemptOrchestratorDraft.ts";
 import type { OrchestratorProposalCandidate } from "../../../../src/types/decisionContext.types.ts";
+
+/** Resolves wedding for pause gate; `weddings` is only queried when `threadWeddingId` is non-null. */
+function supabaseChainsForOrchestratorDraft(opts: {
+  insert?: ReturnType<typeof vi.fn>;
+  threadWeddingId?: string | null;
+  weddingRow?: { compassion_pause: boolean; strategic_pause: boolean } | null;
+  weddingError?: { message: string } | null;
+}): SupabaseClient {
+  const insert =
+    opts.insert ??
+    vi.fn(() => ({
+      select: () => ({
+        single: async () => ({ data: { id: "draft-id" }, error: null }),
+      }),
+    }));
+  const threadWeddingId = opts.threadWeddingId === undefined ? null : opts.threadWeddingId;
+  return {
+    from: (table: string) => {
+      if (table === "drafts") return { insert };
+      if (table === "threads") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { wedding_id: threadWeddingId },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "weddings") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => {
+                  if (opts.weddingError) {
+                    return { data: null, error: opts.weddingError };
+                  }
+                  const row = opts.weddingRow ?? {
+                    compassion_pause: false,
+                    strategic_pause: false,
+                  };
+                  return { data: row, error: null };
+                },
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    },
+  } as unknown as SupabaseClient;
+}
 
 const FORBIDDEN_BODY_SUBSTRINGS = [
   "Action:",
@@ -45,12 +104,7 @@ describe("attemptOrchestratorDraft", () => {
         single: async () => ({ data: { id: "draft-id" }, error: null }),
       }),
     });
-    const supabase = {
-      from: (table: string) => {
-        if (table === "drafts") return { insert };
-        return {};
-      },
-    } as unknown as SupabaseClient;
+    const supabase = supabaseChainsForOrchestratorDraft({ insert });
 
     const result = await attemptOrchestratorDraft(supabase, {
       photographerId: "p1",
@@ -68,6 +122,124 @@ describe("attemptOrchestratorDraft", () => {
     expect(insert).not.toHaveBeenCalled();
   });
 
+  it("does not insert when wedding life-event pause is active (crmSnapshotForPause)", async () => {
+    const insert = vi.fn().mockReturnValue({
+      select: () => ({
+        single: async () => ({ data: { id: "draft-id" }, error: null }),
+      }),
+    });
+    const supabase = supabaseChainsForOrchestratorDraft({ insert });
+
+    const proposals: OrchestratorProposalCandidate[] = [
+      {
+        id: "cand-1-send_message",
+        action_family: "send_message",
+        action_key: "send_message",
+        rationale: "test",
+        verifier_gating_required: true,
+        likely_outcome: "draft",
+        blockers_or_missing_facts: [],
+      },
+    ];
+
+    const result = await attemptOrchestratorDraft(supabase, {
+      photographerId: "p1",
+      threadId: "t1",
+      proposedActions: proposals,
+      verifierSuccess: true,
+      orchestratorOutcome: "draft",
+      rawMessage: "hello",
+      replyChannel: "email",
+      playbookRules: [],
+      crmSnapshotForPause: { compassion_pause: false, strategic_pause: true },
+    });
+
+    expect(result.draftCreated).toBe(false);
+    expect(result.skipReason).toBe(WEDDING_AUTOMATION_PAUSED_SKIP_REASON);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("does not insert when fresh weddings row shows pause even if CRM snapshot is unpaused (stale CRM)", async () => {
+    const insert = vi.fn().mockReturnValue({
+      select: () => ({
+        single: async () => ({ data: { id: "draft-id" }, error: null }),
+      }),
+    });
+    const supabase = supabaseChainsForOrchestratorDraft({
+      insert,
+      threadWeddingId: "w-fresh-paused",
+      weddingRow: { compassion_pause: true, strategic_pause: false },
+    });
+
+    const proposals: OrchestratorProposalCandidate[] = [
+      {
+        id: "cand-1-send_message",
+        action_family: "send_message",
+        action_key: "send_message",
+        rationale: "test",
+        verifier_gating_required: true,
+        likely_outcome: "draft",
+        blockers_or_missing_facts: [],
+      },
+    ];
+
+    const result = await attemptOrchestratorDraft(supabase, {
+      photographerId: "p1",
+      threadId: "t1",
+      proposedActions: proposals,
+      verifierSuccess: true,
+      orchestratorOutcome: "draft",
+      rawMessage: "hello",
+      replyChannel: "email",
+      playbookRules: [],
+      crmSnapshotForPause: { compassion_pause: false, strategic_pause: false },
+    });
+
+    expect(result.draftCreated).toBe(false);
+    expect(result.skipReason).toBe(WEDDING_AUTOMATION_PAUSED_SKIP_REASON);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("does not insert when fresh pause read errors (fail closed)", async () => {
+    const insert = vi.fn().mockReturnValue({
+      select: () => ({
+        single: async () => ({ data: { id: "draft-id" }, error: null }),
+      }),
+    });
+    const supabase = supabaseChainsForOrchestratorDraft({
+      insert,
+      threadWeddingId: "w-db",
+      weddingError: { message: "timeout" },
+    });
+
+    const proposals: OrchestratorProposalCandidate[] = [
+      {
+        id: "cand-1-send_message",
+        action_family: "send_message",
+        action_key: "send_message",
+        rationale: "test",
+        verifier_gating_required: true,
+        likely_outcome: "draft",
+        blockers_or_missing_facts: [],
+      },
+    ];
+
+    const result = await attemptOrchestratorDraft(supabase, {
+      photographerId: "p1",
+      threadId: "t1",
+      proposedActions: proposals,
+      verifierSuccess: true,
+      orchestratorOutcome: "draft",
+      rawMessage: "hello",
+      replyChannel: "email",
+      playbookRules: [],
+    });
+
+    expect(result.draftCreated).toBe(false);
+    expect(result.skipReason).toBe(WEDDING_PAUSE_STATE_DB_ERROR);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it("drafts the disambiguation send_message when routine primary is identity-blocked", async () => {
     let capturedBody: Record<string, unknown> | null = null;
     const insert = vi.fn((row: Record<string, unknown>) => {
@@ -78,12 +250,7 @@ describe("attemptOrchestratorDraft", () => {
         }),
       };
     });
-    const supabase = {
-      from: (table: string) => {
-        if (table === "drafts") return { insert };
-        return {};
-      },
-    } as unknown as SupabaseClient;
+    const supabase = supabaseChainsForOrchestratorDraft({ insert });
 
     const proposals: OrchestratorProposalCandidate[] = [
       {
@@ -138,12 +305,7 @@ describe("attemptOrchestratorDraft", () => {
         }),
       };
     });
-    const supabase = {
-      from: (table: string) => {
-        if (table === "drafts") return { insert };
-        return {};
-      },
-    } as unknown as SupabaseClient;
+    const supabase = supabaseChainsForOrchestratorDraft({ insert });
 
     const proposals: OrchestratorProposalCandidate[] = [
       {
@@ -190,12 +352,7 @@ describe("attemptOrchestratorDraft", () => {
         }),
       };
     });
-    const supabase = {
-      from: (table: string) => {
-        if (table === "drafts") return { insert };
-        return {};
-      },
-    } as unknown as SupabaseClient;
+    const supabase = supabaseChainsForOrchestratorDraft({ insert });
 
     const proposals: OrchestratorProposalCandidate[] = [
       {

@@ -38,7 +38,13 @@ describe("operator Ana proposal consumed state", () => {
   it("builds stable keys per proposal type", () => {
     expect(ruleProposalKey(rule)).toBe("rule:k:T");
     expect(taskProposalKey(task)).toBe("task:Call:2026-01-01:");
-    expect(memoryProposalKey(mem)).toBe("memory:studio:N:O::");
+    expect(memoryProposalKey(mem)).toBe("memory:studio:N:O:::::client_visible");
+  });
+
+  it("memoryProposalKey differs by audienceSourceTier", () => {
+    const internal = { ...mem, audienceSourceTier: "internal_team" as const };
+    expect(memoryProposalKey(mem)).not.toBe(memoryProposalKey(internal));
+    expect(memoryProposalKey(internal)).toContain("internal_team");
   });
 
   it("marks a key consumed and blocks duplicate adds", () => {

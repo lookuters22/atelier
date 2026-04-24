@@ -216,5 +216,5 @@ export const IDLE_OPERATOR_QUERY_ENTITY_RESOLUTION: AssistantOperatorQueryEntity
   uniqueWeddingId: null,
   weddingCandidates: [],
   personMatches: [],
-  queryResolvedProjectFacts: null,
+  queryResolvedProjectSummary: null,
 };

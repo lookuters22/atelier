@@ -7,6 +7,7 @@
 > - `V3_OPERATOR_ANA_PROJECT_TYPE_SEMANTICS_SLICE.md` — multi-project-type correctness (wedding / commercial / video / other)
 > - `V3_OPERATOR_ANA_FOLLOW_UP_AND_CARRY_FORWARD_SLICE.md` — follow-up referent handling
 > - `V3_OPERATOR_ANA_PROJECTS_DOMAIN_FIRST_EXECUTION_SLICE.md` — first execution slice (Projects / CRM)
+> - `V3_OPERATOR_ANA_POST_IMPLEMENTATION_HARDENING_SLICES.md` — post-implementation hardening addendum (carry-forward completion, corpus/query-index tests, lookup-contract consistency)
 > **Do not supersede:** The paired infrastructure slices (`V3_OPERATOR_ANA_PROMPT_CACHING_SLICE.md`, `V3_OPERATOR_ANA_STRICT_STRUCTURED_OUTPUTS_SLICE.md`) ship independently. This plan builds on top of them.
 
 ---

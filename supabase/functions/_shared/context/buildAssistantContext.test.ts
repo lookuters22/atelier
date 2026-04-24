@@ -204,6 +204,85 @@ describe("buildAssistantContext", () => {
     vi.restoreAllMocks();
   });
 
+  it("Slice 4: body-meaning question skips first-pass thread message lookup (domain-first)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let memoriesThenCalls = 0;
+    const supabase = {
+      rpc: () => Promise.resolve({ data: [], error: null }),
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.is = () => chain;
+        chain.in = () => chain;
+        chain.lte = () => chain;
+        chain.or = () => chain;
+        chain.order = () => chain;
+        chain.limit = () => chain;
+        chain.ilike = () => chain;
+        chain.neq = () => chain;
+        chain.single = () => Promise.resolve({ data: null, error: { message: "n/a" } });
+        chain.maybeSingle = () => {
+          if (table === "weddings" || table === "people") {
+            return Promise.resolve({ data: null, error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        };
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (table === "playbook_rules") return resolve({ data: [], error: null });
+          if (table === "authorized_case_exceptions") return resolve({ data: [], error: null });
+          if (table === "tasks" || table === "escalation_requests") {
+            return resolve({ data: null, count: 0, error: null });
+          }
+          if (table === "thread_weddings") return resolve({ data: [], error: null });
+          if (table === "weddings") return resolve({ data: [], error: null });
+          if (table === "people") return resolve({ data: [], error: null });
+          if (table === "memories") {
+            memoriesThenCalls += 1;
+            if (memoriesThenCalls === 1) {
+              return resolve({
+                data: [
+                  {
+                    id: "m-studio",
+                    wedding_id: null,
+                    scope: "studio",
+                    person_id: null,
+                    type: "note",
+                    title: "t",
+                    summary: "s",
+                  },
+                ],
+                error: null,
+              });
+            }
+            return resolve({
+              data: [{ id: "m-studio", type: "note", title: "t", summary: "s", full_content: "x" }],
+              error: null,
+            });
+          }
+          if (table === "global_knowledge" || table === "knowledge_documents") {
+            return resolve({ data: [], error: null });
+          }
+          if (table === "v_threads_inbox_latest_message" || table === "threads" || table === "thread_participants") {
+            return resolve({ data: [], error: null });
+          }
+          return resolve({ data: [], error: null });
+        };
+        return chain;
+      },
+    } as never;
+
+    const ctx = await buildAssistantContext(supabase, "photo-1", {
+      queryText: "What did they say in the email?",
+    });
+
+    expect(ctx.retrievalLog.scopesQueried).not.toContain("operator_thread_message_lookup");
+    expect(ctx.operatorThreadMessageLookup.didRun).toBe(false);
+    expect(ctx.operatorThreadMessageBodies.didRun).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
   it("applies effective focusedWeddingId for memory headers and logs project_memory scope", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -721,7 +800,7 @@ describe("buildAssistantContext", () => {
     expect(ctx.operatorQueryEntityResolution.didRun).toBe(true);
     expect(ctx.operatorQueryEntityResolution.weddingSignal).toBe("ambiguous");
     expect(ctx.operatorQueryEntityResolution.weddingCandidates.length).toBeGreaterThanOrEqual(2);
-    expect(ctx.operatorQueryEntityResolution.queryResolvedProjectFacts).toBeNull();
+    expect(ctx.operatorQueryEntityResolution.queryResolvedProjectSummary).toBeNull();
     expect(ctx.focusedWeddingId).toBeNull();
     expect(ctx.retrievalLog.scopesQueried).toContain("operator_thread_message_lookup");
     expect(ctx.retrievalLog.threadMessageLookup?.didRun).toBe(true);
@@ -1738,6 +1817,169 @@ describe("buildAssistantContext", () => {
     expect(ctx.operatorCalendarSnapshot.didRun).toBe(true);
     expect(ctx.operatorCalendarSnapshot.lookupMode).toBe("exact_day");
     expect(ctx.operatorCalendarSnapshot.windowStartIso).toBe("2026-06-14T00:00:00.000Z");
+
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("loads bounded calendar lookup for elliptical day follow-up when carry-forward lastDomain is calendar (continuity)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.useFakeTimers();
+    const t0 = new Date("2026-04-22T12:00:00.000Z");
+    vi.setSystemTime(t0);
+
+    const supabase = {
+      rpc: () => Promise.resolve({ data: [], error: null }),
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.is = () => chain;
+        chain.in = () => chain;
+        chain.lte = () => chain;
+        chain.lt = () => chain;
+        chain.or = () => chain;
+        chain.order = () => chain;
+        chain.neq = () => chain;
+        chain.gte = () => chain;
+        chain.ilike = () => chain;
+        chain.limit = () => {
+          if (table === "calendar_events") {
+            return Promise.resolve({
+              data: [
+                {
+                  id: "ce-fri",
+                  title: "Commercial pitch",
+                  start_time: "2026-04-24T14:00:00.000Z",
+                  end_time: "2026-04-24T15:00:00.000Z",
+                  event_type: "other",
+                  wedding_id: null,
+                  meeting_link: null,
+                },
+              ],
+              error: null,
+            });
+          }
+          return chain;
+        };
+        chain.maybeSingle = () => Promise.resolve({ data: null, error: null });
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (table === "playbook_rules") return resolve({ data: [], error: null });
+          if (table === "authorized_case_exceptions") return resolve({ data: [], error: null });
+          if (table === "tasks" || table === "escalation_requests") {
+            return resolve({ data: null, count: 0, error: null });
+          }
+          if (table === "thread_weddings") return resolve({ data: [], error: null });
+          if (table === "weddings") {
+            return resolve({
+              data: [{ id: "w1", couple_names: "A & B", stage: "booked", wedding_date: null }],
+              error: null,
+            });
+          }
+          if (table === "people") return resolve({ data: [], error: null });
+          if (table === "memories") return resolve({ data: [], error: null });
+          if (table === "global_knowledge" || table === "knowledge_documents") {
+            return resolve({ data: [], error: null });
+          }
+          return resolve({ data: [], error: null });
+        };
+        return chain;
+      },
+    } as never;
+
+    const ctx = await buildAssistantContext(supabase, "photo-1", {
+      queryText: "and friday?",
+      carryForward: {
+        lastDomain: "calendar",
+        lastFocusedProjectId: null,
+        lastFocusedProjectType: null,
+        lastMentionedPersonId: null,
+        lastThreadId: null,
+        lastEntityAmbiguous: false,
+        emittedAtEpochMs: t0.getTime() - 45_000,
+        capturedFocusWeddingId: null,
+        capturedFocusPersonId: null,
+      },
+    });
+
+    expect(ctx.retrievalLog.scopesQueried).toContain("operator_calendar_snapshot");
+    expect(ctx.operatorCalendarSnapshot.didRun).toBe(true);
+    expect(ctx.operatorCalendarSnapshot.events).toHaveLength(1);
+    expect(ctx.operatorCalendarSnapshot.events[0]!.title).toBe("Commercial pitch");
+
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("does not load calendar snapshot for elliptical day follow-up when lastDomain is not calendar", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.useFakeTimers();
+    const t0 = new Date("2026-04-22T12:00:00.000Z");
+    vi.setSystemTime(t0);
+
+    const supabase = {
+      rpc: () => Promise.resolve({ data: [], error: null }),
+      from: (table: string) => {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.is = () => chain;
+        chain.in = () => chain;
+        chain.lte = () => chain;
+        chain.lt = () => chain;
+        chain.or = () => chain;
+        chain.order = () => chain;
+        chain.neq = () => chain;
+        chain.gte = () => chain;
+        chain.ilike = () => chain;
+        chain.limit = () => {
+          if (table === "calendar_events") {
+            return Promise.resolve({ data: [], error: null });
+          }
+          return chain;
+        };
+        chain.maybeSingle = () => Promise.resolve({ data: null, error: null });
+        chain.then = (resolve: (v: unknown) => unknown) => {
+          if (table === "playbook_rules") return resolve({ data: [], error: null });
+          if (table === "authorized_case_exceptions") return resolve({ data: [], error: null });
+          if (table === "tasks" || table === "escalation_requests") {
+            return resolve({ data: null, count: 0, error: null });
+          }
+          if (table === "thread_weddings") return resolve({ data: [], error: null });
+          if (table === "weddings") {
+            return resolve({
+              data: [{ id: "w1", couple_names: "A & B", stage: "booked", wedding_date: null }],
+              error: null,
+            });
+          }
+          if (table === "people") return resolve({ data: [], error: null });
+          if (table === "memories") return resolve({ data: [], error: null });
+          if (table === "global_knowledge" || table === "knowledge_documents") {
+            return resolve({ data: [], error: null });
+          }
+          return resolve({ data: [], error: null });
+        };
+        return chain;
+      },
+    } as never;
+
+    const ctx = await buildAssistantContext(supabase, "photo-1", {
+      queryText: "and friday?",
+      carryForward: {
+        lastDomain: "projects",
+        lastFocusedProjectId: "00000000-0000-4000-8000-000000000001",
+        lastFocusedProjectType: "commercial",
+        lastMentionedPersonId: null,
+        lastThreadId: null,
+        lastEntityAmbiguous: false,
+        emittedAtEpochMs: t0.getTime() - 45_000,
+        capturedFocusWeddingId: null,
+        capturedFocusPersonId: null,
+      },
+    });
+
+    expect(ctx.retrievalLog.scopesQueried).not.toContain("operator_calendar_snapshot");
+    expect(ctx.operatorCalendarSnapshot.didRun).toBe(false);
 
     vi.useRealTimers();
     vi.restoreAllMocks();

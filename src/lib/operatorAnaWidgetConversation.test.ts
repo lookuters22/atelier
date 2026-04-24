@@ -21,6 +21,7 @@ function answerDisplay(mainText: string): OperatorStudioAssistantAssistantDispla
     studioProfileChangeProposals: [],
     offerBuilderChangeProposals: [],
     invoiceSetupChangeProposals: [],
+    projectCommercialAmendmentProposals: [],
     calendarEventCreateProposals: [],
     calendarEventRescheduleProposals: [],
     escalationResolveProposals: [],

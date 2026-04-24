@@ -6,8 +6,9 @@
  * Listens for approval/draft.approved.
  *
  * 1. Atomically claim the draft (pending_approval -> approved) with tenant proof via
- *    `claim_draft_for_outbound` (drafts.thread_id -> threads.photographer_id). If 0 rows,
- *    another approval already consumed this draft — skip send (double-click safe).
+ *    `claim_draft_for_outbound` (drafts.thread_id -> threads.photographer_id). Wedding-backed
+ *    drafts also require the linked wedding not be compassion/strategic-paused at claim time.
+ *    If 0 rows, another approval already consumed this draft — skip send (double-click safe).
  * 2. Execute outbound delivery (mock / Twilio — only after claim succeeds).
  * 3. Record the sent message in the messages table.
  */
@@ -15,18 +16,48 @@ import { captureDraftLearningInput } from "../../_shared/captureDraftLearningInp
 import { sendGmailReplyForApprovedDraft } from "../../_shared/gmail/gmailOperatorSend.ts";
 import { inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  classifyClaimDraftForOutboundRpc,
+  type ClaimedDraftRow,
+} from "../../_shared/claimDraftForOutboundPause.ts";
+import { WEDDING_PAUSE_STATE_UNREADABLE } from "../../_shared/fetchWeddingPauseFlags.ts";
+import { evaluateOutboundWeddingPauseGate } from "../../_shared/outboundWeddingPauseGate.ts";
+import {
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
-type ClaimedDraft = {
-  id: string;
-  thread_id: string;
-  body: string;
-};
+type ClaimDraftStepResult =
+  | { kind: "claimed"; draft: ClaimedDraftRow }
+  | { kind: "no_row" }
+  | { kind: "blocked_wedding_paused_at_claim" }
+  | { kind: "blocked_wedding_pause_state_unconfirmed_at_claim" };
 
 export const outboundFunction = inngest.createFunction(
   { id: "outbound-worker", name: "Outbound Worker — Send & Record" },
   { event: "approval/draft.approved" },
   async ({ event, step }) => {
     const { draft_id, photographer_id, edited_body } = event.data;
+
+    const pauseGate = await step.run("outbound-wedding-pause-gate", async () =>
+      evaluateOutboundWeddingPauseGate(supabaseAdmin, {
+        draft_id,
+        photographer_id,
+        inngest_function_id: "outbound-worker",
+      }),
+    );
+
+    if (!pauseGate.proceed) {
+      return {
+        status:
+          pauseGate.skip_reason === WEDDING_AUTOMATION_PAUSED_SKIP_REASON
+            ? ("skipped_wedding_automation_paused" as const)
+            : ("skipped_wedding_pause_state_unconfirmed" as const),
+        draft_id,
+        wedding_id: pauseGate.wedding_id,
+        skip_reason: pauseGate.skip_reason,
+      };
+    }
 
     const approvalEditLearning = await step.run("load-approval-edit-learning-context", async () => {
       const eb = typeof edited_body === "string" ? edited_body.trim() : "";
@@ -52,22 +83,57 @@ export const outboundFunction = inngest.createFunction(
       };
     });
 
-    const claimed = await step.run("claim-draft-atomic", async () => {
+    const claimed = await step.run("claim-draft-atomic", async (): Promise<ClaimDraftStepResult> => {
       const { data, error } = await supabaseAdmin.rpc("claim_draft_for_outbound", {
         p_draft_id: draft_id,
         p_photographer_id: photographer_id,
         p_edited_body: edited_body ?? null,
       });
 
-      if (error) {
-        throw new Error(`claim_draft_for_outbound: ${error.message}`);
+      const classified = classifyClaimDraftForOutboundRpc({ data, error });
+      if (classified.kind === "rpc_error") {
+        throw new Error(`claim_draft_for_outbound: ${classified.message}`);
       }
-
-      const rows = (data ?? []) as ClaimedDraft[];
-      return rows[0] ?? null;
+      return classified;
     });
 
-    if (!claimed) {
+    if (claimed.kind === "blocked_wedding_paused_at_claim") {
+      logAutomationPauseObservation({
+        observation_type: "outbound_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "outbound-worker",
+        wedding_id: pauseGate.wedding_id,
+        photographer_id,
+        draft_id,
+        detail: "pause_enforced_at_claim_draft_for_outbound_after_gate",
+      });
+      return {
+        status: "skipped_wedding_paused_at_claim" as const,
+        draft_id,
+        wedding_id: pauseGate.wedding_id,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+      };
+    }
+
+    if (claimed.kind === "blocked_wedding_pause_state_unconfirmed_at_claim") {
+      logAutomationPauseObservation({
+        observation_type: "outbound_worker_skipped",
+        skip_reason: WEDDING_PAUSE_STATE_UNREADABLE,
+        inngest_function_id: "outbound-worker",
+        wedding_id: pauseGate.wedding_id,
+        photographer_id,
+        draft_id,
+        detail: "wedding_pause_state_unconfirmed_at_claim_draft_for_outbound_after_gate",
+      });
+      return {
+        status: "skipped_wedding_pause_state_unconfirmed_at_claim" as const,
+        draft_id,
+        wedding_id: pauseGate.wedding_id,
+        skip_reason: WEDDING_PAUSE_STATE_UNREADABLE,
+      };
+    }
+
+    if (claimed.kind === "no_row") {
       console.log(
         `[outbound] Skipping send for draft ${draft_id}: no row claimed (already approved, wrong tenant, or not pending).`,
       );
@@ -78,7 +144,7 @@ export const outboundFunction = inngest.createFunction(
       };
     }
 
-    const draft: ClaimedDraft = claimed;
+    const draft: ClaimedDraftRow = claimed.draft;
 
     if (approvalEditLearning) {
       await step.run("capture-draft-approval-edit-learning", async () => {

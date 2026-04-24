@@ -13,6 +13,11 @@ import {
   truncateProjectManagerTriggeredBy,
 } from "../../_shared/projectManagerA5Budget.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 type TimelineAnalysis = {
   sunsetTime: string;
@@ -42,7 +47,9 @@ export const projectManagerFunction = inngest.createFunction(
     const wedding = await step.run("fetch-wedding", async () => {
       const { data, error } = await supabaseAdmin
         .from("weddings")
-        .select("id, photographer_id, couple_names, wedding_date, location")
+        .select(
+          "id, photographer_id, couple_names, wedding_date, location, compassion_pause, strategic_pause",
+        )
         .eq("id", wedding_id)
         .eq("photographer_id", photographer_id)
         .single();
@@ -57,8 +64,25 @@ export const projectManagerFunction = inngest.createFunction(
         couple_names: string;
         wedding_date: string;
         location: string;
+        compassion_pause: boolean;
+        strategic_pause: boolean;
       };
     });
+
+    if (isWeddingAutomationPaused(wedding)) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "project-manager-worker",
+        wedding_id,
+        photographer_id,
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+      };
+    }
 
     const analysis = await step.run("analyze-timeline", () => {
       return checkSunsetAndTimeline(wedding.wedding_date, wedding.location);

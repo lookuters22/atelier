@@ -17,6 +17,11 @@ import {
 } from "../../_shared/logisticsA5Budget.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
 import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
+import {
   estimateTravelCosts,
   type TravelToolParams,
 } from "../../_shared/tools/travel.ts";
@@ -97,13 +102,22 @@ export const logisticsFunction = inngest.createFunction(
     const context = await step.run("fetch-wedding-context", async () => {
       const { data: wedding, error: weddingErr } = await supabaseAdmin
         .from("weddings")
-        .select("id, photographer_id, location")
+        .select("id, photographer_id, location, compassion_pause, strategic_pause")
         .eq("id", wedding_id)
         .eq("photographer_id", photographer_id)
         .single();
 
       if (weddingErr || !wedding) {
         throw new Error(`Wedding not found: ${weddingErr?.message ?? wedding_id}`);
+      }
+
+      if (isWeddingAutomationPaused(wedding)) {
+        return {
+          photographerId: wedding.photographer_id as string,
+          location: wedding.location as string,
+          threadId: null as string | null,
+          automationPaused: true as const,
+        };
       }
 
       const { data: threads } = await supabaseAdmin
@@ -123,8 +137,24 @@ export const logisticsFunction = inngest.createFunction(
         photographerId: wedding.photographer_id as string,
         location: wedding.location as string,
         threadId,
+        automationPaused: false as const,
       };
     });
+
+    if (context.automationPaused) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "logistics-worker",
+        wedding_id,
+        photographer_id,
+      });
+      return {
+        status: "skipped_wedding_automation_paused" as const,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        wedding_id,
+      };
+    }
 
     // ── Agentic travel cost research ─────────────────────────────
     const rawFacts = await step.run("research-travel-costs", async () => {

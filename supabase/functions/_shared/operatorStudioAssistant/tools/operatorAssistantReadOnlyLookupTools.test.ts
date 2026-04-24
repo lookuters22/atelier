@@ -15,12 +15,16 @@ import { IDLE_OPERATOR_ANA_TRIAGE } from "../../../../../src/lib/operatorAnaTria
 import { IDLE_OPERATOR_QUERY_ENTITY_RESOLUTION } from "../../context/resolveOperatorQueryEntitiesFromIndex.ts";
 import { deriveAssistantPlaybookCoverageSummary } from "../../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
 import { getAssistantAppCatalogForContext } from "../../../../../src/lib/operatorAssistantAppCatalog.ts";
+import type { OperatorAnaCarryForwardForLlm } from "../../../../../src/types/operatorAnaCarryForward.types.ts";
 import {
   bulkTriageSpecialistToolPayload,
+  effectiveOperatorMemoryFocus,
   executeOperatorReadOnlyLookupTool,
   investigationSpecialistToolPayload,
   MAX_PROJECT_DETAIL_STORY_NOTES_CHARS,
   maxOperatorLookupToolCallsPerTurn,
+  MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD,
+  MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC,
   OPERATOR_READ_ONLY_LOOKUP_TOOLS,
   projectDetailsPayloadFromFocusedFacts,
 } from "./operatorAssistantReadOnlyLookupTools.ts";
@@ -92,6 +96,73 @@ function minimalCtx(): AssistantContext {
   };
 }
 
+function carryForwardWithProject(projectId: string): OperatorAnaCarryForwardForLlm {
+  return {
+    lastDomain: "projects",
+    lastFocusedProjectId: projectId,
+    lastFocusedProjectType: "wedding",
+    lastMentionedPersonId: null,
+    lastThreadId: null,
+    lastEntityAmbiguous: false,
+    ageSeconds: 2,
+    advisoryHint: { likelyFollowUp: true, reason: null, confidence: "high" },
+  };
+}
+
+/** Captures `wedding_id` passed to `authorized_case_exceptions` query; returns empty rows. */
+function supabaseMockPlaybookRulesWithExceptionCapture(exceptionWeddingIdSeen: { current: string | null }) {
+  return {
+    from: (table: string) => {
+      if (table === "playbook_rules") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  order: () =>
+                    Promise.resolve({
+                      data: [
+                        {
+                          id: "pr-1",
+                          action_key: "travel_policy",
+                          topic: "travel",
+                          decision_mode: "ask_first",
+                          scope: "global",
+                          channel: "email",
+                          instruction: "Discuss travel stipends for destination jobs.",
+                          source_type: "manual",
+                          confidence_label: null,
+                          is_active: true,
+                        },
+                      ],
+                      error: null,
+                    }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "authorized_case_exceptions") {
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = (col: string, val: string) => {
+          if (col === "wedding_id") exceptionWeddingIdSeen.current = val;
+          return chain;
+        };
+        chain.lte = () => chain;
+        chain.or = () => chain;
+        chain.is = () => chain;
+        chain.order = () => chain;
+        chain.then = (onFulfilled: (v: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(onFulfilled);
+        return chain;
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+  } as never;
+}
+
 describe("maxOperatorLookupToolCallsPerTurn / bulkTriageSpecialistToolPayload (S6)", () => {
   it("uses bulk triage cap when bulk triage focus is set", () => {
     const ctx: AssistantContext = {
@@ -134,6 +205,26 @@ describe("maxOperatorLookupToolCallsPerTurn / investigationSpecialistToolPayload
   });
 });
 
+describe("read-only lookup tool query minimums (schema matches executor)", () => {
+  function queryDescription(toolName: string): string {
+    const t = OPERATOR_READ_ONLY_LOOKUP_TOOLS.find((x) => x.function.name === toolName)!;
+    const props = t.function.parameters.properties as Record<string, { description?: string }> | undefined;
+    return props?.query?.description ?? "";
+  }
+
+  it("keyword tools document min 3 in the query parameter schema", () => {
+    for (const name of ["operator_lookup_threads", "operator_lookup_playbook_rules", "operator_lookup_memories"]) {
+      expect(queryDescription(name)).toMatch(new RegExp(`min\\s+${MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD}\\s+characters`, "i"));
+    }
+  });
+
+  it("semantic / resolver tools document min 4 in the query parameter schema", () => {
+    for (const name of ["operator_lookup_projects", "operator_lookup_corpus", "operator_lookup_knowledge"]) {
+      expect(queryDescription(name)).toMatch(new RegExp(`min\\s+${MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC}\\s+characters`, "i"));
+    }
+  });
+});
+
 describe("executeOperatorReadOnlyLookupTool", () => {
   it("exposes operator_lookup_thread_messages and operator_lookup_draft in the tool list", () => {
     expect(TOOL_NAMES).toContain("operator_lookup_thread_messages");
@@ -143,7 +234,10 @@ describe("executeOperatorReadOnlyLookupTool", () => {
     expect(TOOL_NAMES).toContain("operator_lookup_offer_builder");
     expect(TOOL_NAMES).toContain("operator_lookup_invoice_setup");
     expect(TOOL_NAMES).toContain("operator_lookup_corpus");
-    expect(TOOL_NAMES.length).toBe(11);
+    expect(TOOL_NAMES).toContain("operator_lookup_memories");
+    expect(TOOL_NAMES).toContain("operator_lookup_playbook_rules");
+    expect(TOOL_NAMES).toContain("operator_lookup_knowledge");
+    expect(TOOL_NAMES.length).toBe(14);
   });
 
   it("operator_lookup_corpus rejects very short query", async () => {
@@ -154,8 +248,35 @@ describe("executeOperatorReadOnlyLookupTool", () => {
       "operator_lookup_corpus",
       JSON.stringify({ query: "ab" }),
     );
-    const j = JSON.parse(raw) as { error?: string };
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
     expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC);
+  });
+
+  it("operator_lookup_threads rejects query shorter than keyword minimum", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_threads",
+      JSON.stringify({ query: "ab" }),
+    );
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
+    expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD);
+  });
+
+  it("operator_lookup_projects rejects query below semantic minimum", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_projects",
+      JSON.stringify({ query: "abc" }),
+    );
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
+    expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC);
   });
 
   it("operator_lookup_corpus returns slim payload on stub supabase (empty hits)", async () => {
@@ -314,6 +435,22 @@ describe("executeOperatorReadOnlyLookupTool", () => {
     expect(j.result.weddingSignal).toBe("ambiguous");
     const types = j.result.weddingCandidates.map((c) => c.project_type).sort();
     expect(types).toEqual(["commercial", "wedding"]);
+  });
+
+  it("operator_lookup_projects rejects a bare project UUID (resolver/detail boundary)", async () => {
+    const uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_projects",
+      JSON.stringify({ query: uuid }),
+    );
+    const j = JSON.parse(raw) as { tool: string; error: string; code: string; note: string };
+    expect(j.tool).toBe("operator_lookup_projects");
+    expect(j.error).toBe("invalid_arguments");
+    expect(j.code).toBe("uuid_not_allowed");
+    expect(j.note).toMatch(/operator_lookup_project_details/);
   });
 
   it("operator_lookup_inquiry_counts reuses inquiry snapshot helper shape", async () => {
@@ -949,6 +1086,263 @@ describe("executeOperatorReadOnlyLookupTool — operator_lookup_escalation", () 
     expect(j.tool).toBe("operator_lookup_offer_builder");
     expect(j.result.displayName).toBe("Destination pack");
     expect(j.result.detailedSummary).toMatch(/Elite/);
+  });
+
+  it("operator_lookup_playbook_rules rejects short query", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_playbook_rules",
+      JSON.stringify({ query: "ab" }),
+    );
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
+    expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD);
+  });
+
+  it("operator_lookup_playbook_rules returns bounded effective rules (tenant mock)", async () => {
+    const supabase = {
+      from: (table: string) => {
+        if (table === "playbook_rules") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  order: () => ({
+                    order: () =>
+                      Promise.resolve({
+                        data: [
+                          {
+                            id: "pr-1",
+                            action_key: "travel_policy",
+                            topic: "travel",
+                            decision_mode: "ask_first",
+                            scope: "global",
+                            channel: "email",
+                            instruction: "Discuss travel stipends for destination jobs.",
+                            source_type: "manual",
+                            confidence_label: null,
+                            is_active: true,
+                          },
+                        ],
+                        error: null,
+                      }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      { ...minimalCtx(), focusedWeddingId: null },
+      "operator_lookup_playbook_rules",
+      JSON.stringify({ query: "travel destination" }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      result: { rules: Array<{ action_key: string }>; totalEffectiveRules: number; semanticsNote: string };
+    };
+    expect(j.tool).toBe("operator_lookup_playbook_rules");
+    expect(j.result.rules.length).toBeGreaterThan(0);
+    expect(j.result.rules[0]!.action_key).toBe("travel_policy");
+    expect(j.result.totalEffectiveRules).toBe(1);
+    expect(j.result.semanticsNote).toMatch(/authoritative|Keyword-ranked|memory/i);
+    expect(j.result.caseExceptionScopeWeddingId).toBeNull();
+  });
+
+  it("operator_lookup_playbook_rules uses carry-forward project id for case exception scope when UI focus is null", async () => {
+    const cfPid = "cccccccc-cccc-4ccc-cccc-cccccccccccc";
+    const seen = { current: null as string | null };
+    const supabase = supabaseMockPlaybookRulesWithExceptionCapture(seen);
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      {
+        ...minimalCtx(),
+        focusedWeddingId: null,
+        carryForward: carryForwardWithProject(cfPid),
+      },
+      "operator_lookup_playbook_rules",
+      JSON.stringify({ query: "travel" }),
+    );
+    const j = JSON.parse(raw) as { tool: string; result: { caseExceptionScopeWeddingId: string | null } };
+    expect(j.tool).toBe("operator_lookup_playbook_rules");
+    expect(seen.current).toBe(cfPid);
+    expect(j.result.caseExceptionScopeWeddingId).toBe(cfPid);
+  });
+
+  it("operator_lookup_knowledge rejects short query", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_knowledge",
+      JSON.stringify({ query: "ab" }),
+    );
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
+    expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_SEMANTIC);
+  });
+
+  it("operator_lookup_playbook_rules prefers UI focusedWeddingId over carry-forward for case exception scope", async () => {
+    const uiFocus = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const cfPid = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
+    const seen = { current: null as string | null };
+    const supabase = supabaseMockPlaybookRulesWithExceptionCapture(seen);
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      {
+        ...minimalCtx(),
+        focusedWeddingId: uiFocus,
+        carryForward: carryForwardWithProject(cfPid),
+      },
+      "operator_lookup_playbook_rules",
+      JSON.stringify({ query: "travel" }),
+    );
+    const j = JSON.parse(raw) as { tool: string; result: { caseExceptionScopeWeddingId: string | null } };
+    expect(j.tool).toBe("operator_lookup_playbook_rules");
+    expect(seen.current).toBe(uiFocus);
+    expect(j.result.caseExceptionScopeWeddingId).toBe(uiFocus);
+  });
+
+  it("operator_lookup_memories rejects short query", async () => {
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      minimalCtx(),
+      "operator_lookup_memories",
+      JSON.stringify({ query: "ab" }),
+    );
+    const j = JSON.parse(raw) as { error?: string; minChars?: number };
+    expect(j.error).toBe("query_too_short");
+    expect(j.minChars).toBe(MIN_OPERATOR_LOOKUP_QUERY_CHARS_KEYWORD);
+  });
+
+  it("operator_lookup_memories requires project focus when scope=project", async () => {
+    const ctx: AssistantContext = {
+      ...minimalCtx(),
+      focusedWeddingId: null,
+      carryForward: null,
+    };
+    const raw = await executeOperatorReadOnlyLookupTool(
+      {} as never,
+      "p",
+      ctx,
+      "operator_lookup_memories",
+      JSON.stringify({ query: "turnaround", scope: "project" }),
+    );
+    expect((JSON.parse(raw) as { error?: string }).error).toBe("missing_project_focus");
+  });
+
+  it("operator_lookup_memories returns bounded rows (tenant-scoped mock)", async () => {
+    let memoriesFromCalls = 0;
+    const supabase = {
+      from: (table: string) => {
+        expect(table).toBe("memories");
+        memoriesFromCalls += 1;
+        if (memoriesFromCalls === 1) {
+          return {
+            select: () => ({
+              eq: () => ({
+                is: () => ({
+                  or: () =>
+                    Promise.resolve({
+                      data: [
+                        {
+                          id: "m-tool-1",
+                          wedding_id: null,
+                          scope: "studio",
+                          person_id: null,
+                          supersedes_memory_id: null,
+                          audience_source_tier: "internal_team",
+                          type: "note",
+                          title: "Turnaround policy",
+                          summary: "four weeks default",
+                          weddings: null,
+                        },
+                      ],
+                      error: null,
+                    }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (memoriesFromCalls === 2) {
+          return {
+            select: () => ({
+              eq: () => ({
+                in: () =>
+                  Promise.resolve({
+                    data: [
+                      {
+                        id: "m-tool-1",
+                        type: "note",
+                        title: "Turnaround policy",
+                        summary: "four weeks default",
+                        full_content: "Default turnaround is four weeks for most jobs.",
+                        audience_source_tier: "internal_team",
+                      },
+                    ],
+                    error: null,
+                  }),
+              }),
+            }),
+          };
+        }
+        return {
+          update: () => ({
+            eq: () => ({
+              in: () => Promise.resolve({ error: null }),
+            }),
+          }),
+        };
+      },
+    } as never;
+    const raw = await executeOperatorReadOnlyLookupTool(
+      supabase,
+      "photo-tool",
+      minimalCtx(),
+      "operator_lookup_memories",
+      JSON.stringify({ query: "turnaround weeks" }),
+    );
+    const j = JSON.parse(raw) as {
+      tool: string;
+      result: { memories: Array<{ id: string; scope: string; excerpt: string }>; semanticsNote: string };
+    };
+    expect(j.tool).toBe("operator_lookup_memories");
+    expect(j.result.memories).toHaveLength(1);
+    expect(j.result.memories[0]!.id).toBe("m-tool-1");
+    expect(j.result.memories[0]!.scope).toBe("studio");
+    expect(j.result.semanticsNote).toMatch(/not.*exhaustive|Bounded/i);
+  });
+
+  it("effectiveOperatorMemoryFocus uses carry-forward project id when UI focus is null", () => {
+    const ctx: AssistantContext = {
+      ...minimalCtx(),
+      focusedWeddingId: null,
+      focusedProjectSummary: null,
+      carryForward: {
+        lastDomain: "projects",
+        lastFocusedProjectId: "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
+        lastFocusedProjectType: "commercial",
+        lastMentionedPersonId: null,
+        lastThreadId: null,
+        lastEntityAmbiguous: false,
+        ageSeconds: 12,
+        advisoryHint: { likelyFollowUp: true, reason: null, confidence: "low" },
+      },
+    };
+    const f = effectiveOperatorMemoryFocus(ctx);
+    expect(f.weddingId).toBe("aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee");
+    expect(f.focusedProjectType).toBe("commercial");
   });
 
   it("operator_lookup_invoice_setup returns template fields without raw logo", async () => {

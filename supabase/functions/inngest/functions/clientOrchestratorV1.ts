@@ -274,6 +274,7 @@ export const clientOrchestratorV1Function = inngest.createFunction(
           : runDraftAttemptForClientOrchestratorV1(supabaseAdmin, {
               photographerId,
               threadId,
+              weddingId,
               proposedActions,
               verifierSuccess: verifierResult.success === true,
               orchestratorOutcome,
@@ -281,6 +282,7 @@ export const clientOrchestratorV1Function = inngest.createFunction(
               replyChannel,
               playbookRules: heavyContextLayers.playbookRules,
               audience: decisionContext.audience,
+              crmSnapshotForPause: decisionContext.crmSnapshot,
             }),
     );
 

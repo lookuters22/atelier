@@ -6,7 +6,11 @@ import {
   IDLE_ASSISTANT_STUDIO_PROFILE,
   type AssistantContext,
 } from "../../../../src/types/assistantContext.types.ts";
-import type { OperatorAnaCarryForwardData, OperatorAnaCarryForwardForLlm } from "../../../../src/types/operatorAnaCarryForward.types.ts";
+import {
+  OPERATOR_ANA_CARRY_FORWARD_DOMAINS,
+  type OperatorAnaCarryForwardData,
+  type OperatorAnaCarryForwardForLlm,
+} from "../../../../src/types/operatorAnaCarryForward.types.ts";
 import { getAssistantAppCatalogForContext } from "../../../../src/lib/operatorAssistantAppCatalog.ts";
 import { deriveAssistantPlaybookCoverageSummary } from "../../../../src/lib/deriveAssistantPlaybookCoverageSummary.ts";
 import { IDLE_ASSISTANT_OPERATOR_STATE_SUMMARY } from "../context/fetchAssistantOperatorStateSummary.ts";
@@ -21,12 +25,15 @@ import {
   buildOperatorAnaCarryForwardTelemetry,
   computeCarryForwardAdvisoryHint,
   extractCarryForwardDataFromTurn,
+  formatCarryForwardBlockForLlm,
   inferLlmHandlerUsingPointerHeuristic,
   OPERATOR_ANA_CARRY_FORWARD_MAX_AGE_SECONDS,
+  OPERATOR_ANA_DOMAIN_BY_TOOL,
   prepareCarryForwardForContext,
   pruneCarryForwardData,
   tryParseClientCarryForward,
 } from "./operatorAssistantCarryForward.ts";
+import { OPERATOR_READ_ONLY_LOOKUP_TOOLS } from "./tools/operatorAssistantReadOnlyLookupTools.ts";
 import { OPERATOR_STUDIO_ASSISTANT_SYSTEM_PROMPT } from "./completeOperatorStudioAssistantLlm.ts";
 
 const emptyCtxBase = {
@@ -97,6 +104,41 @@ function makeCtx(overrides: Partial<AssistantContext> = {}): AssistantContext {
 }
 
 describe("operatorAssistantCarryForward", () => {
+  it("extracts project id and projectType from operator_lookup_project_details tool JSON", () => {
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-444444444444";
+    const content = JSON.stringify({
+      tool: "operator_lookup_project_details",
+      result: {
+        projectId: wid,
+        projectType: "commercial",
+        stage: "booked",
+        displayTitle: "Brand Co",
+        location: "Milan",
+        weddingDate: null,
+        eventStartDate: null,
+        eventEndDate: null,
+        packageName: null,
+        packageInclusions: [],
+        contractValue: null,
+        balanceDue: null,
+        storyNotes: null,
+        people: [],
+        contactPoints: [],
+        openTaskCount: 0,
+        openEscalationCount: 0,
+        pendingApprovalDraftCount: 0,
+        note: "test",
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [
+      { name: "operator_lookup_project_details", ok: true, content },
+    ]);
+    expect(d.lastFocusedProjectId).toBe(wid);
+    expect(d.lastFocusedProjectType).toBe("commercial");
+    expect(d.lastDomain).toBe("projects");
+    expect(d.lastEntityAmbiguous).toBe(false);
+  });
+
   it("extracts project id from operator_lookup_projects tool JSON", () => {
     const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
     const content = JSON.stringify({
@@ -195,6 +237,20 @@ describe("operatorAssistantCarryForward", () => {
     expect(d.lastEntityAmbiguous).toBe(true);
   });
 
+  it("advisory: why-cue short follow-up -> likelyFollowUp true", () => {
+    const data = {
+      lastDomain: "projects" as const,
+      lastFocusedProjectId: "a0eebc99-9c0b-4ef8-8bb2-111111111111",
+      lastFocusedProjectType: "video" as const,
+      lastMentionedPersonId: null,
+      lastThreadId: null,
+      lastEntityAmbiguous: false,
+    };
+    const why = computeCarryForwardAdvisoryHint("why?", { kind: "none" }, data);
+    expect(why.likelyFollowUp).toBe(true);
+    expect(why.reason).toBe("short_cue_detected");
+  });
+
   it("advisory: short follow-up -> likelyFollowUp true; pointer data unchanged for topic / no-cue (same data)", () => {
     const data = {
       lastDomain: "projects" as const,
@@ -284,6 +340,7 @@ describe("operatorAssistantCarryForward", () => {
       { weddingId: "b0eebc99-9c0b-4ef8-8bb2-222222222222", personId: null },
     );
     expect(prune.kind).toBe("focus_changed");
+    expect(prune.kind === "focus_changed" && prune.variant).toBe("replaced_focus");
     const forLlm = prepareCarryForwardForContext(tryParseClientCarryForward(inc)!, {
       weddingId: "b0eebc99-9c0b-4ef8-8bb2-222222222222",
       personId: null,
@@ -299,6 +356,320 @@ describe("operatorAssistantCarryForward", () => {
     expect(
       prepareCarryForwardForContext(null, { weddingId: null, personId: null }, "Hello", 1_700_000_000_000),
     ).toBeNull();
+  });
+
+  it("DOMAIN_BY_TOOL covers every OPERATOR_READ_ONLY_LOOKUP_TOOLS name", () => {
+    const names = OPERATOR_READ_ONLY_LOOKUP_TOOLS.map((t) => t.function.name);
+    for (const n of names) {
+      expect(OPERATOR_ANA_DOMAIN_BY_TOOL[n], `missing domain for ${n}`).toBeDefined();
+    }
+  });
+
+  it("every DOMAIN_BY_TOOL value is a declared carry-forward domain (enum/runtime alignment)", () => {
+    const allowed = new Set<string>(OPERATOR_ANA_CARRY_FORWARD_DOMAINS);
+    for (const v of Object.values(OPERATOR_ANA_DOMAIN_BY_TOOL)) {
+      expect(allowed.has(v)).toBe(true);
+    }
+  });
+
+  it("tryParseClientCarryForward round-trips every declared lastDomain value", () => {
+    const now = 1_700_000_000_000;
+    for (const d of OPERATOR_ANA_CARRY_FORWARD_DOMAINS) {
+      const parsed = tryParseClientCarryForward({
+        lastDomain: d,
+        lastFocusedProjectId: null,
+        lastFocusedProjectType: null,
+        lastMentionedPersonId: null,
+        lastThreadId: null,
+        lastEntityAmbiguous: false,
+        emittedAtEpochMs: now,
+        capturedFocusWeddingId: null,
+        capturedFocusPersonId: null,
+      });
+      expect(parsed?.lastDomain).toBe(d);
+    }
+  });
+
+  it("prepareCarryForwardForContext: unfocus wedding weakens project ids, keeps thread, advisory focus_changed", () => {
+    const now = 1_750_000_000_000;
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const inc = {
+      lastDomain: "threads" as const,
+      lastFocusedProjectId: wid,
+      lastFocusedProjectType: "wedding" as const,
+      lastMentionedPersonId: null,
+      lastThreadId: tid,
+      lastEntityAmbiguous: false,
+      emittedAtEpochMs: now - 1_000,
+      capturedFocusWeddingId: wid,
+      capturedFocusPersonId: null,
+    };
+    const forLlm = prepareCarryForwardForContext(tryParseClientCarryForward(inc)!, { weddingId: null, personId: null }, "and the draft?", now);
+    expect(forLlm).not.toBeNull();
+    expect(forLlm!.lastFocusedProjectId).toBeNull();
+    expect(forLlm!.lastFocusedProjectType).toBeNull();
+    expect(forLlm!.lastThreadId).toBe(tid);
+    expect(forLlm!.lastDomain).toBe("threads");
+    expect(forLlm!.advisoryHint.reason).toBe("focus_changed");
+    expect(forLlm!.advisoryHint.likelyFollowUp).toBe(false);
+  });
+
+  it("pruneCarryForwardData: unfocus wedding downgrades projects-only domain when no thread anchor", () => {
+    const now = 1_750_000_000_000;
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const data: OperatorAnaCarryForwardData = {
+      lastDomain: "projects",
+      lastFocusedProjectId: wid,
+      lastFocusedProjectType: "wedding",
+      lastMentionedPersonId: null,
+      lastThreadId: null,
+      lastEntityAmbiguous: false,
+    };
+    const { data: out, prune } = pruneCarryForwardData(data, now, {
+      emittedAtEpochMs: now - 500,
+      capturedFocusWeddingId: wid,
+      capturedFocusPersonId: null,
+    }, { weddingId: null, personId: null });
+    expect(prune.kind).toBe("focus_changed");
+    expect(prune.kind === "focus_changed" && prune.variant).toBe("unfocused_wedding");
+    expect(out.lastFocusedProjectId).toBeNull();
+    expect(out.lastDomain).toBe("none");
+  });
+
+  it("pruneCarryForwardData: unfocus person clears lastMentionedPersonId only", () => {
+    const now = 1_750_000_000_000;
+    const pid = "b0eebc99-9c0b-4ef8-8bb2-222222222222";
+    const data: OperatorAnaCarryForwardData = {
+      lastDomain: "memories",
+      lastFocusedProjectId: null,
+      lastFocusedProjectType: null,
+      lastMentionedPersonId: pid,
+      lastThreadId: null,
+      lastEntityAmbiguous: false,
+    };
+    const { data: out, prune } = pruneCarryForwardData(data, now, {
+      emittedAtEpochMs: now - 500,
+      capturedFocusWeddingId: null,
+      capturedFocusPersonId: pid,
+    }, { weddingId: null, personId: null });
+    expect(prune.kind === "focus_changed" && prune.variant).toBe("unfocused_person");
+    expect(out.lastMentionedPersonId).toBeNull();
+    expect(out.lastDomain).toBe("memories");
+  });
+
+  it("pruneCarryForwardData: unchanged focus yields none", () => {
+    const now = 1_750_000_000_000;
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const data: OperatorAnaCarryForwardData = {
+      lastDomain: "projects",
+      lastFocusedProjectId: wid,
+      lastFocusedProjectType: "wedding",
+      lastMentionedPersonId: null,
+      lastThreadId: null,
+      lastEntityAmbiguous: false,
+    };
+    const { prune } = pruneCarryForwardData(data, now, {
+      emittedAtEpochMs: now - 500,
+      capturedFocusWeddingId: wid,
+      capturedFocusPersonId: null,
+    }, { weddingId: wid, personId: null });
+    expect(prune.kind).toBe("none");
+  });
+
+  it("extractCarryForward: operator_lookup_draft captures thread + wedding from tool JSON", () => {
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const content = JSON.stringify({
+      tool: "operator_lookup_draft",
+      result: {
+        didRun: true,
+        selectionNote: "ok",
+        draft: {
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          threadId: tid,
+          weddingId: wid,
+          status: "pending",
+          threadTitle: "Re: Hi",
+        },
+        evidenceNote: "x",
+        semanticsNote: "y",
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_draft", ok: true, content }]);
+    expect(d.lastThreadId).toBe(tid);
+    expect(d.lastFocusedProjectId).toBe(wid);
+    expect(d.lastDomain).toBe("threads");
+  });
+
+  it("extractCarryForward: operator_lookup_thread_queue captures thread id", () => {
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const content = JSON.stringify({
+      tool: "operator_lookup_thread_queue",
+      result: {
+        didRun: true,
+        selectionNote: "ok",
+        threadId: tid,
+        thread: { id: tid, title: "Inbox", kind: "client", weddingId: null },
+        openEscalations: [],
+        pendingApprovalDrafts: [],
+        v3ThreadWorkflow: null,
+        zenTabHints: [],
+        informationalNotes: [],
+        evidenceNote: "e",
+        semanticsNote: "s",
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_thread_queue", ok: true, content }]);
+    expect(d.lastThreadId).toBe(tid);
+    expect(d.lastDomain).toBe("threads");
+  });
+
+  it("extractCarryForward: operator_lookup_escalation captures thread + wedding", () => {
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const content = JSON.stringify({
+      tool: "operator_lookup_escalation",
+      result: {
+        didRun: true,
+        selectionNote: "ok",
+        escalation: {
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          threadId: tid,
+          weddingId: wid,
+          wedding: { coupleNames: "A & B", stage: "booked", projectType: "wedding" },
+          status: "open",
+        },
+        evidenceNote: "e",
+        semanticsNote: "s",
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_escalation", ok: true, content }]);
+    expect(d.lastThreadId).toBe(tid);
+    expect(d.lastFocusedProjectId).toBe(wid);
+    expect(d.lastFocusedProjectType).toBe("wedding");
+    expect(d.lastDomain).toBe("threads");
+  });
+
+  it("extractCarryForward: operator_lookup_corpus thread singleton captures ids", () => {
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const content = JSON.stringify({
+      tool: "operator_lookup_corpus",
+      result: {
+        didRun: true,
+        threadHits: [{ threadId: tid, title: "Hi", weddingId: wid, lastActivityAt: "2025-01-01", channel: "email", kind: "client", matchedOn: "title", snippet: null }],
+        projectHits: [],
+        playbookHits: [],
+        caseExceptionHits: [],
+        memoryHits: [],
+        offerProjectHits: [],
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_corpus", ok: true, content }]);
+    expect(d.lastThreadId).toBe(tid);
+    expect(d.lastFocusedProjectId).toBe(wid);
+    expect(d.lastDomain).toBe("threads");
+  });
+
+  it("extractCarryForward: operator_lookup_corpus project singleton captures project", () => {
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const content = JSON.stringify({
+      tool: "operator_lookup_corpus",
+      result: {
+        didRun: true,
+        threadHits: [],
+        projectHits: [
+          {
+            weddingId: wid,
+            coupleNames: "A & B",
+            location: "Como",
+            stage: "inquiry",
+            projectType: "wedding",
+            weddingDate: null,
+            matchedOn: "ilike:test",
+          },
+        ],
+        playbookHits: [],
+        caseExceptionHits: [],
+        memoryHits: [],
+        offerProjectHits: [],
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_corpus", ok: true, content }]);
+    expect(d.lastFocusedProjectId).toBe(wid);
+    expect(d.lastFocusedProjectType).toBe("wedding");
+    expect(d.lastDomain).toBe("projects");
+    expect(d.lastThreadId).toBeNull();
+  });
+
+  it("extractCarryForward: operator_lookup_corpus mixed thread + project hits does not invent singleton pointer", () => {
+    const content = JSON.stringify({
+      tool: "operator_lookup_corpus",
+      result: {
+        didRun: true,
+        threadHits: [{ threadId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", title: "T", weddingId: null, lastActivityAt: "2025-01-01", channel: "email", kind: "client", matchedOn: "title", snippet: null }],
+        projectHits: [{ weddingId: "a0eebc99-9c0b-4ef8-8bb2-111111111111", coupleNames: "A", location: "", stage: "", projectType: "wedding", weddingDate: null, matchedOn: "x" }],
+        playbookHits: [],
+        caseExceptionHits: [],
+        memoryHits: [],
+        offerProjectHits: [],
+      },
+    });
+    const d = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_corpus", ok: true, content }]);
+    expect(d.lastThreadId).toBeNull();
+    expect(d.lastFocusedProjectId).toBeNull();
+  });
+
+  it("extractCarryForward: operator_lookup_offer_builder and invoice_setup tag domain none, no project uuid", () => {
+    const offerId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const offerJson = JSON.stringify({
+      tool: "operator_lookup_offer_builder",
+      result: { offerProjectId: offerId, displayName: "Premium", updatedAt: "2025-01-01", blockTypes: [], detailedSummary: "x", note: "n" },
+    });
+    const invJson = JSON.stringify({
+      tool: "operator_lookup_invoice_setup",
+      result: { hasRow: true, legalName: "Studio", prefix: "INV" },
+    });
+    const d1 = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_offer_builder", ok: true, content: offerJson }]);
+    expect(d1.lastDomain).toBe("none");
+    expect(d1.lastFocusedProjectId).toBeNull();
+    const d2 = extractCarryForwardDataFromTurn(makeCtx(), [{ name: "operator_lookup_invoice_setup", ok: true, content: invJson }]);
+    expect(d2.lastDomain).toBe("none");
+    expect(d2.lastFocusedProjectId).toBeNull();
+  });
+
+  it("advisory: playbook domain stays pinned; invoice keyword triggers topic_change_shaped", () => {
+    const data: OperatorAnaCarryForwardData = {
+      lastDomain: "playbook",
+      lastFocusedProjectId: null,
+      lastFocusedProjectType: null,
+      lastMentionedPersonId: null,
+      lastThreadId: null,
+      lastEntityAmbiguous: false,
+    };
+    const hint = computeCarryForwardAdvisoryHint("what does our invoice template say?", { kind: "none" }, data);
+    expect(hint.likelyFollowUp).toBe(false);
+    expect(hint.reason).toBe("topic_change_shaped");
+  });
+
+  it("prepareCarryForwardForContext: short follow-up after unfocus still gets focus_changed advisory first", () => {
+    const now = 1_750_000_000_000;
+    const tid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const wid = "a0eebc99-9c0b-4ef8-8bb2-111111111111";
+    const inc = {
+      lastDomain: "threads" as const,
+      lastFocusedProjectId: wid,
+      lastFocusedProjectType: "wedding" as const,
+      lastMentionedPersonId: null,
+      lastThreadId: tid,
+      lastEntityAmbiguous: false,
+      emittedAtEpochMs: now - 1_000,
+      capturedFocusWeddingId: wid,
+      capturedFocusPersonId: null,
+    };
+    const forLlm = prepareCarryForwardForContext(tryParseClientCarryForward(inc)!, { weddingId: null, personId: null }, "when?", now);
+    expect(forLlm!.advisoryHint.reason).toBe("focus_changed");
   });
 });
 
@@ -376,6 +747,58 @@ describe("Slice 7 — telemetry (pure)", () => {
     const h = inferLlmHandlerUsingPointerHeuristic(cf, []);
     expect(h.value).toBe(false);
     expect(h.note).toBe("no_tool_outcomes");
+  });
+
+  const threadPointerCf = (): OperatorAnaCarryForwardForLlm => ({
+    lastDomain: "threads",
+    lastFocusedProjectId: null,
+    lastFocusedProjectType: null,
+    lastMentionedPersonId: null,
+    lastThreadId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    lastEntityAmbiguous: false,
+    ageSeconds: 2,
+    advisoryHint: { likelyFollowUp: null, reason: "no_cue_detected", confidence: "low" },
+  });
+
+  it("inferLlmHandlerUsingPointerHeuristic: operator_lookup_draft counts as thread follow-up with pointer", () => {
+    const h = inferLlmHandlerUsingPointerHeuristic(threadPointerCf(), [
+      { name: "operator_lookup_draft", ok: true, functionArguments: "{}" },
+    ]);
+    expect(h.value).toBe(true);
+    expect(h.note).toBe("threads_lookup_without_project_resolver_with_pointer_ids");
+  });
+
+  it("inferLlmHandlerUsingPointerHeuristic: operator_lookup_thread_queue counts as thread follow-up with pointer", () => {
+    const h = inferLlmHandlerUsingPointerHeuristic(threadPointerCf(), [
+      { name: "operator_lookup_thread_queue", ok: true, functionArguments: "{}" },
+    ]);
+    expect(h.value).toBe(true);
+    expect(h.note).toBe("threads_lookup_without_project_resolver_with_pointer_ids");
+  });
+
+  it("inferLlmHandlerUsingPointerHeuristic: operator_lookup_escalation counts as thread follow-up with pointer", () => {
+    const h = inferLlmHandlerUsingPointerHeuristic(threadPointerCf(), [
+      { name: "operator_lookup_escalation", ok: true, functionArguments: "{}" },
+    ]);
+    expect(h.value).toBe(true);
+    expect(h.note).toBe("threads_lookup_without_project_resolver_with_pointer_ids");
+  });
+});
+
+describe("formatCarryForwardBlockForLlm (thin-context honesty)", () => {
+  it("states pointers are not pre-loaded evidence", () => {
+    const md = formatCarryForwardBlockForLlm({
+      lastDomain: "threads",
+      lastFocusedProjectId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+      lastFocusedProjectType: "commercial",
+      lastMentionedPersonId: null,
+      lastThreadId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+      lastEntityAmbiguous: false,
+      ageSeconds: 3,
+      advisoryHint: { likelyFollowUp: true, reason: null, confidence: "high" },
+    });
+    expect(md).toMatch(/Pointers only/i);
+    expect(md).toMatch(/not.*pre-loaded.*evidence|pre-loaded \*\*evidence\*\*/i);
   });
 });
 

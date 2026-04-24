@@ -3,11 +3,12 @@ import type { AgentContext } from "../../../../src/types/agent.types.ts";
 import type { CrmSnapshot } from "../../../../src/types/crmSnapshot.types.ts";
 import { emptyCrmSnapshot, parsePackageInclusions } from "../../../../src/types/crmSnapshot.types.ts";
 import {
-  fetchMessageIdsWithStructuredAttachments,
+  fetchAttachmentContextBatch,
   redactMessageBodyForModelContext,
 } from "./attachmentSafetyForModelContext.ts";
 import { PERSONA_CONTEXT_RECENT_MESSAGE_LIMIT } from "./buildPersonaRawFacts.ts";
 import { fetchMemoryHeaders } from "./fetchMemoryHeaders.ts";
+import { fetchThreadReplyAudienceTier } from "./fetchThreadReplyAudienceTier.ts";
 import { fetchThreadSummary } from "./fetchThreadSummary.ts";
 import { sanitizeInboundTextForModelContext } from "./sanitizeInboundTextForModelContext.ts";
 
@@ -17,6 +18,11 @@ export type BuildAgentContextOptions = {
    * (`fetchMemoryHeaders`) and reply-mode selection. Usually supplied by `buildDecisionContext` only.
    */
   replyModeParticipantPersonIds?: string[] | null;
+  /**
+   * When set, skips `fetchThreadReplyAudienceTier` — caller combined `threads.audience_tier` with
+   * participant visibility (see `combineThreadAudienceTierWithVisibilityClass`).
+   */
+  replyThreadAudienceTierResolved?: AgentContext["replyThreadAudienceTier"];
 };
 
 function normalizeReplyModeParticipantPersonIds(ids?: string[] | null): string[] {
@@ -42,9 +48,15 @@ export async function buildAgentContext(
     options?.replyModeParticipantPersonIds,
   );
 
+  const replyThreadAudienceTier =
+    options?.replyThreadAudienceTierResolved !== undefined && options.replyThreadAudienceTierResolved !== null
+      ? options.replyThreadAudienceTierResolved
+      : await fetchThreadReplyAudienceTier(supabase, photographerId, threadId);
+
   const [memoryHeaders, threadSummary, crmSnapshot, recentMessages] = await Promise.all([
     fetchMemoryHeaders(supabase, photographerId, weddingId, {
       replyModeParticipantPersonIds,
+      replyThreadAudienceTier,
     }),
     threadId
       ? fetchThreadSummary(supabase, photographerId, threadId)
@@ -63,6 +75,7 @@ export async function buildAgentContext(
     recentMessages,
     threadSummary,
     replyModeParticipantPersonIds,
+    replyThreadAudienceTier,
     memoryHeaders,
     selectedMemories: [],
     globalKnowledge: [],
@@ -140,7 +153,7 @@ async function loadRecentMessages(
 
   const chronological = [...(rows ?? [])].reverse();
   const ids = chronological.map((m) => m.id as string).filter(Boolean);
-  const withAttachments = await fetchMessageIdsWithStructuredAttachments(
+  const { messagesWithAttachments, rollups } = await fetchAttachmentContextBatch(
     supabase,
     photographerId,
     ids,
@@ -150,7 +163,8 @@ async function loadRecentMessages(
     const id = m.id as string;
     const rawBody = String(m.body ?? "");
     const layered = redactMessageBodyForModelContext(rawBody, {
-      hasStructuredAttachments: withAttachments.has(id),
+      hasStructuredAttachments: messagesWithAttachments.has(id),
+      attachmentRollup: rollups.get(id) ?? null,
     });
     return {
       ...m,

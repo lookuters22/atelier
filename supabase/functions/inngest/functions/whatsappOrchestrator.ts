@@ -1,5 +1,11 @@
 import { CLIENT_WHATSAPP_INBOUND_V1_EVENT, inngest } from "../../_shared/inngest.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import { evaluateWhatsAppSaveDraftFreshPauseGate } from "../../_shared/inngestClientFreshPauseGates.ts";
+import {
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 import { buildAgentContext } from "../../_shared/memory/buildAgentContext.ts";
 import { sanitizeAgentContextForOrchestratorPrompt } from "../../_shared/memory/sanitizeAgentContextForOrchestratorPrompt.ts";
 import type { AgentContext } from "../../../../src/types/agent.types.ts";
@@ -362,6 +368,26 @@ export const whatsappOrchestratorFunction = inngest.createFunction(
       );
     });
 
+    if (agentContext.weddingId && isWeddingAutomationPaused(agentContext.crmSnapshot)) {
+      logAutomationPauseObservation({
+        observation_type: "inngest_worker_skipped",
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        inngest_function_id: "whatsapp-orchestrator-v2",
+        wedding_id: agentContext.weddingId,
+        thread_id: agentContext.threadId,
+        photographer_id: agentContext.photographerId,
+      });
+      return {
+        ok: true as const,
+        skipped: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        skip_reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        threadId: agentContext.threadId,
+        weddingId: agentContext.weddingId,
+        photographerId: agentContext.photographerId,
+        draftSave: { saved: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON },
+      };
+    }
+
     const orchestratorOutput = await step.run("orchestrator-reasoning-loop", async () => {
       return runOrchestratorReasoningLoop(agentContext, supabaseAdmin);
     });
@@ -376,6 +402,15 @@ export const whatsappOrchestratorFunction = inngest.createFunction(
           "[whatsappOrchestrator] save-draft-for-approval: no threadId; skipping drafts insert (unfiled thread flow not implemented yet).",
         );
         return { saved: false as const, reason: "no_thread_id" as const };
+      }
+
+      const freshGate = await evaluateWhatsAppSaveDraftFreshPauseGate(supabaseAdmin, {
+        weddingId: agentContext.weddingId,
+        photographerId: agentContext.photographerId,
+        threadId: agentContext.threadId,
+      });
+      if (!freshGate.allowDraftInsert) {
+        return { saved: false as const, reason: freshGate.skip_reason };
       }
 
       const { data, error } = await supabaseAdmin

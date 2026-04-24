@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import type { AgentContext } from "../../../../src/types/agent.types.ts";
+import type { AgentContext, ThreadAudienceTier } from "../../../../src/types/agent.types.ts";
+import { memoryAudienceAllowedForThreadTier, parseMemoryAudienceTier } from "./memoryAudienceTierPolicy.ts";
 
 /**
  * Fire-and-forget: bump `last_accessed_at` for hydrated memory rows. Does not block callers;
@@ -36,6 +37,7 @@ export async function fetchSelectedMemoriesFull(
   supabase: SupabaseClient,
   photographerId: string,
   memoryIds: string[],
+  options?: { replyThreadAudienceTier?: ThreadAudienceTier },
 ): Promise<AgentContext["selectedMemories"]> {
   const unique = [...new Set(memoryIds.filter((id) => id.length > 0))];
   if (unique.length === 0) {
@@ -44,7 +46,7 @@ export async function fetchSelectedMemoriesFull(
 
   const { data, error } = await supabase
     .from("memories")
-    .select("id, type, title, summary, full_content")
+    .select("id, type, title, summary, full_content, audience_source_tier")
     .eq("photographer_id", photographerId)
     .in("id", unique);
 
@@ -52,14 +54,21 @@ export async function fetchSelectedMemoriesFull(
     throw new Error(`fetchSelectedMemoriesFull: ${error.message}`);
   }
 
+  const threadTier: ThreadAudienceTier = options?.replyThreadAudienceTier ?? "client_visible";
+
   const byId = new Map<string, AgentContext["selectedMemories"][number]>();
   for (const r of data ?? []) {
+    const memTier = parseMemoryAudienceTier((r as { audience_source_tier?: unknown }).audience_source_tier);
+    if (!memoryAudienceAllowedForThreadTier(memTier, threadTier)) {
+      continue;
+    }
     byId.set(r.id, {
       id: r.id,
       type: r.type,
       title: r.title,
       summary: r.summary,
       full_content: r.full_content,
+      audience_source_tier: memTier,
     });
   }
 

@@ -1,5 +1,8 @@
 import type { CrmSnapshot } from "./crmSnapshot.types.ts";
 
+/** Thread / memory audience tiers for reply-side retrieval (project-type neutral). */
+export type ThreadAudienceTier = "client_visible" | "internal_team" | "operator_only";
+
 export type AgentContext = {
   photographerId: string;
   weddingId: string | null;
@@ -14,6 +17,11 @@ export type AgentContext = {
    * Empty when there is no thread or no linked participants.
    */
   replyModeParticipantPersonIds: string[];
+  /**
+   * `threads.audience_tier` when a thread is loaded; drives memory header + full-row gating for client-facing drafts.
+   * Set by `buildAgentContext`; omitted in partial test fixtures (defaults to client_visible in hydration).
+   */
+  replyThreadAudienceTier?: ThreadAudienceTier;
   memoryHeaders: Array<{
     id: string;
     /** Null = tenant-wide memory; set when row is scoped to one wedding. */
@@ -22,6 +30,8 @@ export type AgentContext = {
     person_id: string | null;
     /** Replaced-memory pointer for ranking exclusion (`memories.supersedes_memory_id` on the newer row). */
     supersedes_memory_id: string | null;
+    /** When set, limits which reply contexts may load this memory; omitted/null = client-visible (legacy). */
+    audience_source_tier?: ThreadAudienceTier | null;
     /** Production memory scope (`memories.scope`). */
     scope: "project" | "person" | "studio";
     type: string;
@@ -34,6 +44,8 @@ export type AgentContext = {
     title: string;
     summary: string;
     full_content: string;
+    /** From `memories.audience_source_tier`; used to re-filter after QA visibility overrides. */
+    audience_source_tier?: ThreadAudienceTier | null;
   }>;
   globalKnowledge: Array<Record<string, unknown>>;
 };

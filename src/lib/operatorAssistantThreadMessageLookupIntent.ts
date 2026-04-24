@@ -12,9 +12,10 @@ phone phones call calls got another other too also did does doing done
 sent send sending email emails thread threads message messages
 regarding question questions quick career student project projects
 maybe perhaps received somebody someone anybody anyone everyone
-today yesterday week recently thing things stuff idea ideas
+today yesterday tomorrow week recently thing things stuff idea ideas
 talk talks talking talked speak speaks speaking spoke chat chats chatting chatted
-messaged text texting texted`.split(/\s+/),
+messaged text texting texted
+inquiry inquiries inbound outbound`.split(/\s+/),
 );
 
 /** Max topic keywords scored against inbox rows (title + latest sender + snippet). */
@@ -65,7 +66,7 @@ export function normalizeOperatorInboxMatchText(s: string): string {
 const SENDER_PHRASE_HARD_STOP = new Set(
   `about regarding concerning on for if when where which who how why
 today yesterday tomorrow this last next week month year from by to at in
-find show search get pull email thread message messages emails inquiry
+find show search get pull email thread message messages emails inquiry inquiries inbound outbound
 the a an or but`.split(/\s+/),
 );
 

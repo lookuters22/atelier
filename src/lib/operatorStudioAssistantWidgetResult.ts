@@ -6,19 +6,30 @@ import type { AuthorizedCaseExceptionOverridePayload } from "../types/decisionCo
 import { defaultOperatorAssistantTaskDueDateUtcToday } from "./operatorAssistantTaskDueDate.ts";
 import { normalizeOfferBuilderChangeProposalsForWidget } from "./operatorAssistantOfferBuilderChangeProposalFromLlm.ts";
 import { normalizeStudioProfileChangeProposalsForWidget } from "./operatorAssistantStudioProfileChangeProposalFromLlm.ts";
-import type {
-  OperatorAssistantProposedActionAuthorizedCaseException,
-  OperatorAssistantProposedActionCalendarEventCreate,
-  OperatorAssistantProposedActionCalendarEventReschedule,
-  OperatorAssistantProposedActionEscalationResolve,
-  OperatorAssistantProposedActionInvoiceSetupChangeProposal,
-  OperatorAssistantProposedActionMemoryNote,
-  OperatorAssistantProposedActionOfferBuilderChangeProposal,
-  OperatorAssistantProposedActionPlaybookRuleCandidate,
-  OperatorAssistantProposedActionStudioProfileChangeProposal,
-  OperatorAssistantProposedActionTask,
+import {
+  isOperatorMemoryAudienceSourceTier,
+  isOperatorMemoryCaptureChannel,
+  type OperatorAssistantProposedActionAuthorizedCaseException,
+  type OperatorAssistantProposedActionCalendarEventCreate,
+  type OperatorAssistantProposedActionCalendarEventReschedule,
+  type OperatorAssistantProposedActionEscalationResolve,
+  type OperatorAssistantProposedActionInvoiceSetupChangeProposal,
+  type OperatorAssistantProposedActionProjectCommercialAmendmentProposal,
+  type OperatorAssistantProposedActionMemoryNote,
+  type OperatorAssistantProposedActionOfferBuilderChangeProposal,
+  type OperatorAssistantProposedActionPlaybookRuleCandidate,
+  type OperatorAssistantProposedActionPublicationRightsRecord,
+  type OperatorAssistantProposedActionStudioProfileChangeProposal,
+  type OperatorAssistantProposedActionTask,
 } from "../types/operatorAssistantProposedAction.types.ts";
+import {
+  isPublicationRightsEvidenceSource,
+  isPublicationRightsPermissionStatus,
+  isPublicationRightsUsageChannel,
+  type PublicationRightsUsageChannel,
+} from "../types/projectPublicationRights.types.ts";
 import { normalizeInvoiceSetupChangeProposalsForWidget } from "./operatorAssistantInvoiceSetupChangeProposalFromLlm.ts";
+import { normalizeProjectCommercialAmendmentProposalsForWidget } from "./operatorAssistantProjectCommercialAmendmentProposalFromLlm.ts";
 import { MAX_OPERATOR_MEMORY_OUTCOME_CHARS } from "./composeOperatorAssistantMemorySummary.ts";
 
 export type OperatorStudioAssistantInvokePayload = {
@@ -57,6 +68,10 @@ export type OperatorStudioAssistantAssistantDisplay =
       offerBuilderChangeProposals: OperatorAssistantProposedActionOfferBuilderChangeProposal[];
       /** Invoice PDF template (bounded fields) — confirm enqueues `invoice_setup_change_proposals` only; no live apply in widget. */
       invoiceSetupChangeProposals: OperatorAssistantProposedActionInvoiceSetupChangeProposal[];
+      /** Project commercial / scope / payment-schedule — confirm enqueues `project_commercial_amendment_proposals` only; v1 has no auto-apply. */
+      projectCommercialAmendmentProposals: OperatorAssistantProposedActionProjectCommercialAmendmentProposal[];
+      /** P13 — publication / usage / credit; confirm inserts `project_publication_rights` only (distinct from memory). */
+      publicationRightsRecordProposals: OperatorAssistantProposedActionPublicationRightsRecord[];
       /** F3 — simple `calendar_events` create; confirm inserts a row. */
       calendarEventCreateProposals: OperatorAssistantProposedActionCalendarEventCreate[];
       /** F3 — narrow reschedule; confirm updates start/end only. */
@@ -67,6 +82,14 @@ export type OperatorStudioAssistantAssistantDisplay =
 
 const OPERATOR_RIBBON_COPY =
   "Internal assistant for your workflow only. Do not paste into client-facing messages.";
+
+/** RFC-4122-style UUID (version 1–5, variant 8/9/a/b) — shared by memory scope, case exceptions, calendar, escalations. */
+const OPERATOR_ASSISTANT_SCOPE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isOperatorAssistantScopeUuid(s: string): boolean {
+  return OPERATOR_ASSISTANT_SCOPE_UUID_RE.test(s.trim());
+}
 
 function normalizedReply(reply: unknown): string {
   return typeof reply === "string" && reply.trim().length > 0
@@ -102,6 +125,10 @@ export function buildOperatorStudioAssistantAssistantDisplay(
   const studioProfileChangeProposals = normalizeStudioProfileChangeProposalsForWidget(payload.proposedActions);
   const offerBuilderChangeProposals = normalizeOfferBuilderChangeProposalsForWidget(payload.proposedActions);
   const invoiceSetupChangeProposals = normalizeInvoiceSetupChangeProposalsForWidget(payload.proposedActions);
+  const projectCommercialAmendmentProposals = normalizeProjectCommercialAmendmentProposalsForWidget(
+    payload.proposedActions,
+  );
+  const publicationRightsRecordProposals = normalizePublicationRightsRecordProposals(payload.proposedActions);
   const calendarEventCreateProposals = normalizeCalendarEventCreateProposals(payload.proposedActions);
   const calendarEventRescheduleProposals = normalizeCalendarEventRescheduleProposals(payload.proposedActions);
   const escalationResolveProposals = normalizeEscalationResolveProposals(payload.proposedActions);
@@ -118,6 +145,8 @@ export function buildOperatorStudioAssistantAssistantDisplay(
     studioProfileChangeProposals,
     offerBuilderChangeProposals,
     invoiceSetupChangeProposals,
+    projectCommercialAmendmentProposals,
+    publicationRightsRecordProposals,
     calendarEventCreateProposals,
     calendarEventRescheduleProposals,
     escalationResolveProposals,
@@ -211,17 +240,54 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
     const fullContent = (full || long).slice(0, 8000);
     let weddingId: string | null = null;
     if (typeof o.weddingId === "string" && o.weddingId.trim().length > 0) {
-      weddingId = o.weddingId.trim();
+      const w = o.weddingId.trim();
+      if (!isOperatorAssistantScopeUuid(w)) continue;
+      weddingId = w;
     }
     let personId: string | null = null;
     if (typeof o.personId === "string" && o.personId.trim().length > 0) {
-      personId = o.personId.trim();
+      const pid = o.personId.trim();
+      if (!isOperatorAssistantScopeUuid(pid)) continue;
+      personId = pid;
     }
     if (o.memoryScope === "project" && !weddingId) continue;
     if (o.memoryScope === "project" && personId) continue;
     if (o.memoryScope === "studio" && (weddingId || personId)) continue;
     if (o.memoryScope === "person" && !personId) continue;
     if (o.memoryScope === "person" && weddingId) continue;
+
+    let captureChannel: OperatorAssistantProposedActionMemoryNote["captureChannel"];
+    const ccRaw = o.captureChannel;
+    if (ccRaw != null && String(ccRaw).trim() !== "") {
+      if (typeof ccRaw !== "string") continue;
+      const cct = ccRaw.trim();
+      if (!isOperatorMemoryCaptureChannel(cct)) continue;
+      captureChannel = cct;
+    }
+
+    let captureOccurredOn: OperatorAssistantProposedActionMemoryNote["captureOccurredOn"];
+    const coRaw = o.captureOccurredOn;
+    if (coRaw != null && String(coRaw).trim() !== "") {
+      if (typeof coRaw !== "string") continue;
+      const cot = coRaw.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(cot)) continue;
+      const [yy, mm, dd] = cot.split("-").map((x) => parseInt(x, 10));
+      const dt = new Date(Date.UTC(yy, mm - 1, dd));
+      if (dt.getUTCFullYear() !== yy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) continue;
+      captureOccurredOn = cot;
+    }
+
+    if (captureOccurredOn != null && captureChannel == null) continue;
+
+    let audienceSourceTier: OperatorAssistantProposedActionMemoryNote["audienceSourceTier"];
+    const astRaw = o.audienceSourceTier;
+    if (astRaw != null && String(astRaw).trim() !== "") {
+      if (typeof astRaw !== "string") continue;
+      const ast = astRaw.trim();
+      if (!isOperatorMemoryAudienceSourceTier(ast)) continue;
+      audienceSourceTier = ast;
+    }
+
     out.push({
       kind: "memory_note",
       memoryScope: o.memoryScope,
@@ -231,16 +297,12 @@ function normalizeMemoryNoteProposals(raw: unknown): OperatorAssistantProposedAc
       fullContent,
       weddingId: o.memoryScope === "project" ? weddingId : null,
       personId: o.memoryScope === "person" ? personId : null,
+      ...(captureChannel != null ? { captureChannel } : {}),
+      ...(captureOccurredOn != null ? { captureOccurredOn } : {}),
+      ...(audienceSourceTier != null ? { audienceSourceTier } : {}),
     });
   }
   return out;
-}
-
-const CASE_EXC_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isCaseExcScopeUuid(s: string): boolean {
-  return CASE_EXC_UUID_RE.test(s.trim());
 }
 
 function normalizeAuthorizedCaseExceptionProposals(
@@ -253,7 +315,7 @@ function normalizeAuthorizedCaseExceptionProposals(
     const o = x as Record<string, unknown>;
     if (typeof o.overridesActionKey !== "string" || !o.overridesActionKey.trim()) continue;
     if (typeof o.weddingId !== "string" || !o.weddingId.trim()) continue;
-    if (!isCaseExcScopeUuid(o.weddingId)) continue;
+    if (!isOperatorAssistantScopeUuid(o.weddingId)) continue;
     if (!o.overridePayload || typeof o.overridePayload !== "object" || Array.isArray(o.overridePayload)) continue;
     const op = o.overridePayload as Record<string, unknown>;
     const hasMode =
@@ -272,13 +334,13 @@ function normalizeAuthorizedCaseExceptionProposals(
     let clientThreadId: string | null = null;
     if (typeof o.clientThreadId === "string" && o.clientThreadId.trim().length > 0) {
       const tid = o.clientThreadId.trim();
-      if (!isCaseExcScopeUuid(tid)) continue;
+      if (!isOperatorAssistantScopeUuid(tid)) continue;
       clientThreadId = tid;
     }
     let targetPlaybookRuleId: string | null = null;
     if (typeof o.targetPlaybookRuleId === "string" && o.targetPlaybookRuleId.trim().length > 0) {
       const rid = o.targetPlaybookRuleId.trim();
-      if (!isCaseExcScopeUuid(rid)) continue;
+      if (!isOperatorAssistantScopeUuid(rid)) continue;
       targetPlaybookRuleId = rid;
     }
     let effectiveUntil: string | null = null;
@@ -318,6 +380,97 @@ function normalizeAuthorizedCaseExceptionProposals(
   return out;
 }
 
+const PUB_MAX_SUMMARY = 2000;
+const PUB_MAX_ATTR = 2000;
+const PUB_MAX_EXCL = 4000;
+
+function normalizePublicationRightsRecordProposals(raw: unknown): OperatorAssistantProposedActionPublicationRightsRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OperatorAssistantProposedActionPublicationRightsRecord[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object" || (x as { kind?: string }).kind !== "publication_rights_record") continue;
+    const o = x as Record<string, unknown>;
+    const weddingIdRaw = typeof o.weddingId === "string" ? o.weddingId.trim() : "";
+    if (!isOperatorAssistantScopeUuid(weddingIdRaw)) continue;
+
+    const psRaw = typeof o.permissionStatus === "string" ? o.permissionStatus.trim() : "";
+    if (!isPublicationRightsPermissionStatus(psRaw)) continue;
+
+    const chRaw = o.permittedUsageChannels;
+    if (!Array.isArray(chRaw)) continue;
+    const channels: PublicationRightsUsageChannel[] = [];
+    const seen = new Set<string>();
+    for (const c of chRaw) {
+      if (typeof c !== "string") continue;
+      const t = c.trim();
+      if (!isPublicationRightsUsageChannel(t)) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      channels.push(t);
+    }
+    if (psRaw === "withheld_pending_client_approval" && channels.length > 0) continue;
+    if (psRaw === "permitted_narrow" && channels.length === 0) continue;
+
+    if (typeof o.attributionRequired !== "boolean") continue;
+
+    const evRaw = typeof o.evidenceSource === "string" ? o.evidenceSource.trim() : "";
+    if (!isPublicationRightsEvidenceSource(evRaw)) continue;
+
+    const summary = typeof o.operatorConfirmationSummary === "string" ? o.operatorConfirmationSummary.trim() : "";
+    if (summary.length < 8 || summary.length > PUB_MAX_SUMMARY) continue;
+
+    let personId: string | null = null;
+    const pid = typeof o.personId === "string" ? o.personId.trim() : "";
+    if (pid) {
+      if (!isOperatorAssistantScopeUuid(pid)) continue;
+      personId = pid;
+    }
+    let clientThreadId: string | null = null;
+    const tid = typeof o.clientThreadId === "string" ? o.clientThreadId.trim() : "";
+    if (tid) {
+      if (!isOperatorAssistantScopeUuid(tid)) continue;
+      clientThreadId = tid;
+    }
+
+    let attributionDetail: string | null = null;
+    if (typeof o.attributionDetail === "string" && o.attributionDetail.trim()) {
+      const a = o.attributionDetail.trim();
+      attributionDetail = a.length > PUB_MAX_ATTR ? a.slice(0, PUB_MAX_ATTR) : a;
+    }
+    let exclusionNotes: string | null = null;
+    if (typeof o.exclusionNotes === "string" && o.exclusionNotes.trim()) {
+      const e = o.exclusionNotes.trim();
+      exclusionNotes = e.length > PUB_MAX_EXCL ? e.slice(0, PUB_MAX_EXCL) : e;
+    }
+
+    let validUntil: string | null = null;
+    const vu = typeof o.validUntil === "string" ? o.validUntil.trim() : "";
+    if (vu) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(vu)) continue;
+      const [yy, mm, dd] = vu.split("-").map((n) => parseInt(n, 10));
+      const dt = new Date(Date.UTC(yy, mm - 1, dd));
+      if (dt.getUTCFullYear() !== yy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) continue;
+      validUntil = vu;
+    }
+
+    out.push({
+      kind: "publication_rights_record",
+      weddingId: weddingIdRaw,
+      personId,
+      clientThreadId,
+      permissionStatus: psRaw,
+      permittedUsageChannels: channels,
+      attributionRequired: o.attributionRequired,
+      attributionDetail,
+      exclusionNotes,
+      validUntil,
+      evidenceSource: evRaw,
+      operatorConfirmationSummary: summary,
+    });
+  }
+  return out;
+}
+
 const CAL_EVENT_TYPES = ["about_call", "timeline_call", "gallery_reveal", "other"] as const;
 
 function normalizeCalendarEventCreateProposals(raw: unknown): OperatorAssistantProposedActionCalendarEventCreate[] {
@@ -340,7 +493,7 @@ function normalizeCalendarEventCreateProposals(raw: unknown): OperatorAssistantP
     let weddingId: string | null = null;
     const wRaw = o.weddingId ?? o.wedding_id;
     if (typeof wRaw === "string" && wRaw.trim()) {
-      if (!CASE_EXC_UUID_RE.test(wRaw.trim())) continue;
+      if (!isOperatorAssistantScopeUuid(wRaw.trim())) continue;
       weddingId = wRaw.trim();
     }
     out.push({
@@ -362,7 +515,7 @@ function normalizeCalendarEventRescheduleProposals(raw: unknown): OperatorAssist
     if (!x || typeof x !== "object" || (x as { kind?: string }).kind !== "calendar_event_reschedule") continue;
     const o = x as Record<string, unknown>;
     const calendarEventIdRaw = o.calendarEventId ?? o.calendar_event_id;
-    if (typeof calendarEventIdRaw !== "string" || !CASE_EXC_UUID_RE.test(calendarEventIdRaw.trim())) continue;
+    if (typeof calendarEventIdRaw !== "string" || !isOperatorAssistantScopeUuid(calendarEventIdRaw.trim())) continue;
     const calendarEventId = calendarEventIdRaw.trim();
     const startMs = Date.parse(typeof o.startTime === "string" ? o.startTime : String(o.start_time ?? ""));
     const endMs = Date.parse(typeof o.endTime === "string" ? o.endTime : String(o.end_time ?? ""));
@@ -388,7 +541,7 @@ function normalizeEscalationResolveProposals(raw: unknown): OperatorAssistantPro
     if (!x || typeof x !== "object" || (x as { kind?: string }).kind !== "escalation_resolve") continue;
     const o = x as Record<string, unknown>;
     const escalationId = typeof o.escalationId === "string" ? o.escalationId.trim() : "";
-    if (!CASE_EXC_UUID_RE.test(escalationId)) continue;
+    if (!isOperatorAssistantScopeUuid(escalationId)) continue;
     const resolutionSummary = typeof o.resolutionSummary === "string" ? o.resolutionSummary.trim() : "";
     if (!resolutionSummary || resolutionSummary.length > ESC_RESOLVE_MAX_SUMMARY) continue;
     let photographerReplyRaw: string | null = null;

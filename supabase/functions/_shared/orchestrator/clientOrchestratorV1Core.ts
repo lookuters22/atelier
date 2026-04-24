@@ -591,6 +591,7 @@ export async function runDraftAttemptForClientOrchestratorV1(
   params: {
     photographerId: string;
     threadId: string | null;
+    weddingId?: string | null;
     proposedActions: OrchestratorProposalCandidate[];
     verifierSuccess: boolean;
     orchestratorOutcome: ClientOrchestratorV1Outcome;
@@ -598,11 +599,13 @@ export async function runDraftAttemptForClientOrchestratorV1(
     replyChannel: "email" | "web";
     playbookRules: OrchestratorHeavyContextLayers["playbookRules"];
     audience?: AttemptOrchestratorDraftParams["audience"];
+    crmSnapshotForPause?: AttemptOrchestratorDraftParams["crmSnapshotForPause"];
   },
 ): Promise<OrchestratorDraftAttemptResult> {
   return attemptOrchestratorDraft(supabase, {
     photographerId: params.photographerId,
     threadId: params.threadId,
+    weddingId: params.weddingId,
     proposedActions: params.proposedActions,
     verifierSuccess: params.verifierSuccess,
     orchestratorOutcome: params.orchestratorOutcome,
@@ -610,6 +613,7 @@ export async function runDraftAttemptForClientOrchestratorV1(
     replyChannel: params.replyChannel,
     playbookRules: params.playbookRules,
     audience: params.audience,
+    crmSnapshotForPause: params.crmSnapshotForPause,
   });
 }
 
@@ -839,6 +843,7 @@ export async function executeClientOrchestratorV1Core(
   const draftAttempt = await runDraftAttemptForClientOrchestratorV1(supabase, {
     photographerId,
     threadId,
+    weddingId,
     proposedActions,
     verifierSuccess: verifierResult.success === true,
     orchestratorOutcome,
@@ -846,6 +851,7 @@ export async function executeClientOrchestratorV1Core(
     replyChannel,
     playbookRules: heavyContextLayers.playbookRules,
     audience: decisionContext.audience,
+    crmSnapshotForPause: decisionContext.crmSnapshot,
   });
 
   /** Mirrors `clientOrchestratorV1` Inngest worker: persona rewrite + auditors before escalation artifact. */

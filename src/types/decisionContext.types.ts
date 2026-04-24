@@ -145,6 +145,8 @@ export type ThreadParticipantAudienceRow = {
   person_id: string;
   thread_id: string;
   visibility_role: string;
+  /** Structured role from DB when present — preferred over free-text heuristics. */
+  participant_role?: string;
   is_cc: boolean;
   is_recipient: boolean;
   is_sender: boolean;
@@ -192,6 +194,29 @@ export type DecisionAudienceSnapshot = {
    * `null`).
    */
   inboundSuppression?: InboundSuppressionClassification | null;
+  /**
+   * P5 / §6b — `wedding_people.is_payer` + `is_billing_contact` vs thread sender (person id only).
+   * Omitted in minimal test fixtures; production `buildDecisionContext` sets this whenever a wedding graph is loaded.
+   */
+  billingPayerWorkflow?: BillingPayerWorkflowSnapshot;
+};
+
+/**
+ * Operational billing/payer separation — ids and mismatch class only (no addresses, IBANs, or currencies).
+ */
+export type BillingPayerCounterpartyMismatchRisk =
+  | "none"
+  | "sender_may_not_be_payer"
+  | "sender_may_not_be_billing_contact"
+  | "sender_may_not_be_payer_nor_billing_contact"
+  | "split_payer_and_billing_contact_parties";
+
+export type BillingPayerWorkflowSnapshot = {
+  payerPersonIds: string[];
+  billingContactPersonIds: string[];
+  inboundSenderPersonId: string | null;
+  counterpartyMismatchRisk: BillingPayerCounterpartyMismatchRisk;
+  hasDistinctPayerAndBillingContactParties: boolean;
 };
 
 export type { InboundSuppressionClassification, InboundSuppressionReasonCode, InboundSuppressionVerdict };

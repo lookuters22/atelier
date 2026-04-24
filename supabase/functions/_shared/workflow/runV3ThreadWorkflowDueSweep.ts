@@ -3,13 +3,27 @@
  * Creates `tasks` rows and marks workflow task_created_at fields.
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  WEDDING_PAUSE_STATE_DB_ERROR,
+  WEDDING_PAUSE_STATE_UNREADABLE,
+} from "../fetchWeddingPauseFlags.ts";
 import { isThreadV3OperatorHold } from "../operator/threadV3OperatorHold.ts";
+import {
+  AGENCY_CC_LOCK_SKIP_REASON,
+  isWeddingAutomationPaused,
+  logAutomationPauseObservation,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../weddingAutomationPause.ts";
 import {
   computeV3ThreadWorkflowNextDueAt,
   mergeV3ThreadWorkflow,
 } from "./mergeV3ThreadWorkflow.ts";
+import {
+  READINESS_OVERDUE_TASK_TITLE,
+  readinessMilestoneEffective,
+} from "./v3ThreadWorkflowReadiness.ts";
 import type { V3ThreadWorkflowV1 } from "./v3ThreadWorkflowTypes.ts";
-import { parseV3ThreadWorkflowV1 } from "./v3ThreadWorkflowTypes.ts";
+import { parseV3ThreadWorkflowV1, V3_READINESS_MILESTONE_KEYS } from "./v3ThreadWorkflowTypes.ts";
 
 /**
  * When a row is due but skipped (operator hold / wedding pause), bump `next_due_at` forward so the
@@ -57,12 +71,13 @@ export type V3WorkflowSweepResult = {
   errors: string[];
 };
 
-async function isWeddingAutomationPaused(
+/** Non-null skip_reason means defer this sweep row (life-event pause or agency_cc_lock — same as pre-v1 behavior). */
+async function getWeddingSweepDeferSkipReason(
   supabase: SupabaseClient,
   weddingId: string | null,
   photographerId: string,
-): Promise<boolean> {
-  if (!weddingId) return false;
+): Promise<string | null> {
+  if (!weddingId) return null;
   const { data, error } = await supabase
     .from("weddings")
     .select("compassion_pause, strategic_pause, agency_cc_lock")
@@ -70,12 +85,29 @@ async function isWeddingAutomationPaused(
     .eq("photographer_id", photographerId)
     .maybeSingle();
 
-  if (error) throw new Error(`weddings pause check: ${error.message}`);
-  return (
-    data?.compassion_pause === true ||
-    data?.strategic_pause === true ||
-    data?.agency_cc_lock === true
-  );
+  if (error) {
+    logAutomationPauseObservation({
+      observation_type: "v3_thread_workflow_sweep_pause_read_failed",
+      skip_reason: WEDDING_PAUSE_STATE_DB_ERROR,
+      inngest_function_id: "v3-thread-workflow-due-sweep",
+      photographer_id: photographerId,
+      wedding_id: weddingId,
+    });
+    return WEDDING_PAUSE_STATE_DB_ERROR;
+  }
+  if (!data) {
+    logAutomationPauseObservation({
+      observation_type: "v3_thread_workflow_sweep_pause_read_failed",
+      skip_reason: WEDDING_PAUSE_STATE_UNREADABLE,
+      inngest_function_id: "v3-thread-workflow-due-sweep",
+      photographer_id: photographerId,
+      wedding_id: weddingId,
+    });
+    return WEDDING_PAUSE_STATE_UNREADABLE;
+  }
+  if (isWeddingAutomationPaused(data)) return WEDDING_AUTOMATION_PAUSED_SKIP_REASON;
+  if (data?.agency_cc_lock === true) return AGENCY_CC_LOCK_SKIP_REASON;
+  return null;
 }
 
 export async function runV3ThreadWorkflowDueSweep(
@@ -124,9 +156,17 @@ export async function runV3ThreadWorkflowDueSweep(
         continue;
       }
 
-      const paused = await isWeddingAutomationPaused(supabase, weddingId, photographerId);
-      if (paused) {
+      const sweepSkipReason = await getWeddingSweepDeferSkipReason(supabase, weddingId, photographerId);
+      if (sweepSkipReason) {
         result.skippedPaused += 1;
+        logAutomationPauseObservation({
+          observation_type: "v3_thread_workflow_sweep_row_deferred",
+          skip_reason: sweepSkipReason,
+          inngest_function_id: "v3-thread-workflow-due-sweep",
+          photographer_id: photographerId,
+          thread_id: threadId,
+          wedding_id: weddingId,
+        });
         await deferV3WorkflowDueRowAfterSweepSkip(
           supabase,
           photographerId,
@@ -181,6 +221,28 @@ export async function runV3ThreadWorkflowDueSweep(
         result.tasksCreated += 1;
         wf = mergeV3ThreadWorkflow(wf, {
           stalled_inquiry: { nudge_task_created_at: nowIso },
+        });
+        workflowMutated = true;
+      }
+
+      for (const milestoneKey of V3_READINESS_MILESTONE_KEYS) {
+        const eff = readinessMilestoneEffective(milestoneKey, wf, nowMs);
+        if (eff.kind !== "overdue") continue;
+        const rm = wf.readiness?.[milestoneKey];
+        if (!rm || rm.overdue_nudge_task_created_at) continue;
+        const title = READINESS_OVERDUE_TASK_TITLE[milestoneKey];
+        const { error: taskErr } = await supabase.from("tasks").insert({
+          photographer_id: photographerId,
+          wedding_id: weddingId,
+          thread_id: threadId,
+          title,
+          due_date: nowIso,
+          status: "open",
+        });
+        if (taskErr) throw new Error(`tasks insert readiness ${milestoneKey}: ${taskErr.message}`);
+        result.tasksCreated += 1;
+        wf = mergeV3ThreadWorkflow(wf, {
+          readiness: { [milestoneKey]: { overdue_nudge_task_created_at: nowIso } },
         });
         workflowMutated = true;
       }

@@ -3,16 +3,17 @@
  * No database calls. @see docs/v3/V3_OPERATOR_ANA_FOLLOW_UP_AND_CARRY_FORWARD_SLICE.md
  */
 import type { AssistantContext } from "../../../../src/types/assistantContext.types.ts";
-import type {
-  OperatorAnaAdvisoryConfidence,
-  OperatorAnaAdvisoryFollowUp,
-  OperatorAnaCarryForwardAdvisoryHint,
-  OperatorAnaCarryForwardAdvisoryReason,
-  OperatorAnaCarryForwardClientState,
-  OperatorAnaCarryForwardData,
-  OperatorAnaCarryForwardDomain,
-  OperatorAnaCarryForwardForLlm,
-  OperatorAnaCarryForwardProjectType,
+import {
+  OPERATOR_ANA_CARRY_FORWARD_DOMAINS,
+  type OperatorAnaAdvisoryConfidence,
+  type OperatorAnaAdvisoryFollowUp,
+  type OperatorAnaCarryForwardAdvisoryHint,
+  type OperatorAnaCarryForwardAdvisoryReason,
+  type OperatorAnaCarryForwardClientState,
+  type OperatorAnaCarryForwardData,
+  type OperatorAnaCarryForwardDomain,
+  type OperatorAnaCarryForwardForLlm,
+  type OperatorAnaCarryForwardProjectType,
 } from "../../../../src/types/operatorAnaCarryForward.types.ts";
 
 /**
@@ -72,16 +73,31 @@ function dataHasSignals(d: OperatorAnaCarryForwardData): boolean {
   return false;
 }
 
-const DOMAIN_BY_TOOL: Record<string, OperatorAnaCarryForwardDomain> = {
+/**
+ * Maps each read-only lookup tool to a coarse `lastDomain` tag for the carry-forward pointer.
+ * - `operator_lookup_corpus` → **none**: mixed-surface hits; see `mergeToolIntoData` for conservative singleton id capture only.
+ * - `operator_lookup_offer_builder` / `operator_lookup_invoice_setup` → **none**: offer UUID is not a CRM project id; invoice is tenant-global — no stable pointer fields in {@link OperatorAnaCarryForwardData}.
+ */
+/** Exported for contract tests — must cover every `operator_lookup_*` read-only tool name. */
+export const OPERATOR_ANA_DOMAIN_BY_TOOL: Record<string, OperatorAnaCarryForwardDomain> = {
   operator_lookup_projects: "projects",
   operator_lookup_project_details: "projects",
   operator_lookup_threads: "threads",
   operator_lookup_thread_messages: "threads",
   operator_lookup_inquiry_counts: "inquiry_counts",
+  operator_lookup_playbook_rules: "playbook",
+  operator_lookup_memories: "memories",
+  operator_lookup_knowledge: "knowledge",
+  operator_lookup_corpus: "none",
+  operator_lookup_draft: "threads",
+  operator_lookup_thread_queue: "threads",
+  operator_lookup_escalation: "threads",
+  operator_lookup_offer_builder: "none",
+  operator_lookup_invoice_setup: "none",
 };
 
 function toolDomain(name: string): OperatorAnaCarryForwardDomain {
-  return DOMAIN_BY_TOOL[name] ?? "none";
+  return OPERATOR_ANA_DOMAIN_BY_TOOL[name] ?? "none";
 }
 
 /**
@@ -122,32 +138,22 @@ function pickProjectType(v: unknown): OperatorAnaCarryForwardProjectType | null 
   return normalizeProjectType(String(v));
 }
 
+const CARRY_FORWARD_DOMAIN_SET = new Set<string>(OPERATOR_ANA_CARRY_FORWARD_DOMAINS);
+
 function parseDomain(v: unknown): OperatorAnaCarryForwardDomain {
   if (v == null) return "none";
   const s = String(v).trim();
-  const allowed: OperatorAnaCarryForwardDomain[] = [
-    "projects",
-    "threads",
-    "calendar",
-    "playbook",
-    "memories",
-    "studio_analysis",
-    "app_help",
-    "knowledge",
-    "inquiry_counts",
-    "none",
-  ];
-  return (allowed as string[]).includes(s) ? (s as OperatorAnaCarryForwardDomain) : "none";
+  return CARRY_FORWARD_DOMAIN_SET.has(s) ? (s as OperatorAnaCarryForwardDomain) : "none";
 }
 
 export type CarryForwardPruneResult =
   | { kind: "none" }
   | { kind: "age_expired" }
-  | { kind: "focus_changed" };
+  | { kind: "focus_changed"; variant: "replaced_focus" | "unfocused_wedding" | "unfocused_person" };
 
 /**
  * Prune ID fields for stale or focus-drift; never touches advisory (caller adds that).
- * Returns fresh empty data on prune, losing prior IDs by design.
+ * Full reset on age expiry or replaced focus; partial weaken when UI focus clears to null (Slice A).
  */
 export function pruneCarryForwardData(
   data: OperatorAnaCarryForwardData,
@@ -164,14 +170,32 @@ export function pruneCarryForwardData(
     currentFocus.weddingId != null &&
     options.capturedFocusWeddingId !== currentFocus.weddingId
   ) {
-    return { data: { ...EMPTY_DATA }, prune: { kind: "focus_changed" } };
+    return { data: { ...EMPTY_DATA }, prune: { kind: "focus_changed", variant: "replaced_focus" } };
   }
   if (
     options.capturedFocusPersonId != null &&
     currentFocus.personId != null &&
     options.capturedFocusPersonId !== currentFocus.personId
   ) {
-    return { data: { ...EMPTY_DATA }, prune: { kind: "focus_changed" } };
+    return { data: { ...EMPTY_DATA }, prune: { kind: "focus_changed", variant: "replaced_focus" } };
+  }
+  if (options.capturedFocusWeddingId != null && currentFocus.weddingId == null) {
+    const weakened: OperatorAnaCarryForwardData = {
+      ...data,
+      lastFocusedProjectId: null,
+      lastFocusedProjectType: null,
+    };
+    if (weakened.lastDomain === "projects") {
+      weakened.lastDomain = weakened.lastThreadId ? "threads" : "none";
+    }
+    return { data: weakened, prune: { kind: "focus_changed", variant: "unfocused_wedding" } };
+  }
+  if (options.capturedFocusPersonId != null && currentFocus.personId == null) {
+    const weakened: OperatorAnaCarryForwardData = {
+      ...data,
+      lastMentionedPersonId: null,
+    };
+    return { data: weakened, prune: { kind: "focus_changed", variant: "unfocused_person" } };
   }
   return { data: { ...data }, prune: { kind: "none" } };
 }
@@ -221,11 +245,16 @@ export function inferLlmHandlerUsingPointerHeuristic(
       }
     }
   }
+  const threadFollowUpToolNames = new Set([
+    "operator_lookup_threads",
+    "operator_lookup_thread_messages",
+    "operator_lookup_draft",
+    "operator_lookup_thread_queue",
+    "operator_lookup_escalation",
+  ]);
   if (
     !hadResolver &&
-    toolOutcomes.some(
-      (t) => t.ok && (t.name === "operator_lookup_threads" || t.name === "operator_lookup_thread_messages"),
-    )
+    toolOutcomes.some((t) => t.ok && threadFollowUpToolNames.has(t.name))
   ) {
     const hasPointerIds = !!(
       carryForward.lastFocusedProjectId || carryForward.lastMentionedPersonId || carryForward.lastThreadId
@@ -267,10 +296,11 @@ export function buildOperatorAnaCarryForwardTelemetry(
   };
 }
 
-const SHORT_CUE = /^\s*and\s|what\s+about|tell\s+me\s+more|when\s+is|where\s+is|who\s+is|when\s+are|where\s+are|\bwhen\b|\bwhere\b|\bwho\b|what\s+was\s+it|that\s+one|the\s+couple|the\s+project|\bthey\b|\bthem\b|\b(it|that)\b/i;
+const SHORT_CUE =
+  /^\s*and\s|what\s+about|tell\s+me\s+more|when\s+is|where\s+is|who\s+is|when\s+are|where\s+are|\bwhen\b|\bwhere\b|\bwho\b|\bwhy\b|what\s+was\s+it|that\s+one|the\s+couple|the\s+project|\bthey\b|\bthem\b|\b(it|that)\b/i;
 
 const TOPIC_SHIFT =
-  /new\s+project|another\s+project|different\s+project|playbook|rule|calendar|task|inquiry\s+count|app\s+help|settings|inbox|pipeline|memory|studio\s+analysis|knowledge/i;
+  /new\s+project|another\s+project|different\s+project|playbook|rule|calendar|task|inquiry\s+count|app\s+help|settings|inbox|pipeline|memory|studio\s+analysis|knowledge|escalation|draft|review|offer|invoice|profile/i;
 
 /**
  * Heuristic, advisory only — does not read or clear pointer data fields.
@@ -296,7 +326,11 @@ export function computeCarryForwardAdvisoryHint(
     return { likelyFollowUp: null, reason: "no_cue_detected", confidence: "low" };
   }
 
-  if (data.lastDomain === "projects" && TOPIC_SHIFT.test(q) && /playbook|rule|calendar|task|memory|knowledge|studio|app\s+help|inbox|pipeline/i.test(q)) {
+  if (
+    data.lastDomain === "projects" &&
+    TOPIC_SHIFT.test(q) &&
+    /playbook|rule|calendar|task|memory|knowledge|studio|app\s+help|inbox|pipeline|escalation|draft|review|offer|invoice|profile/i.test(q)
+  ) {
     return { likelyFollowUp: false, reason: "topic_change_shaped", confidence: "medium" };
   }
   if (data.lastDomain !== "none" && data.lastDomain !== "projects" && TOPIC_SHIFT.test(q)) {
@@ -430,6 +464,83 @@ function mergeToolIntoData(
     next.lastEntityAmbiguous = false;
   }
 
+  if (toolName === "operator_lookup_draft" && !toolJson.error && toolJson.result) {
+    const r = toolJson.result as Record<string, unknown>;
+    const draft = r.draft as Record<string, unknown> | undefined;
+    if (draft) {
+      const tid = draft.threadId;
+      if (typeof tid === "string" && isLikelyUuid(tid)) {
+        next.lastThreadId = tid;
+      }
+      const wid = draft.weddingId;
+      if (typeof wid === "string" && isLikelyUuid(wid)) {
+        next.lastFocusedProjectId = wid;
+      }
+    }
+  }
+
+  if (toolName === "operator_lookup_thread_queue" && !toolJson.error && toolJson.result) {
+    const r = toolJson.result as Record<string, unknown>;
+    const tid =
+      typeof r.threadId === "string" && isLikelyUuid(r.threadId)
+        ? r.threadId
+        : (() => {
+            const th = r.thread as { id?: string } | undefined;
+            return typeof th?.id === "string" && isLikelyUuid(th.id) ? th.id : null;
+          })();
+    if (tid) {
+      next.lastThreadId = tid;
+    }
+  }
+
+  if (toolName === "operator_lookup_escalation" && !toolJson.error && toolJson.result) {
+    const r = toolJson.result as Record<string, unknown>;
+    const esc = r.escalation as Record<string, unknown> | undefined;
+    if (esc) {
+      const tid = esc.threadId;
+      if (typeof tid === "string" && isLikelyUuid(tid)) {
+        next.lastThreadId = tid;
+      }
+      const wid = esc.weddingId;
+      if (typeof wid === "string" && isLikelyUuid(wid)) {
+        next.lastFocusedProjectId = wid;
+        const wMeta = esc.wedding as { projectType?: string } | undefined;
+        if (wMeta?.projectType != null && String(wMeta.projectType).trim()) {
+          next.lastFocusedProjectType = normalizeProjectType(String(wMeta.projectType));
+        }
+      }
+    }
+  }
+
+  if (toolName === "operator_lookup_corpus" && !toolJson.error && toolJson.result) {
+    const r = toolJson.result as Record<string, unknown>;
+    const th = r.threadHits as Array<{ threadId?: string; weddingId?: string | null }> | undefined;
+    const ph = r.projectHits as Array<{ weddingId?: string; projectType?: string }> | undefined;
+    const tn = Array.isArray(th) ? th.length : 0;
+    const pn = Array.isArray(ph) ? ph.length : 0;
+    if (tn === 1 && pn === 0) {
+      const hit = th![0]!;
+      if (typeof hit.threadId === "string" && isLikelyUuid(hit.threadId)) {
+        next.lastThreadId = hit.threadId;
+      }
+      next.lastDomain = "threads";
+      const w = hit.weddingId;
+      if (typeof w === "string" && isLikelyUuid(w)) {
+        next.lastFocusedProjectId = w;
+      }
+    } else if (pn === 1 && tn === 0) {
+      const hit = ph![0]!;
+      if (typeof hit.weddingId === "string" && isLikelyUuid(hit.weddingId)) {
+        next.lastFocusedProjectId = hit.weddingId;
+        next.lastFocusedProjectType =
+          hit.projectType != null && String(hit.projectType).trim()
+            ? normalizeProjectType(String(hit.projectType))
+            : next.lastFocusedProjectType;
+        next.lastDomain = "projects";
+      }
+    }
+  }
+
   return next;
 }
 
@@ -451,8 +562,8 @@ function mergeContextOnlySignals(
       out.lastDomain = "projects";
     } else if (e.weddingSignal === "unique" && e.uniqueWeddingId) {
       out.lastFocusedProjectId = e.uniqueWeddingId;
-      out.lastFocusedProjectType = e.queryResolvedProjectFacts
-        ? normalizeProjectType(e.queryResolvedProjectFacts.project_type)
+      out.lastFocusedProjectType = e.queryResolvedProjectSummary
+        ? normalizeProjectType(e.queryResolvedProjectSummary.projectType)
         : ctx.focusedProjectSummary?.projectId === e.uniqueWeddingId
           ? normalizeProjectType(ctx.focusedProjectSummary.projectType)
           : out.lastFocusedProjectType;
@@ -568,8 +679,8 @@ export function formatCarryForwardBlockForLlm(view: OperatorAnaCarryForwardForLl
     advisoryHint: view.advisoryHint,
   };
   return [
-    "## Carry-forward pointer (from prior turn; structured grounding, not a live lookup)",
-    "*(Read-only, round-tripped from your last turn in this client session. **advisoryHint** is a small server-computed nudge, not a gate. When `reason` is `age_expired` or `focus_changed`, id fields are **cleared on purpose** — see the system prompt. Otherwise use the ids for terse follow-ups and pronouns unless the current question names a different entity or domain.)*",
+    "## Carry-forward pointer (from prior turn; advisory for follow-up resolution)",
+    "*(Read-only, round-tripped from your last turn in this client session. **Pointers only:** these ids **steer** which **operator_lookup_*** tool or **projectId** to use — they are **not** pre-loaded **evidence** and **do not** replace Context blocks or tool JSON. **advisoryHint** is a small server-computed nudge, not a gate. When `reason` is `age_expired` or `focus_changed`, id fields were **reset on purpose** (full clear on expiry / replaced UI focus; **partial** clear when project or person focus was cleared to null) — see the system prompt. Otherwise use the ids for terse follow-ups and pronouns unless the current question names a different entity or domain.)*",
     "```json",
     JSON.stringify(payload, null, 2),
     "```",
@@ -600,7 +711,7 @@ function buildPrunedCarryForwardViewForLlm(
 /**
  * Prepares the pointer for the operator prompt. Returns `null` when there is no client round-trip
  * (first turn) or when incoming state has nothing to show after pruning (e.g. empty parse) —
- * but **age_expired** and **focus_changed** still render an explicit block with cleared ids.
+ * but **age_expired** and **focus_changed** still surface an explicit block — full id clear on age / replaced focus; **weakened** ids when UI focus clears to null (Slice A).
  */
 export function prepareCarryForwardForContext(
   incoming: OperatorAnaCarryForwardClientState | null,
@@ -628,8 +739,18 @@ export function prepareCarryForwardForContext(
     },
     currentFocus,
   );
-  if (prune.kind === "age_expired" || prune.kind === "focus_changed") {
+  if (prune.kind === "age_expired") {
     return buildPrunedCarryForwardViewForLlm(nowMs, incoming.emittedAtEpochMs, prune.kind);
+  }
+  if (prune.kind === "focus_changed" && prune.variant === "replaced_focus") {
+    return buildPrunedCarryForwardViewForLlm(nowMs, incoming.emittedAtEpochMs, "focus_changed");
+  }
+  if (prune.kind === "focus_changed" && (prune.variant === "unfocused_wedding" || prune.variant === "unfocused_person")) {
+    const advisory = computeCarryForwardAdvisoryHint(queryText, prune, data);
+    if (!dataHasSignals(data)) {
+      return buildPrunedCarryForwardViewForLlm(nowMs, incoming.emittedAtEpochMs, "focus_changed");
+    }
+    return buildCarryForwardForLlm(data, advisory, nowMs, incoming.emittedAtEpochMs);
   }
   const advisory = computeCarryForwardAdvisoryHint(queryText, prune, data);
   if (!dataHasSignals(data)) {

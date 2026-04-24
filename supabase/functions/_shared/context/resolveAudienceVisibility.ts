@@ -8,6 +8,7 @@ export type WeddingPersonRoleRow = {
   person_id: string;
   role_label: string;
   is_payer: boolean;
+  is_billing_contact: boolean;
 };
 
 /** Single-character buckets for outgoing recipient classification. */
@@ -30,16 +31,30 @@ export function classifyParticipantBucket(
   participant: ThreadParticipantAudienceRow,
   wp: WeddingPersonRoleRow | undefined,
 ): ParticipantAudienceBucket {
+  if (wp?.is_payer === true || wp?.is_billing_contact === true) {
+    return "client_family";
+  }
+
+  const pr = participant.participant_role != null ? normalize(participant.participant_role) : "";
+  if (pr === "client") {
+    return "client_family";
+  }
+  if (pr === "coordinator" || pr === "planner") {
+    return "planner";
+  }
+  if (pr === "vendor") {
+    return "vendor";
+  }
+  if (pr === "operator_internal") {
+    return "planner";
+  }
+
   const combined = [
     normalize(participant.visibility_role),
     wp ? normalize(wp.role_label) : "",
   ]
     .filter(Boolean)
     .join(" ");
-
-  if (wp?.is_payer === true) {
-    return "client_family";
-  }
 
   const plannerHints =
     /\b(planner|coordinator|wedding\s*planner|day\s*of|studio|photographer|internal|staff|manager|owner)\b/i;

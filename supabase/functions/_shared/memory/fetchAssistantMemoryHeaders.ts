@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { MemoryHeader, MemoryScope } from "./fetchMemoryHeaders.ts";
+import { parseMemoryAudienceTier } from "./memoryAudienceTierPolicy.ts";
 
 function parseScope(raw: unknown): MemoryScope {
   if (raw === "project" || raw === "person" || raw === "studio") return raw;
@@ -45,7 +46,9 @@ export async function fetchAssistantMemoryHeaders(
 
   const { data, error } = await supabase
     .from("memories")
-    .select("id, wedding_id, scope, person_id, supersedes_memory_id, type, title, summary, weddings(project_type)")
+    .select(
+      "id, wedding_id, scope, person_id, supersedes_memory_id, audience_source_tier, type, title, summary, weddings(project_type)",
+    )
     .eq("photographer_id", photographerId)
     .is("archived_at", null)
     .or(orExpr);
@@ -71,6 +74,7 @@ export async function fetchAssistantMemoryHeaders(
         r.supersedes_memory_id != null && String(r.supersedes_memory_id).trim() !== ""
           ? String(r.supersedes_memory_id).trim()
           : null,
+      audience_source_tier: parseMemoryAudienceTier(r.audience_source_tier),
       weddingProjectType,
       scope: parseScope(r.scope),
       type: String(r.type ?? ""),

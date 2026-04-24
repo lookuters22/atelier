@@ -31,7 +31,13 @@ verify_jwt = false
 [functions.insert-operator-assistant-memory]
 verify_jwt = false
 
+[functions.supersede-operator-assistant-memory]
+verify_jwt = false
+
 [functions.insert-operator-assistant-authorized-case-exception]
+verify_jwt = false
+
+[functions.insert-operator-assistant-publication-rights]
 verify_jwt = false
 
 [functions.insert-operator-assistant-calendar-event]

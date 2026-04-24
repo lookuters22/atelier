@@ -134,7 +134,7 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
             outcome: "Ceremony hard end 4pm.",
             summary: "Ceremony ends by 4pm.",
             fullContent: "Ceremony must end by 4pm local time.",
-            weddingId: "11111111-1111-1111-1111-111111111111",
+            weddingId: "11111111-1111-4111-8111-111111111111",
           },
         ],
       }),
@@ -142,7 +142,88 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     expect(o.proposedActions).toHaveLength(1);
     if (o.proposedActions[0]!.kind === "memory_note") {
       expect(o.proposedActions[0].memoryScope).toBe("project");
-      expect(o.proposedActions[0].weddingId).toBe("11111111-1111-1111-1111-111111111111");
+      expect(o.proposedActions[0].weddingId).toBe("11111111-1111-4111-8111-111111111111");
+    }
+  });
+
+  it("drops project memory_note when weddingId is not a valid scope UUID", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "ok",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "project",
+            title: "Bad id",
+            outcome: "o",
+            summary: "s",
+            fullContent: "f",
+            weddingId: "not-a-project-uuid",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(0);
+  });
+
+  it("parses realistic verbal WhatsApp capture on a project (operator thread gap)", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply:
+          "Staged advisory memory only — nothing saved until you confirm. Verbal WhatsApp agreement on add-on hours is context, not a contract amendment.",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "project",
+            title: "WhatsApp — extra coverage",
+            outcome: "Verbally agreed to +2h coverage at same package rate.",
+            summary: "They confirmed on WhatsApp yesterday.",
+            fullContent:
+              "Operator said the couple already agreed on WhatsApp to extend coverage by two hours at the existing hourly bundle rate.",
+            weddingId: "11111111-1111-4111-8111-111111111111",
+            captureChannel: "whatsapp",
+            captureOccurredOn: "2026-04-21",
+            audienceSourceTier: "client_visible",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    const m = o.proposedActions[0]!;
+    expect(m.kind).toBe("memory_note");
+    if (m.kind === "memory_note") {
+      expect(m.captureChannel).toBe("whatsapp");
+      expect(m.captureOccurredOn).toBe("2026-04-21");
+      expect(m.weddingId).toBe("11111111-1111-4111-8111-111111111111");
+    }
+    expect(o.reply).toMatch(/advisory|confirm/i);
+  });
+
+  it("parses planner-private verbal note with internal_team and video_call", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply:
+          "Saved as internal-team context only (advisory). Not a binding scope change — formal amendment may still be needed.",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "project",
+            title: "Call — planner only",
+            outcome: "Planner mentioned budget ceiling verbally.",
+            summary: "Private operational signal.",
+            fullContent: "On Zoom the planner said privately they want to cap add-ons before signing.",
+            weddingId: "22222222-2222-4222-8222-222222222222",
+            captureChannel: "video_call",
+            audienceSourceTier: "internal_team",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    const m = o.proposedActions[0]!;
+    if (m.kind === "memory_note") {
+      expect(m.captureChannel).toBe("video_call");
+      expect(m.audienceSourceTier).toBe("internal_team");
     }
   });
 
@@ -158,7 +239,7 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
             outcome: "Email only for this contact.",
             summary: "Email only",
             fullContent: "Prefers email over phone",
-            personId: "44444444-4444-4444-4444-444444444444",
+            personId: "44444444-4444-4444-8444-444444444444",
           },
         ],
       }),
@@ -166,7 +247,30 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     expect(o.proposedActions).toHaveLength(1);
     if (o.proposedActions[0]!.kind === "memory_note") {
       expect(o.proposedActions[0].memoryScope).toBe("person");
-      expect(o.proposedActions[0].personId).toBe("44444444-4444-4444-4444-444444444444");
+      expect(o.proposedActions[0].personId).toBe("44444444-4444-4444-8444-444444444444");
+    }
+  });
+
+  it("parses memory_note with audienceSourceTier", () => {
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "ok",
+        proposedActions: [
+          {
+            kind: "memory_note",
+            memoryScope: "studio",
+            title: "Studio ops",
+            outcome: "Private pricing note.",
+            summary: "Internal",
+            fullContent: "Margin discussion — not for client context.",
+            audienceSourceTier: "operator_only",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    if (o.proposedActions[0]!.kind === "memory_note") {
+      expect(o.proposedActions[0].audienceSourceTier).toBe("operator_only");
     }
   });
 
@@ -252,6 +356,83 @@ describe("parseOperatorStudioAssistantLlmResponse", () => {
     if (o.proposedActions[0]!.kind === "invoice_setup_change_proposal") {
       expect(o.proposedActions[0].template_patch.paymentTerms).toBe("Net 14 · Bank transfer");
     }
+  });
+
+  it("Ana: parses project_commercial_amendment_proposal (bounded commercial record)", () => {
+    const wid = "a0eebc99-9c0b-4ef8-8bb6-111111111111";
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "Queued structured amendment — confirm to save.",
+        proposedActions: [
+          {
+            kind: "project_commercial_amendment_proposal",
+            rationale: "Client accepted rush edit bundle on WhatsApp; record scope + price.",
+            weddingId: wid,
+            changeCategories: ["pricing", "scope"],
+            deltas: {
+              pricing: { summary: "Package +€400 for expedited edit turnaround." },
+              scope: { additions: ["10 extra edited images"], removals: [] },
+            },
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    expect(o.proposedActions[0]!.kind).toBe("project_commercial_amendment_proposal");
+    if (o.proposedActions[0]!.kind === "project_commercial_amendment_proposal") {
+      expect(o.proposedActions[0].weddingId).toBe(wid);
+      expect(o.proposedActions[0].changeCategories).toEqual(["pricing", "scope"]);
+      expect(o.proposedActions[0].deltas.pricing?.summary).toContain("€400");
+    }
+  });
+
+  it("P13: parses publication_rights_record (distinct from memory_note)", () => {
+    const wid = "c0eebc99-9c0b-4ef8-8bb6-333333333333";
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "Queued publication-rights record — operator must confirm.",
+        proposedActions: [
+          {
+            kind: "publication_rights_record",
+            weddingId: wid,
+            permissionStatus: "withheld_pending_client_approval",
+            permittedUsageChannels: [],
+            attributionRequired: false,
+            evidenceSource: "client_email_thread",
+            operatorConfirmationSummary:
+              "Do not post teasers or BTS until couple replies approving channels — from inbox triage.",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(1);
+    expect(o.proposedActions[0]!.kind).toBe("publication_rights_record");
+    if (o.proposedActions[0]!.kind === "publication_rights_record") {
+      expect(o.proposedActions[0].weddingId).toBe(wid);
+      expect(o.proposedActions[0].permissionStatus).toBe("withheld_pending_client_approval");
+      expect(o.proposedActions[0].permittedUsageChannels).toEqual([]);
+    }
+  });
+
+  it("P13: drops publication_rights_record when permission/channel shape is incoherent", () => {
+    const wid = "e0eebc99-9c0b-4ef8-8bb6-555555555555";
+    const o = parseOperatorStudioAssistantLlmResponse(
+      JSON.stringify({
+        reply: "x",
+        proposedActions: [
+          {
+            kind: "publication_rights_record",
+            weddingId: wid,
+            permissionStatus: "withheld_pending_client_approval",
+            permittedUsageChannels: ["instagram"],
+            attributionRequired: false,
+            evidenceSource: "client_email_thread",
+            operatorConfirmationSummary: "LLM contradicted itself — must not enqueue without operator fix.",
+          },
+        ],
+      }),
+    );
+    expect(o.proposedActions).toHaveLength(0);
   });
 
   it("F3: parses calendar_event_create", () => {

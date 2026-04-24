@@ -4,7 +4,7 @@ import { buildOperatorCalendarLookupPlan } from "./operatorAssistantCalendarLook
 const emptyEntity = {
   weddingSignal: "none" as const,
   uniqueWeddingId: null,
-  queryResolvedProjectFacts: null,
+  queryResolvedProjectSummary: null,
 };
 
 describe("buildOperatorCalendarLookupPlan", () => {
@@ -69,10 +69,11 @@ describe("buildOperatorCalendarLookupPlan", () => {
       entityResolution: {
         weddingSignal: "unique",
         uniqueWeddingId: "w-rita",
-        queryResolvedProjectFacts: {
-          weddingId: "w-rita",
-          couple_names: "Rita & James",
-          location: "Capri",
+        queryResolvedProjectSummary: {
+          projectId: "w-rita",
+          projectType: "wedding",
+          stage: "booked",
+          displayTitle: "Rita & James",
         },
       },
       weddingIndexRows: [{ id: "w-rita", couple_names: "Rita & James", location: "Capri" }],

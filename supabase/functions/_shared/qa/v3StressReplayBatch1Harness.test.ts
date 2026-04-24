@@ -4,6 +4,7 @@ import {
   BATCH1_DECISION_POINTS,
   evaluateDecisionPoint,
   minimalAudience,
+  type StressReplayDecisionPoint,
 } from "./v3StressReplayBatch1Harness.ts";
 
 describe("v3StressReplayBatch1Harness", () => {
@@ -49,8 +50,45 @@ describe("v3StressReplayBatch1Harness", () => {
     expect(dp).toBeDefined();
     const r = await evaluateDecisionPoint(dp!, executeToolVerifier);
     expect(r.authorityPolicyDetected).toBe(true);
+    expect(r.authorityPolicyVerifyNoteMemoryMatched).toBe(false);
     expect(r.resultClass).toBe("authority_policy_safe");
     expect(r.operatorRoutingProposed).toBe(true);
+  });
+
+  it("st1 planner timeline multi-actor: AP1 with audience threaded (signoff authority path)", async () => {
+    const dp = BATCH1_DECISION_POINTS.find((d) => d.id === "st1-planner-timeline-reduction-signer-loopin");
+    expect(dp).toBeDefined();
+    const r = await evaluateDecisionPoint(dp!, executeToolVerifier);
+    expect(r.authorityPolicyDetected).toBe(true);
+    expect(r.authorityPolicyVerifyNoteMemoryMatched).toBe(false);
+    expect(r.resultClass).toBe("authority_policy_safe");
+    expect(r.operatorRoutingProposed).toBe(true);
+  });
+
+  it("st1 payer add-on + verify_note memory: authorityPolicyVerifyNoteMemoryMatched (production detector path)", async () => {
+    const dp = BATCH1_DECISION_POINTS.find((d) => d.id === "st1-payer-addon-verify-note-memory");
+    expect(dp).toBeDefined();
+    const r = await evaluateDecisionPoint(dp!, executeToolVerifier);
+    expect(r.authorityPolicyDetected).toBe(true);
+    expect(r.authorityPolicyVerifyNoteMemoryMatched).toBe(true);
+    expect(r.resultClass).toBe("authority_policy_safe");
+  });
+
+  it("st1 payer rush fee + budget-cap memory: verify-note grounding matched", async () => {
+    const dp = BATCH1_DECISION_POINTS.find((d) => d.id === "st1-payer-rush-fee-budget-cap-memory");
+    expect(dp).toBeDefined();
+    const r = await evaluateDecisionPoint(dp!, executeToolVerifier);
+    expect(r.authorityPolicyDetected).toBe(true);
+    expect(r.authorityPolicyVerifyNoteMemoryMatched).toBe(true);
+    expect(r.resultClass).toBe("authority_policy_safe");
+  });
+
+  it("payer add-on without memory summaries: AP1 still hits but verify-note memory match is false", async () => {
+    const withMem = BATCH1_DECISION_POINTS.find((d) => d.id === "st1-payer-addon-verify-note-memory")!;
+    const withoutMem: StressReplayDecisionPoint = { ...withMem, id: "tmp-no-mem", selectedMemorySummaries: [] };
+    const r = await evaluateDecisionPoint(withoutMem, executeToolVerifier);
+    expect(r.authorityPolicyDetected).toBe(true);
+    expect(r.authorityPolicyVerifyNoteMemoryMatched).toBe(false);
   });
 
   it("st2 text dual booking without two thread_weddings: identity_entity_routing_safe", async () => {

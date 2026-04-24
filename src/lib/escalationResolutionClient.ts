@@ -8,6 +8,11 @@ export type ResolveEscalationParams = {
   escalationId: string;
   resolutionSummary: string;
   photographerReplyRaw?: string;
+  /**
+   * When true, runs `complete_bounded_near_match_thread_wedding_link` for
+   * `request_thread_wedding_link` + `bounded_matchmaker_near_match` escalations only (edge validates).
+   */
+  approveBoundedNearMatchThreadLink?: boolean;
 };
 
 export type ResolveEscalationViaDashboardResult = {
@@ -27,6 +32,9 @@ export async function resolveEscalationViaDashboard(
       escalation_id: params.escalationId,
       resolution_summary: params.resolutionSummary,
       photographer_reply_raw: params.photographerReplyRaw?.trim() || undefined,
+      ...(params.approveBoundedNearMatchThreadLink === true
+        ? { approve_bounded_near_match_thread_link: true }
+        : {}),
     },
   });
 

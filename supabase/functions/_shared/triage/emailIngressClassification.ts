@@ -14,8 +14,17 @@ import {
   getTriageQaBoundedNearMatchSyntheticConfidenceScore,
   isTriageBoundedUnresolvedEmailMatchApprovalEscalationEnabled,
   isTriageBoundedUnresolvedEmailMatchmakerEnabled,
+  isTriageDeterministicInquiryDedupV1Enabled,
   TRIAGE_QA_BOUNDED_NEAR_MATCH_SYNTHETIC_CONFIDENCE_V1_ENV,
 } from "../orchestrator/triageShadowOrchestratorClientV1Gate.ts";
+import { runDeterministicInquiryProjectDedup } from "./deterministicInquiryProjectDedup.ts";
+import { normalizeEmail } from "../utils/normalizeEmail.ts";
+import {
+  buildEmailIdentityLookupCandidates,
+  emailIdentityLookupSetsIntersect,
+  isGmailFamilyEmailNormalized,
+} from "../identity/identityEmailLookupCandidates.ts";
+import { resolveIngressIdentitySenderEmail } from "./ingressSenderEmailNormalize.ts";
 
 export type StageGroup = "new_lead" | "pre_booking" | "active" | "post_wedding";
 
@@ -55,6 +64,7 @@ export type MatchmakerStepResult = {
   matchmaker_skip_reason: string;
   bounded_unresolved_activation?: boolean;
   qa_synthetic_near_match_confidence?: number | null;
+  deterministic_inquiry_dedup_trace?: Record<string, unknown> | null;
 };
 
 export type EmailIngressIdentity = {
@@ -78,34 +88,123 @@ export function enforceStageGate(
   return FALLBACK_INTENT[group];
 }
 
+/**
+ * PostgREST `ilike` uses SQL LIKE pattern semantics (`%`, `_` wildcards). For case-insensitive
+ * *exact* email identity, escape metacharacters so only literals match (PostgreSQL default ESCAPE '\').
+ */
+export function escapeIlikeExactPattern(normalizedEmail: string): string {
+  return normalizedEmail
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+}
+
 export async function resolveDeterministicIdentity(
   supabase: SupabaseClient,
-  input: { sender: string; payloadPhotographerId: string | null },
+  input: {
+    sender: string;
+    payloadPhotographerId: string | null;
+    /** Optional `Reply-To` (raw header line). Used only when `From` classifies as no-reply. */
+    replyToForIdentity?: string | null;
+  },
 ): Promise<EmailIngressIdentity> {
   let weddingId: string | null = null;
   let photographerId: string | null = null;
   let projectStage: string | null = null;
 
-  if (input.sender) {
-    const { data: client } = await supabase
-      .from("clients")
-      .select("wedding_id")
-      .eq("email", input.sender)
-      .limit(1)
-      .maybeSingle();
+  const senderNorm = resolveIngressIdentitySenderEmail({
+    fromOrSenderRaw: input.sender,
+    replyToRaw: input.replyToForIdentity ?? null,
+  });
+  /**
+   * `clients` has no `photographer_id`; without scoping through `weddings`, the same sender email could match
+   * another tenant's row. Only resolve when `payloadPhotographerId` proves the ingress tenant.
+   */
+  if (senderNorm && input.payloadPhotographerId) {
+    const candidates = buildEmailIdentityLookupCandidates(senderNorm);
+    const merged: Array<{ wedding_id: string; weddings: { photographer_id: string; stage: string | null } }> = [];
 
-    weddingId = (client?.wedding_id as string) ?? null;
-  }
+    const results = await Promise.all(
+      candidates.map((cand) =>
+        supabase
+          .from("clients")
+          .select("wedding_id, weddings!inner(photographer_id, stage)")
+          .ilike("email", escapeIlikeExactPattern(cand))
+          .eq("weddings.photographer_id", input.payloadPhotographerId)
+          .limit(8),
+      ),
+    );
 
-  if (weddingId) {
-    const { data: wedding } = await supabase
-      .from("weddings")
-      .select("photographer_id, stage")
-      .eq("id", weddingId)
-      .single();
+    let hadError = false;
+    for (const { data: rows, error } of results) {
+      if (error) {
+        hadError = true;
+        console.error("[resolveDeterministicIdentity] tenant-scoped clients lookup failed:", error.message);
+        continue;
+      }
+      if (rows && rows.length > 0) {
+        for (const r of rows as Array<{
+          wedding_id: string;
+          weddings: { photographer_id: string; stage: string | null };
+        }>) {
+          merged.push(r);
+        }
+      }
+    }
 
-    photographerId = (wedding?.photographer_id as string) ?? null;
-    projectStage = (wedding?.stage as string) ?? null;
+    if (
+      !hadError &&
+      merged.length === 0 &&
+      isGmailFamilyEmailNormalized(senderNorm) &&
+      input.payloadPhotographerId
+    ) {
+      const pid = input.payloadPhotographerId;
+      const { data: wrows, error: wErr } = await supabase
+        .from("weddings")
+        .select("id")
+        .eq("photographer_id", pid)
+        .limit(120);
+      if (wErr) {
+        console.error("[resolveDeterministicIdentity] weddings lookup for gmail widen failed:", wErr.message);
+        hadError = true;
+      } else {
+        const wids = (wrows ?? []).map((r) => r.id as string).filter(Boolean);
+        if (wids.length > 0) {
+          const { data: crows, error: cErr } = await supabase
+            .from("clients")
+            .select("email, wedding_id, weddings!inner(photographer_id, stage)")
+            .in("wedding_id", wids)
+            .limit(600);
+          if (cErr) {
+            hadError = true;
+            console.error("[resolveDeterministicIdentity] clients widen lookup failed:", cErr.message);
+          } else {
+            for (const r of crows ?? []) {
+              const em = (r as { email?: string | null }).email;
+              if (em != null && emailIdentityLookupSetsIntersect(senderNorm, normalizeEmail(em))) {
+                merged.push(
+                  r as {
+                    wedding_id: string;
+                    weddings: { photographer_id: string; stage: string | null };
+                  },
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!hadError && merged.length > 0) {
+      const distinctWeddings = [...new Set(merged.map((r) => r.wedding_id))];
+      if (distinctWeddings.length === 1) {
+        weddingId = distinctWeddings[0]!;
+        const row = merged.find((r) => r.wedding_id === weddingId)!;
+        const emb = row.weddings;
+        photographerId = emb.photographer_id;
+        projectStage = emb.stage ?? null;
+      }
+    }
   }
 
   if (!photographerId && input.payloadPhotographerId) {
@@ -119,6 +218,8 @@ export async function runConditionalMatchmakerForEmail(
   supabase: SupabaseClient,
   input: {
     body: string;
+    subject?: string;
+    senderEmail?: string;
     identity: EmailIngressIdentity;
     stageGateIntent: TriageIntent;
     boundedUnresolvedSubsetEligible: boolean;
@@ -135,6 +236,52 @@ export async function runConditionalMatchmakerForEmail(
       matchmaker_invoked: false,
       matchmaker_skip_reason: "deterministic_client_email_match",
     };
+  }
+
+  const tenantPhotographerIdEarly = identity.photographerId ?? payloadPhotographerId;
+  if (tenantPhotographerIdEarly && isTriageDeterministicInquiryDedupV1Enabled()) {
+    const dedup = await runDeterministicInquiryProjectDedup(supabase, {
+      photographerId: tenantPhotographerIdEarly,
+      senderEmail: input.senderEmail ?? "",
+      subject: input.subject ?? "",
+      body: input.body,
+    });
+
+    if (dedup.kind === "auto") {
+      const { data: wedding } = await supabase
+        .from("weddings")
+        .select("photographer_id, stage")
+        .eq("id", dedup.weddingId)
+        .single();
+
+      return {
+        weddingId: dedup.weddingId,
+        photographerId: (wedding?.photographer_id as string) ?? identity.photographerId ?? tenantPhotographerIdEarly,
+        resolved_wedding_project_stage: (wedding?.stage as string) ?? null,
+        match: {
+          suggested_wedding_id: dedup.weddingId,
+          confidence_score: dedup.score,
+          reasoning: dedup.reasoning,
+        },
+        matchmaker_invoked: true,
+        matchmaker_skip_reason: "deterministic_inquiry_dedup_resolved",
+        deterministic_inquiry_dedup_trace: dedup.trace,
+      };
+    }
+
+    if (dedup.kind === "near_match") {
+      return {
+        weddingId: null,
+        match: {
+          suggested_wedding_id: dedup.weddingId,
+          confidence_score: dedup.score,
+          reasoning: dedup.reasoning,
+        },
+        matchmaker_invoked: true,
+        matchmaker_skip_reason: "deterministic_inquiry_dedup_near_match",
+        deterministic_inquiry_dedup_trace: dedup.trace,
+      };
+    }
   }
 
   if (stageGateIntent === "intake" && !boundedUnresolvedSubsetEligible) {
@@ -255,7 +402,14 @@ export function buildBoundedUnresolvedOutcome(input: {
     nearMatchForApproval,
   } = input;
 
-  if (!boundedUnresolvedSubsetEligible) {
+  const deterministicAuto =
+    !!matchResult.weddingId && matchResult.matchmaker_skip_reason === "deterministic_inquiry_dedup_resolved";
+  const deterministicNear = matchResult.matchmaker_skip_reason === "deterministic_inquiry_dedup_near_match";
+
+  const policyEligible =
+    deterministicAuto || boundedUnresolvedSubsetEligible || (deterministicNear && nearMatchForApproval);
+
+  if (!policyEligible) {
     return {
       gate_on: boundedUnresolvedGateOn,
       subset_eligible: false,
@@ -271,10 +425,13 @@ export function buildBoundedUnresolvedOutcome(input: {
       outcome: "skipped_matchmaker_not_invoked",
     };
   }
-  if (matchResult.matchmaker_skip_reason === "matchmaker_resolved_above_threshold") {
+  if (
+    deterministicAuto ||
+    matchResult.matchmaker_skip_reason === "matchmaker_resolved_above_threshold"
+  ) {
     return {
       gate_on: true,
-      subset_eligible: true,
+      subset_eligible: boundedUnresolvedSubsetEligible || deterministicAuto,
       activation: true,
       outcome: "resolved_above_threshold",
     };
@@ -322,6 +479,10 @@ export function buildWeddingResolutionTrace(input: {
     bounded_unresolved_activation: input.matchResult.bounded_unresolved_activation ?? false,
     final_wedding_id: input.finalWeddingId,
     bounded_unresolved_email_matchmaker: input.boundedUnresolved,
+    ...(input.matchResult.deterministic_inquiry_dedup_trace &&
+    Object.keys(input.matchResult.deterministic_inquiry_dedup_trace).length > 0
+      ? { deterministic_inquiry_dedup_v1: input.matchResult.deterministic_inquiry_dedup_trace }
+      : {}),
     ...(input.matchResult.qa_synthetic_near_match_confidence != null
       ? {
           qa_synthetic_near_match_confidence_applied:
@@ -363,14 +524,24 @@ export function deriveEmailIngressRouting(input: {
       : 0;
 
   const approvalEscalationGateOn = isTriageBoundedUnresolvedEmailMatchApprovalEscalationEnabled();
-  const nearMatchForApproval =
+  const nearMatchFromDeterministic =
     approvalEscalationGateOn &&
-    input.boundedUnresolvedSubsetEligible &&
     matchResult.matchmaker_invoked &&
+    matchResult.matchmaker_skip_reason === "deterministic_inquiry_dedup_near_match" &&
     !finalWeddingId &&
     matchCandidateId !== null &&
     matchConfidence >= BOUNDED_UNRESOLVED_MATCH_APPROVAL_ESCALATION_MIN_CONFIDENCE &&
     matchConfidence < BOUNDED_UNRESOLVED_MATCH_AUTO_RESOLVE_MIN_CONFIDENCE;
+
+  const nearMatchForApproval =
+    nearMatchFromDeterministic ||
+    (approvalEscalationGateOn &&
+      input.boundedUnresolvedSubsetEligible &&
+      matchResult.matchmaker_invoked &&
+      !finalWeddingId &&
+      matchCandidateId !== null &&
+      matchConfidence >= BOUNDED_UNRESOLVED_MATCH_APPROVAL_ESCALATION_MIN_CONFIDENCE &&
+      matchConfidence < BOUNDED_UNRESOLVED_MATCH_AUTO_RESOLVE_MIN_CONFIDENCE);
 
   const projectStageUsedForDispatch: string | null = identity.weddingId
     ? identity.projectStage
@@ -562,7 +733,13 @@ export function buildAiRoutingMetadataNonWeddingBusinessInquiry(input: {
   return out;
 }
 
-/** Use LLM intent for matchmaker gating when unlinked; preserve stage gate when a project already exists. */
+/**
+ * Use LLM intent for matchmaker gating when unlinked; preserve stage gate when a project already exists.
+ *
+ * **Cross-ingest:** `comms/email.received` passes {@link enforceStageGate} output (`intake` when unlinked) into
+ * `runConditionalMatchmakerForEmail`; Gmail post-ingest passes this helper so bounded dedup / matchmaker can run on
+ * non-intake labels. See `crossIngestParityProof.test.ts` — intentional, not drift.
+ */
 export function matchmakerStageIntentForGmailClassifier(
   llmIntent: TriageIntent,
   identity: EmailIngressIdentity,

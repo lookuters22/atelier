@@ -14,6 +14,11 @@ import { inngest } from "../../_shared/inngest.ts";
 import { isThreadV3OperatorHold } from "../../_shared/operator/threadV3OperatorHold.ts";
 import { draftPersonaResponse } from "../../_shared/persona/personaAgent.ts";
 import { supabaseAdmin } from "../../_shared/supabase.ts";
+import {
+  AGENCY_CC_LOCK_SKIP_REASON,
+  isWeddingAutomationPaused,
+  WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+} from "../../_shared/weddingAutomationPause.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -83,7 +88,9 @@ export const prepPhaseFunction = inngest.createFunction(
     const weddingRow = await step.run("fetch-wedding-date", async () => {
       const { data, error } = await supabaseAdmin
         .from("weddings")
-        .select("id, wedding_date, couple_names")
+        .select(
+          "id, wedding_date, couple_names, compassion_pause, strategic_pause, agency_cc_lock",
+        )
         .eq("id", weddingId)
         .eq("photographer_id", photographerId)
         .maybeSingle();
@@ -129,12 +136,11 @@ export const prepPhaseFunction = inngest.createFunction(
         if (!wedding) {
           return { proceed: false as const, reason: "wedding_missing" as const };
         }
-        if (
-          wedding.compassion_pause === true ||
-          wedding.strategic_pause === true ||
-          wedding.agency_cc_lock === true
-        ) {
-          return { proceed: false as const, reason: "wedding_paused" as const };
+        if (isWeddingAutomationPaused(wedding)) {
+          return { proceed: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+        }
+        if (wedding.agency_cc_lock === true) {
+          return { proceed: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
         }
         if (wedding.stage !== "booked") {
           return { proceed: false as const, reason: "stage_moved" as const };
@@ -163,6 +169,16 @@ export const prepPhaseFunction = inngest.createFunction(
 
       if (milestone?.questionnaire_sent === true) {
         return { questionnaireDrafted: false as const };
+      }
+
+      if (isWeddingAutomationPaused(coupleSource)) {
+        return {
+          questionnaireDrafted: false as const,
+          reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON,
+        };
+      }
+      if (coupleSource?.agency_cc_lock === true) {
+        return { questionnaireDrafted: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
       }
 
       const threadId = await resolveThreadForWedding(weddingId, photographerId);
@@ -231,12 +247,11 @@ export const prepPhaseFunction = inngest.createFunction(
       if (!wedding) {
         return { proceed: false as const, reason: "wedding_missing" as const };
       }
-      if (
-        wedding.compassion_pause === true ||
-        wedding.strategic_pause === true ||
-        wedding.agency_cc_lock === true
-      ) {
-        return { proceed: false as const, reason: "wedding_paused" as const };
+      if (isWeddingAutomationPaused(wedding)) {
+        return { proceed: false as const, reason: WEDDING_AUTOMATION_PAUSED_SKIP_REASON };
+      }
+      if (wedding.agency_cc_lock === true) {
+        return { proceed: false as const, reason: AGENCY_CC_LOCK_SKIP_REASON };
       }
       if (wedding.stage !== "booked") {
         return { proceed: false as const, reason: "stage_moved" as const };

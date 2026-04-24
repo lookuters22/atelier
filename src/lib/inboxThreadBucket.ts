@@ -11,12 +11,18 @@ export type InboxThreadBucketInput = {
   ai_routing_metadata: unknown;
 };
 
-const OPERATOR_REVIEW_SENDER_ROLES = new Set<string>([
+/**
+ * Pre-LLM deterministic human non-client ingress (`comms/email.received`) — always operator_review,
+ * including when the thread is linked to a project.
+ */
+export const DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES = new Set<string>([
+  "billing_or_account_followup",
   "vendor_solicitation",
   "partnership_or_collaboration",
-  "billing_or_account_followup",
   "recruiter_or_job_outreach",
 ]);
+
+const OPERATOR_REVIEW_SENDER_ROLES = DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES;
 
 function asRecord(meta: unknown): Record<string, unknown> | null {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
@@ -42,9 +48,14 @@ export function deriveInboxThreadBucket(thread: InboxThreadBucketInput): InboxTh
 
   if (disposition === "promo_automated") return "suppressed";
 
-  if (thread.weddingId) return "inquiry";
-
   const senderRole = readStringField(meta, "sender_role");
+
+  if (thread.weddingId) {
+    if (senderRole && DETERMINISTIC_INGRESS_OPERATOR_REVIEW_SENDER_ROLES.has(senderRole)) {
+      return "operator_review";
+    }
+    return "inquiry";
+  }
 
   if (senderRole === "customer_lead") return "inquiry";
 

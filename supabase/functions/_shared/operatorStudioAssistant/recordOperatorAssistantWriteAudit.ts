@@ -7,10 +7,12 @@ import type { Database, Json } from "../../../../src/types/database.types.ts";
 export type OperatorAssistantAuditOperation =
   | "task_create"
   | "memory_create"
+  | "memory_supersede"
   | "authorized_case_exception_create"
   | "calendar_event_create"
   | "calendar_event_reschedule"
-  | "playbook_rule_candidate_create";
+  | "playbook_rule_candidate_create"
+  | "publication_rights_record_create";
 
 export async function recordOperatorAssistantWriteAudit(
   supabase: SupabaseClient,
