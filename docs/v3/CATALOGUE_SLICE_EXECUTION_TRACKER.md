@@ -68,7 +68,7 @@ After a worker finishes:
 | R3 | legacy tenant-scope hardening | review-carry | partial | hotspots identified from cleanup audit | Needs exact file-by-file live re-check before prompting. |
 | R4 | legacy verifier/tool-bypass hardening | review-carry | partial | hotspots identified from cleanup audit | Needs exact path-level prompt scoping. |
 | R5 | sleeper wake re-check hardening | review-carry | partial | hotspots identified from cleanup audit | Must be narrowed to each sleeper path before worker handoff. |
-| R6 | `C3` | review-carry | ready | confirmed against live code â€” `authPhotographer.ts` still creates a new anon Supabase client on every helper call | Safe next slice: narrow shared auth helper + unit test only; backend-only and no schema/UI overlap. |
+| R6 | `C3` | review-carry | shipped | shared auth helper now reuses one anon client, calls `auth.getUser(jwt)`, and targeted test lane passes (5 tests) | Landed on integration branch at `80fbfc5` (`fix(C3): reuse auth supabase client`). |
 
 ## Next-up queue
 
