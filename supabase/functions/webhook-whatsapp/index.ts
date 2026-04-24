@@ -15,6 +15,12 @@ import {
 import { supabaseAdmin } from "../_shared/supabase.ts";
 import { tryIngestFirstComplianceAttachmentFromOperatorWhatsApp } from "../_shared/orchestrator/complianceAssetWhatsAppIngest.ts";
 import { verifyTwilioWebhookSignature } from "../_shared/twilio.ts";
+import {
+  isFormUrlEncodedContentType,
+  maskIdentifierForLog,
+  maskPhoneForLog,
+  resolveTwilioVerifySkipMode,
+} from "../_shared/webhookWhatsappRuntime.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -158,24 +164,30 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const twilioSkip = resolveTwilioVerifySkipMode();
+    if (twilioSkip.mode === "skip_forbidden") {
+      console.warn(
+        "[webhook-whatsapp] TWILIO_WEBHOOK_VERIFY_SKIP is set in a non-local runtime; refusing to start",
+      );
+      return respond({ error: "twilio_verify_skip_forbidden_in_deployed_runtime" }, 500);
+    }
+
+    const shouldSkipSignatureVerify = twilioSkip.mode === "skip_allowed";
+
     const rawBody = await req.text();
     const contentType = req.headers.get("content-type") ?? "";
     console.log("[webhook-whatsapp] Content-Type:", contentType);
 
-    const skipVerify =
-      Deno.env.get("TWILIO_WEBHOOK_VERIFY_SKIP") === "true" ||
-      Deno.env.get("TWILIO_WEBHOOK_VERIFY_SKIP") === "1";
-
     let rawPayload: Record<string, unknown>;
 
-    if (contentType.includes("application/x-www-form-urlencoded")) {
+    if (isFormUrlEncodedContentType(contentType)) {
       const rec: Record<string, string> = {};
       const params = new URLSearchParams(rawBody);
       params.forEach((v, k) => {
         rec[k] = v;
       });
 
-      if (!skipVerify) {
+      if (!shouldSkipSignatureVerify) {
         const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
         if (!authToken) {
           console.warn("[webhook-whatsapp] TWILIO_AUTH_TOKEN missing; rejecting webhook");
@@ -189,13 +201,13 @@ Deno.serve(async (req) => {
           return respond({ error: "invalid_twilio_signature" }, 403);
         }
       } else {
-        console.warn("[webhook-whatsapp] TWILIO_WEBHOOK_VERIFY_SKIP set — signature verification skipped");
+        console.warn("[webhook-whatsapp] TWILIO_WEBHOOK_VERIFY_SKIP (local) — signature verification skipped");
       }
 
       rawPayload = { ...rec, _format: "twilio_form" as const };
     } else {
-      if (!skipVerify) {
-        return respond({ error: "invalid_or_unsupported_webhook_request" }, 403);
+      if (!shouldSkipSignatureVerify) {
+        return respond({ error: "invalid_or_unsupported_webhook_request" }, 400);
       }
       let json: Record<string, unknown>;
       try {
@@ -233,9 +245,9 @@ Deno.serve(async (req) => {
 
     console.log(
       "[webhook-whatsapp] Parsed -> from:",
-      fromNumber,
+      maskPhoneForLog(fromNumber),
       "to:",
-      toNumber,
+      maskPhoneForLog(toNumber),
       "body length:",
       messageBody.length,
       "numMedia:",
@@ -252,7 +264,9 @@ Deno.serve(async (req) => {
 
     const resolved = await resolvePhotographerByStudioNumber(toNumber);
     if (!resolved) {
-      console.warn(`[webhook-whatsapp] No photographer for studio To=${toNumber}`);
+      console.warn(
+        `[webhook-whatsapp] No photographer for studio To=${maskPhoneForLog(toNumber)}`,
+      );
       return respond({ ok: true, warning: "no_matching_photographer", to: toNumber });
     }
 
@@ -260,7 +274,9 @@ Deno.serve(async (req) => {
     const adminMobile = String(resolved.settings.admin_mobile_number ?? "").trim();
 
     if (!adminMobile) {
-      console.warn(`[webhook-whatsapp] admin_mobile_number not set for photographer ${photographerId}`);
+      console.warn(
+        `[webhook-whatsapp] admin_mobile_number not set for photographer ${maskIdentifierForLog(photographerId)}`,
+      );
       return respond({
         ok: true,
         ignored: true,
@@ -271,7 +287,7 @@ Deno.serve(async (req) => {
 
     if (!isOperatorSender(fromNumber, adminMobile)) {
       console.warn(
-        `[webhook-whatsapp] Ignoring non-operator sender from=${fromNumber} (admin_mobile normalized mismatch)`,
+        `[webhook-whatsapp] Ignoring non-operator sender from=${maskPhoneForLog(fromNumber)} (admin_mobile normalized mismatch)`,
       );
       return respond({
         ok: true,
@@ -309,7 +325,10 @@ Deno.serve(async (req) => {
         .eq("idempotency_key", providerMessageId)
         .maybeSingle();
       if (dup?.id) {
-        console.log("[webhook-whatsapp] Deduped webhook retry for", providerMessageId);
+        console.log(
+          "[webhook-whatsapp] Deduped webhook retry for",
+          maskIdentifierForLog(String(providerMessageId)),
+        );
         return respond({ ok: true, deduped: true, message_id: dup.id as string });
       }
     }
@@ -364,8 +383,8 @@ Deno.serve(async (req) => {
     console.log(
       JSON.stringify({
         type: "webhook_whatsapp_compliance_ingest",
-        photographer_id: photographerId,
-        message_id: messageId,
+        photographer_id: maskIdentifierForLog(photographerId),
+        message_id: maskIdentifierForLog(messageId),
         ...complianceIngest,
       }),
     );
