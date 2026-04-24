@@ -176,6 +176,102 @@ describe("fetchMemoryHeaders query shape", () => {
 
     const rows = await fetchMemoryHeaders({ from: () => builder } as never, "photo-1", null);
     expect(selects.some((s) => s.includes("supersedes_memory_id"))).toBe(true);
+    expect(selects.some((s) => s.includes("audience_source_tier"))).toBe(true);
     expect(rows[0]?.supersedes_memory_id).toBeNull();
+  });
+
+  it("filters out internal_team memories for client_visible thread tier", async () => {
+    const builder: Record<string, unknown> = {};
+    builder.from = () => builder;
+    builder.select = () => builder;
+    builder.eq = () => builder;
+    builder.is = () => builder;
+    builder.neq = () => builder;
+    builder.then = (resolve: (v: unknown) => unknown) =>
+      resolve({
+        data: [
+          {
+            id: "safe",
+            wedding_id: null,
+            scope: "studio",
+            person_id: null,
+            supersedes_memory_id: null,
+            audience_source_tier: null,
+            type: "t",
+            title: "Public",
+            summary: "",
+          },
+          {
+            id: "hidden",
+            wedding_id: null,
+            scope: "studio",
+            person_id: null,
+            supersedes_memory_id: null,
+            audience_source_tier: "internal_team",
+            type: "t",
+            title: "Planner only",
+            summary: "",
+          },
+        ],
+        error: null,
+      });
+
+    const rows = await fetchMemoryHeaders({ from: () => builder } as never, "photo-1", null, {
+      replyThreadAudienceTier: "client_visible",
+    });
+    expect(rows.map((r) => r.id)).toEqual(["safe"]);
+  });
+
+  it("excludes draft learning memory types from reply header scan", async () => {
+    const builder: Record<string, unknown> = {};
+    builder.from = () => builder;
+    builder.select = () => builder;
+    builder.eq = () => builder;
+    builder.is = () => builder;
+    builder.neq = () => builder;
+    builder.then = (resolve: (v: unknown) => unknown) =>
+      resolve({
+        data: [
+          {
+            id: "keep",
+            wedding_id: null,
+            scope: "studio",
+            person_id: null,
+            supersedes_memory_id: null,
+            audience_source_tier: null,
+            type: "operator_note",
+            title: "Real memory",
+            summary: "",
+          },
+          {
+            id: "drop-approval",
+            wedding_id: null,
+            scope: "studio",
+            person_id: null,
+            supersedes_memory_id: null,
+            audience_source_tier: null,
+            type: "draft_approval_edit_learning",
+            title: "Learning",
+            summary: "",
+          },
+          {
+            id: "drop-rewrite",
+            wedding_id: null,
+            scope: "studio",
+            person_id: null,
+            supersedes_memory_id: null,
+            audience_source_tier: null,
+            type: "draft_rewrite_feedback_learning",
+            title: "Feedback",
+            summary: "",
+          },
+        ],
+        error: null,
+      });
+
+    const rows = await fetchMemoryHeaders({ from: () => builder } as never, "photo-1", null);
+    expect(rows.map((r) => r.id)).toEqual(["keep"]);
+    expect(rows.every((r) => r.type !== "draft_approval_edit_learning")).toBe(true);
+    expect(rows.every((r) => r.type !== "draft_rewrite_feedback_learning")).toBe(true);
   });
 });

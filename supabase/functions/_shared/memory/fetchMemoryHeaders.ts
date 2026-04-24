@@ -1,5 +1,20 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type { Database } from "../../../../src/types/database.types.ts";
+import {
+  filterMemoryHeadersForThreadAudienceTier,
+  parseMemoryAudienceTier,
+  type MemoryAudienceTier,
+  type ThreadAudienceTier,
+} from "./memoryAudienceTierPolicy.ts";
+
+/**
+ * Learning-loop memory types (persona-derived draft signals). They must not re-enter reply / orchestrator
+ * header context (`buildAgentContext` → `fetchMemoryHeaders`). Pattern-review and direct DB reads remain available.
+ */
+const NON_REPLY_RETRIEVABLE_MEMORY_TYPES = new Set<string>([
+  "draft_approval_edit_learning",
+  "draft_rewrite_feedback_learning",
+]);
 
 /**
  * Matches `AgentContext["memoryHeaders"][number]` in `src/types/agent.types.ts`.
@@ -21,6 +36,11 @@ export type MemoryHeader = {
   type: string;
   title: string;
   summary: string;
+  /**
+   * Narrower-audience memories excluded from client-visible reply header scan when thread tier is looser.
+   * Null/undefined = legacy row (treat as client_visible).
+   */
+  audience_source_tier?: MemoryAudienceTier | null;
 };
 
 /**
@@ -41,6 +61,11 @@ export function supersededMemoryIdsInHeaderSet(
 export type FetchMemoryHeadersOptions = {
   /** Reply-mode: allow `scope='person'` rows only for these `people.id` values (thread participants). */
   replyModeParticipantPersonIds?: string[] | null;
+  /**
+   * Thread `threads.audience_tier` for gating `memories.audience_source_tier`.
+   * Defaults to `client_visible` (strictest) when omitted.
+   */
+  replyThreadAudienceTier?: ThreadAudienceTier;
 };
 
 function parseScope(raw: unknown): MemoryScope {
@@ -105,7 +130,7 @@ export async function fetchMemoryHeaders(
 
   let query = supabase
     .from("memories")
-    .select("id, wedding_id, scope, person_id, supersedes_memory_id, type, title, summary")
+    .select("id, wedding_id, scope, person_id, supersedes_memory_id, audience_source_tier, type, title, summary")
     .eq("photographer_id", photographerId)
     .is("archived_at", null);
 
@@ -123,20 +148,30 @@ export async function fetchMemoryHeaders(
     throw new Error(`fetchMemoryHeaders: ${error.message}`);
   }
 
+  const threadTier: ThreadAudienceTier = options?.replyThreadAudienceTier ?? "client_visible";
+
   const rows = (data ?? []) as Record<string, unknown>[];
-  return rows.map((r) => ({
-    id: String(r.id ?? ""),
-    wedding_id:
-      r.wedding_id != null && String(r.wedding_id).trim() !== "" ? String(r.wedding_id).trim() : null,
-    person_id:
-      r.person_id != null && String(r.person_id).trim() !== "" ? String(r.person_id).trim() : null,
-    supersedes_memory_id:
-      r.supersedes_memory_id != null && String(r.supersedes_memory_id).trim() !== ""
-        ? String(r.supersedes_memory_id).trim()
-        : null,
-    scope: parseScope(r.scope),
-    type: String(r.type ?? ""),
-    title: String(r.title ?? ""),
-    summary: String(r.summary ?? ""),
-  }));
+  const mapped = rows.map((r) => {
+    const audience_source_tier = parseMemoryAudienceTier(r.audience_source_tier);
+    return {
+      id: String(r.id ?? ""),
+      wedding_id:
+        r.wedding_id != null && String(r.wedding_id).trim() !== "" ? String(r.wedding_id).trim() : null,
+      person_id:
+        r.person_id != null && String(r.person_id).trim() !== "" ? String(r.person_id).trim() : null,
+      supersedes_memory_id:
+        r.supersedes_memory_id != null && String(r.supersedes_memory_id).trim() !== ""
+          ? String(r.supersedes_memory_id).trim()
+          : null,
+      audience_source_tier,
+      scope: parseScope(r.scope),
+      type: String(r.type ?? ""),
+      title: String(r.title ?? ""),
+      summary: String(r.summary ?? ""),
+    };
+  });
+
+  const withoutDraftLearning = mapped.filter((h) => !NON_REPLY_RETRIEVABLE_MEMORY_TYPES.has(h.type));
+
+  return filterMemoryHeadersForThreadAudienceTier(withoutDraftLearning, threadTier);
 }

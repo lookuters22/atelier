@@ -37,6 +37,13 @@ describe("captureDraftLearningInput", () => {
         type: "draft_approval_edit_learning",
       }),
     );
+    const fc = String((payloads[0] as { full_content?: string }).full_content ?? "");
+    expect(fc).toContain("pattern_fp:");
+    expect(fc).toContain("draft_id: d1");
+    expect(fc).toContain("edit_signal:");
+    expect(fc).toContain("middle_excerpt_");
+    expect(fc).not.toContain("original_body:");
+    expect(fc).not.toContain("edited_body:");
   });
 
   it("inserts approval_edit memory with explicit studio scope when weddingId is null", async () => {
@@ -66,6 +73,38 @@ describe("captureDraftLearningInput", () => {
         scope: "studio",
       }),
     );
+  });
+
+  it("approval_edit full_content does not embed full persona draft bodies (bounded signal only)", async () => {
+    vi.spyOn(patternReviewGate, "maybeRecordPatternMapReview").mockResolvedValue();
+    const payloads: unknown[] = [];
+    const supabase = {
+      from: vi.fn(() => ({
+        insert: (p: unknown) => {
+          payloads.push(p);
+          return Promise.resolve({ error: null });
+        },
+      })),
+    } as never;
+
+    const longA = `${"A".repeat(400)}tail-a`;
+    const longB = `${"B".repeat(400)}tail-b`;
+
+    await captureDraftLearningInput(supabase, {
+      channel: "approval_edit",
+      photographerId: "p1",
+      weddingId: "w1",
+      draftId: "d-long",
+      originalBody: longA,
+      editedBody: longB,
+    });
+
+    const fc = String((payloads[0] as { full_content?: string }).full_content ?? "");
+    expect(fc).not.toContain(longA);
+    expect(fc).not.toContain(longB);
+    expect(fc.length).toBeLessThanOrEqual(2500);
+    expect(fc).toMatch(/pattern_fp:[a-f0-9]+/);
+    expect(fc).toContain("draft_id: d-long");
   });
 
   it("inserts rewrite_feedback memory with explicit scope", async () => {
