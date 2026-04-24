@@ -69,6 +69,7 @@ After a worker finishes:
 | R4 | legacy verifier/tool-bypass hardening | review-carry | partial | hotspots identified from cleanup audit | Needs exact path-level prompt scoping. |
 | R5 | sleeper wake re-check hardening | review-carry | partial | hotspots identified from cleanup audit | Must be narrowed to each sleeper path before worker handoff. |
 | R6 | `C3` | review-carry | shipped | shared auth helper now reuses one anon client, calls `auth.getUser(jwt)`, and targeted test lane passes (5 tests) | Landed on integration branch at `80fbfc5` (`fix(C3): reuse auth supabase client`). |
+| R7 | `M24 + M5 + M23` (`webhook-whatsapp`) | review-carry | ready | confirmed live â€” signature-skip env has no prod guardrail, unsupported content-type returns `403`, and webhook logs include raw phone / photographer identifiers | Safe bundled slice: one ingress file plus small shared helper/tests; backend-only and no schema/UI overlap. |
 
 ## Next-up queue
 
