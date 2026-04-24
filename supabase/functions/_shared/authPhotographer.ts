@@ -1,4 +1,35 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+
+let cachedAuthAnonClient: SupabaseClient | null = null;
+
+function getAuthClient(): SupabaseClient {
+  const url = Deno.env.get("SUPABASE_URL");
+  const anon = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!url || !anon) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
+  }
+  if (!cachedAuthAnonClient) {
+    cachedAuthAnonClient = createClient(url, anon, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return cachedAuthAnonClient;
+}
+
+function extractBearerToken(req: Request): string | null {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice("Bearer ".length).trim();
+  return token.length > 0 ? token : null;
+}
+
+function requireBearerToken(req: Request): string {
+  const token = extractBearerToken(req);
+  if (token == null) {
+    throw new Error("Missing or invalid Authorization header");
+  }
+  return token;
+}
 
 /**
  * Resolves the authenticated user id (matches `photographers.id` / tenant) from the request JWT.
@@ -9,17 +40,11 @@ export async function requirePhotographerIdFromJwt(req: Request): Promise<string
   if (!url || !anon) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
   }
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    throw new Error("Missing or invalid Authorization header");
-  }
-  const supabase = createClient(url, anon, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  const jwt = requireBearerToken(req);
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser();
+  } = await getAuthClient().auth.getUser(jwt);
   if (error || !user?.id) {
     throw new Error("Unauthorized");
   }
@@ -36,15 +61,12 @@ export async function getPhotographerIdFromJwtIfPresent(
   const url = Deno.env.get("SUPABASE_URL");
   const anon = Deno.env.get("SUPABASE_ANON_KEY");
   if (!url || !anon) return null;
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  const supabase = createClient(url, anon, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  const jwt = extractBearerToken(req);
+  if (jwt == null) return null;
   const {
     data: { user },
     error,
-  } = await supabase.auth.getUser();
+  } = await getAuthClient().auth.getUser(jwt);
   if (error || !user?.id) return null;
   return user.id;
 }
