@@ -3,6 +3,7 @@
  * Checkpoint `gmail_last_history_id` advances only after full success (single Inngest step).
  */
 import { ensureValidGoogleAccessToken } from "../../_shared/gmail/ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "../../_shared/gmail/loadConnectedGoogleTokens.ts";
 import { isStoredHistoryIdAtOrAfterNotification } from "../../_shared/gmail/gmailPubSubPush.ts";
 import {
   GMAIL_DELTA_SYNC_V1_EVENT,
@@ -21,13 +22,15 @@ import { supabaseAdmin } from "../../_shared/supabase.ts";
 /** Throws if the row update fails so the Inngest step retries instead of returning success without a persisted checkpoint. */
 async function updateConnectedAccountOrThrow(
   connectedAccountId: string,
+  photographerId: string,
   fields: Record<string, unknown>,
   context: string,
 ): Promise<void> {
   const { error } = await supabaseAdmin
     .from("connected_accounts")
     .update(fields)
-    .eq("id", connectedAccountId);
+    .eq("id", connectedAccountId)
+    .eq("photographer_id", photographerId);
   if (error) {
     throw new Error(`[gmail.delta_sync] ${context}: ${error.message}`);
   }
@@ -119,13 +122,17 @@ export const processGmailDeltaSync = inngest.createFunction(
         account.gmail_last_history_id ?? "(null)",
       );
 
-      const { data: tok, error: tErr } = await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("connected_account_id", connectedAccountId)
-        .maybeSingle();
+      const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+        connectedAccountId,
+        photographerId,
+        accountRow: {
+          id: account.id as string,
+          photographer_id: account.photographer_id as string,
+          token_expires_at: account.token_expires_at as string | null,
+        },
+      });
 
-      if (tErr || !tok?.access_token) {
+      if (!loaded.ok) {
         const now = new Date().toISOString();
         await supabaseAdmin
           .from("connected_accounts")
@@ -136,17 +143,18 @@ export const processGmailDeltaSync = inngest.createFunction(
             gmail_delta_sync_last_error_at: now,
             updated_at: now,
           })
-          .eq("id", connectedAccountId);
+          .eq("id", connectedAccountId)
+          .eq("photographer_id", photographerId);
         return { ok: false as const, error: "tokens_not_found" };
       }
 
       const ensured = await ensureValidGoogleAccessToken(
         {
-          id: account.id as string,
-          photographer_id: account.photographer_id as string,
-          token_expires_at: account.token_expires_at as string | null,
+          id: loaded.account.id,
+          photographer_id: loaded.account.photographer_id,
+          token_expires_at: loaded.account.token_expires_at,
         },
-        { access_token: tok.access_token, refresh_token: tok.refresh_token },
+        loaded.tokens,
       );
       const accessToken = ensured.accessToken;
 
@@ -167,13 +175,15 @@ export const processGmailDeltaSync = inngest.createFunction(
               gmail_delta_sync_last_error_at: nowIso(),
               updated_at: nowIso(),
             })
-            .eq("id", connectedAccountId);
+            .eq("id", connectedAccountId)
+            .eq("photographer_id", photographerId);
           return { ok: false as const, error: catchupOnly.error };
         }
         await enqueueInboxThreadRequiresTriage(photographerId, catchupOnly.processed, traceId);
         const profile = await getGmailProfile(accessToken);
         await updateConnectedAccountOrThrow(
           connectedAccountId,
+          photographerId,
           {
             gmail_last_history_id: profile.historyId,
             gmail_sync_degraded: false,
@@ -197,6 +207,7 @@ export const processGmailDeltaSync = inngest.createFunction(
         const profile = await getGmailProfile(accessToken);
         await updateConnectedAccountOrThrow(
           connectedAccountId,
+          photographerId,
           {
             gmail_last_history_id: profile.historyId,
             gmail_sync_degraded: false,
@@ -255,7 +266,8 @@ export const processGmailDeltaSync = inngest.createFunction(
               gmail_delta_sync_last_error_at: nowIso(),
               updated_at: nowIso(),
             })
-            .eq("id", connectedAccountId);
+            .eq("id", connectedAccountId)
+            .eq("photographer_id", photographerId);
 
           const catchup = await runGmailCatchupRecentWindow(supabaseAdmin, {
             photographerId,
@@ -271,7 +283,8 @@ export const processGmailDeltaSync = inngest.createFunction(
                 gmail_delta_sync_last_error_at: nowIso(),
                 updated_at: nowIso(),
               })
-              .eq("id", connectedAccountId);
+              .eq("id", connectedAccountId)
+              .eq("photographer_id", photographerId);
             return { ok: false as const, error: catchup.error, history404: true as const };
           }
 
@@ -280,6 +293,7 @@ export const processGmailDeltaSync = inngest.createFunction(
           const profile = await getGmailProfile(accessToken);
           await updateConnectedAccountOrThrow(
             connectedAccountId,
+            photographerId,
             {
               gmail_last_history_id: profile.historyId,
               gmail_sync_degraded: false,
@@ -305,7 +319,8 @@ export const processGmailDeltaSync = inngest.createFunction(
             gmail_delta_sync_last_error_at: nowIso(),
             updated_at: nowIso(),
           })
-          .eq("id", connectedAccountId);
+          .eq("id", connectedAccountId)
+          .eq("photographer_id", photographerId);
         return { ok: false as const, error: inc.error };
       }
 
@@ -313,6 +328,7 @@ export const processGmailDeltaSync = inngest.createFunction(
 
       await updateConnectedAccountOrThrow(
         connectedAccountId,
+        photographerId,
         {
           gmail_last_history_id: inc.targetHistoryId,
           gmail_delta_sync_last_error: null,

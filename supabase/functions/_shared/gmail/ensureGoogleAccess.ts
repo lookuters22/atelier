@@ -62,6 +62,7 @@ export async function ensureValidGoogleAccessToken(
     await supabaseAdmin.from("connected_account_oauth_tokens").upsert(
       {
         connected_account_id: account.id,
+        photographer_id: account.photographer_id,
         access_token: refreshed.access_token,
         refresh_token: refreshed.refresh_token ?? tokens.refresh_token,
         updated_at: new Date().toISOString(),

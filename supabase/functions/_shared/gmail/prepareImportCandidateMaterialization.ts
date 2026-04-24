@@ -75,6 +75,7 @@ export async function runPrepareImportCandidateMaterialization(
 
     const bundle = await computeGmailMaterializationBundle(
       row.connected_account_id as string,
+      row.photographer_id as string,
       row.raw_provider_thread_id as string,
       typeof row.snippet === "string" ? row.snippet : null,
       {

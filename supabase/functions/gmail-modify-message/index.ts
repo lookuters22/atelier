@@ -4,6 +4,7 @@
  */
 import { requirePhotographerIdFromJwt } from "../_shared/authPhotographer.ts";
 import { ensureValidGoogleAccessToken } from "../_shared/gmail/ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "../_shared/gmail/loadConnectedGoogleTokens.ts";
 import {
   isGmailInsufficientScopeModifyError,
   modifyGmailMessageLabels,
@@ -114,13 +115,17 @@ Deno.serve(async (req) => {
       return json({ error: "Message not found for this Gmail id" }, 404);
     }
 
-    const { data: tok, error: tErr } = await supabaseAdmin
-      .from("connected_account_oauth_tokens")
-      .select("access_token, refresh_token")
-      .eq("connected_account_id", connectedAccountId)
-      .maybeSingle();
+    const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+      connectedAccountId,
+      photographerId,
+      accountRow: {
+        id: account.id as string,
+        photographer_id: account.photographer_id as string,
+        token_expires_at: account.token_expires_at as string | null,
+      },
+    });
 
-    if (tErr || !tok?.access_token) {
+    if (!loaded.ok) {
       return json({ error: "Google tokens not available. Reconnect in Settings." }, 401);
     }
 
@@ -143,11 +148,11 @@ Deno.serve(async (req) => {
 
     const ensured = await ensureValidGoogleAccessToken(
       {
-        id: account.id as string,
-        photographer_id: account.photographer_id as string,
-        token_expires_at: account.token_expires_at as string | null,
+        id: loaded.account.id,
+        photographer_id: loaded.account.photographer_id,
+        token_expires_at: loaded.account.token_expires_at,
       },
-      { access_token: tok.access_token, refresh_token: tok.refresh_token },
+      loaded.tokens,
     );
 
     let modified: { id: string; labelIds: string[] };

@@ -3,6 +3,7 @@
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { ensureValidGoogleAccessToken } from "./ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "./loadConnectedGoogleTokens.ts";
 import {
   extractFirstEmailFromAddressString,
   extractFirstMailboxFromRecipientField,
@@ -36,38 +37,33 @@ async function loadGoogleTokens(
   | { ok: true; accessToken: string; fromEmail: string }
   | { ok: false; error: string }
 > {
-  const { data: account, error: aErr } = await supabaseAdmin
-    .from("connected_accounts")
-    .select("id, photographer_id, email, token_expires_at")
-    .eq("id", connectedAccountId)
-    .eq("photographer_id", photographerId)
-    .eq("provider", "google")
-    .maybeSingle();
+  const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+    connectedAccountId,
+    photographerId,
+  });
 
-  if (aErr || !account) {
-    return { ok: false, error: "Connected Google account not found" };
+  if (!loaded.ok) {
+    return {
+      ok: false,
+      error:
+        loaded.code === "connected_account_not_found"
+          ? "Connected Google account not found"
+          : "OAuth tokens not found for this account",
+    };
   }
 
-  const { data: tok, error: tErr } = await supabaseAdmin
-    .from("connected_account_oauth_tokens")
-    .select("access_token, refresh_token")
-    .eq("connected_account_id", connectedAccountId)
-    .maybeSingle();
-
-  if (tErr || !tok?.access_token) {
-    return { ok: false, error: "OAuth tokens not found for this account" };
-  }
+  const { account, tokens: tok } = loaded;
 
   try {
     const ensured = await ensureValidGoogleAccessToken(
       {
-        id: account.id as string,
-        photographer_id: account.photographer_id as string,
-        token_expires_at: account.token_expires_at as string | null,
+        id: account.id,
+        photographer_id: account.photographer_id,
+        token_expires_at: account.token_expires_at,
       },
-      { access_token: tok.access_token as string, refresh_token: tok.refresh_token as string | null },
+      { access_token: tok.access_token, refresh_token: tok.refresh_token },
     );
-    const fromEmail = String(account.email ?? "").trim();
+    const fromEmail = account.email.trim();
     if (!fromEmail) {
       return { ok: false, error: "Connected account has no email address" };
     }

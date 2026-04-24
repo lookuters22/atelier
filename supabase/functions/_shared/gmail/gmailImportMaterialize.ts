@@ -162,6 +162,7 @@ export async function loadGmailImportForApprove(
 
   const bundle = await computeGmailMaterializationBundle(
     row.connected_account_id as string,
+    photographerId ?? "",
     row.raw_provider_thread_id as string,
     typeof row.snippet === "string" ? row.snippet : null,
     persistRender,

@@ -2,6 +2,7 @@
  * A3: Refresh cached Gmail labels.list for Settings — live Gmail API + token refresh off the Edge path.
  */
 import { ensureValidGoogleAccessToken } from "../../_shared/gmail/ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "../../_shared/gmail/loadConnectedGoogleTokens.ts";
 import { listGmailLabels } from "../../_shared/gmail/gmailThreads.ts";
 import {
   GMAIL_LABELS_REFRESH_V1_EVENT,
@@ -67,13 +68,17 @@ export const processGmailLabelsRefresh = inngest.createFunction(
         throw new Error(aErr?.message ?? "connected_account_not_found");
       }
 
-      const { data: tok, error: tErr } = await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("connected_account_id", connectedAccountId)
-        .maybeSingle();
+      const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+        connectedAccountId,
+        photographerId,
+        accountRow: {
+          id: account.id,
+          photographer_id: account.photographer_id,
+          token_expires_at: account.token_expires_at,
+        },
+      });
 
-      if (tErr || !tok) {
+      if (!loaded.ok) {
         const msg = "OAuth tokens not found for this account";
         logA4WorkerOpLatencyV1({
           ...base,
@@ -98,11 +103,11 @@ export const processGmailLabelsRefresh = inngest.createFunction(
       try {
         const ensured = await ensureValidGoogleAccessToken(
           {
-            id: account.id,
-            photographer_id: account.photographer_id,
-            token_expires_at: account.token_expires_at,
+            id: loaded.account.id,
+            photographer_id: loaded.account.photographer_id,
+            token_expires_at: loaded.account.token_expires_at,
           },
-          { access_token: tok.access_token, refresh_token: tok.refresh_token },
+          loaded.tokens,
         );
         accessToken = ensured.accessToken;
       } catch (e) {

@@ -2,6 +2,7 @@
  * Renew Gmail `users.watch` before expiration. Topic from env `GMAIL_PUBSUB_TOPIC_NAME` only.
  */
 import { ensureValidGoogleAccessToken } from "../../_shared/gmail/ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "../../_shared/gmail/loadConnectedGoogleTokens.ts";
 import { startGmailUsersWatch } from "../../_shared/gmail/gmailWatchHistory.ts";
 import {
   GMAIL_WATCH_RENEW_V1_EVENT,
@@ -42,23 +43,31 @@ export const renewGmailWatch = inngest.createFunction(
         );
       }
 
-      const { data: tok, error: tErr } = await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("connected_account_id", connectedAccountId)
-        .maybeSingle();
-
-      if (tErr || !tok?.access_token) {
-        throw new Error(tErr?.message ?? "renew_gmail_watch: oauth tokens not found");
-      }
-
-      const ensured = await ensureValidGoogleAccessToken(
-        {
+      const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+        connectedAccountId,
+        photographerId,
+        accountRow: {
           id: account.id as string,
           photographer_id: account.photographer_id as string,
           token_expires_at: account.token_expires_at as string | null,
         },
-        { access_token: tok.access_token, refresh_token: tok.refresh_token },
+      });
+
+      if (!loaded.ok) {
+        throw new Error(
+          loaded.code === "oauth_tokens_not_found"
+            ? "renew_gmail_watch: oauth tokens not found"
+            : "renew_gmail_watch: connected_account not found for id + photographer_id",
+        );
+      }
+
+      const ensured = await ensureValidGoogleAccessToken(
+        {
+          id: loaded.account.id,
+          photographer_id: loaded.account.photographer_id,
+          token_expires_at: loaded.account.token_expires_at,
+        },
+        loaded.tokens,
       );
 
       const w = await startGmailUsersWatch(ensured.accessToken, topicName);
@@ -74,6 +83,7 @@ export const renewGmailWatch = inngest.createFunction(
         .from("connected_accounts")
         .select("gmail_last_history_id")
         .eq("id", connectedAccountId)
+        .eq("photographer_id", photographerId)
         .maybeSingle();
 
       const patch: Record<string, unknown> = {
@@ -89,7 +99,8 @@ export const renewGmailWatch = inngest.createFunction(
       const { error: uErr } = await supabaseAdmin
         .from("connected_accounts")
         .update(patch)
-        .eq("id", connectedAccountId);
+        .eq("id", connectedAccountId)
+        .eq("photographer_id", photographerId);
       if (uErr) throw uErr;
 
       return { ok: true as const, expiration: expIso, historyId: w.historyId };

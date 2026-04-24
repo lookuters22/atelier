@@ -7,6 +7,7 @@
  * full Gmail thread is still loaded in G2 prepare before approval.
  */
 import { ensureValidGoogleAccessToken } from "../../_shared/gmail/ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "../../_shared/gmail/loadConnectedGoogleTokens.ts";
 import {
   GMAIL_THREAD_METADATA_CONCURRENCY,
   runPoolWithConcurrency,
@@ -80,13 +81,17 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
         return { ok: false as const, error: "account_not_found" };
       }
 
-      const { data: tok, error: tErr } = await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("connected_account_id", connectedAccountId)
-        .maybeSingle();
+      const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+        connectedAccountId,
+        photographerId,
+        accountRow: {
+          id: account.id as string,
+          photographer_id: account.photographer_id as string,
+          token_expires_at: account.token_expires_at as string | null,
+        },
+      });
 
-      if (tErr || !tok) {
+      if (!loaded.ok) {
         await supabaseAdmin
           .from("connected_accounts")
           .update({
@@ -94,25 +99,27 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
             sync_error_summary: "OAuth tokens missing for this connection — reconnect Gmail in Settings.",
             updated_at: new Date().toISOString(),
           })
-          .eq("id", connectedAccountId);
+          .eq("id", connectedAccountId)
+          .eq("photographer_id", photographerId);
         return { ok: false as const, error: "tokens_not_found" };
       }
 
       await supabaseAdmin
         .from("connected_accounts")
         .update({ sync_status: "syncing", updated_at: new Date().toISOString() })
-        .eq("id", connectedAccountId);
+        .eq("id", connectedAccountId)
+        .eq("photographer_id", photographerId);
 
       const nowIso = () => new Date().toISOString();
 
       try {
         const ensured = await ensureValidGoogleAccessToken(
           {
-            id: account.id,
-            photographer_id: account.photographer_id,
-            token_expires_at: account.token_expires_at,
+            id: loaded.account.id,
+            photographer_id: loaded.account.photographer_id,
+            token_expires_at: loaded.account.token_expires_at,
           },
-          { access_token: tok.access_token, refresh_token: tok.refresh_token },
+          loaded.tokens,
         );
         const accessToken = ensured.accessToken;
 
@@ -136,7 +143,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
                     .slice(0, 500),
                 updated_at: nowIso(),
               })
-              .eq("id", connectedAccountId);
+              .eq("id", connectedAccountId)
+              .eq("photographer_id", photographerId);
             return {
               ok: false as const,
               error: msg,
@@ -175,7 +183,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
                 "Gmail label sync: 0 threads (no messages with this label).",
               updated_at: nowIso(),
             })
-            .eq("id", connectedAccountId);
+            .eq("id", connectedAccountId)
+            .eq("photographer_id", photographerId);
           return {
             ok: true as const,
             staged: 0,
@@ -276,7 +285,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
               sync_error_summary: summary.slice(0, 500),
               updated_at: nowIso(),
             })
-            .eq("id", connectedAccountId);
+            .eq("id", connectedAccountId)
+            .eq("photographer_id", photographerId);
           return { ok: false as const, error: summary, threadRefs: threadRefs.length, metadataFailures };
         }
 
@@ -295,7 +305,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
                 sync_error_summary: upErr.message.slice(0, 500),
                 updated_at: nowIso(),
               })
-              .eq("id", connectedAccountId);
+              .eq("id", connectedAccountId)
+              .eq("photographer_id", photographerId);
             return { ok: false as const, error: upErr.message };
           }
           const ids = (upserted ?? [])
@@ -342,7 +353,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
             sync_error_summary: partialSummary,
             updated_at: nowIso(),
           })
-          .eq("id", connectedAccountId);
+          .eq("id", connectedAccountId)
+          .eq("photographer_id", photographerId);
 
         return {
           ok: true as const,
@@ -363,7 +375,8 @@ export const syncGmailLabelImportCandidates = inngest.createFunction(
             sync_error_summary: summary,
             updated_at: nowIso(),
           })
-          .eq("id", connectedAccountId);
+          .eq("id", connectedAccountId)
+          .eq("photographer_id", photographerId);
         return { ok: false as const, error: summary };
       }
     });

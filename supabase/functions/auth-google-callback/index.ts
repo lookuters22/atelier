@@ -5,6 +5,7 @@ import {
   exchangeGoogleAuthorizationCode,
   mergeGoogleReconnectRefreshToken,
 } from "../_shared/gmail/googleOAuthToken.ts";
+import { loadConnectedGoogleTokens } from "../_shared/gmail/loadConnectedGoogleTokens.ts";
 import { verifyGoogleOAuthState } from "../_shared/gmail/googleOAuthState.ts";
 import { fetchWithTimeout } from "../_shared/http/fetchWithTimeout.ts";
 import { supabaseAdmin } from "../_shared/supabase.ts";
@@ -89,18 +90,15 @@ Deno.serve(async (req) => {
     return fail("db_error");
   }
 
-  const { data: existingTokens } = existingRow?.id
-    ? await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("refresh_token")
-        .eq("connected_account_id", existingRow.id)
-        .maybeSingle()
-    : { data: null };
-
-  const refreshTokenToStore = mergeGoogleReconnectRefreshToken(
-    tokens.refresh_token,
-    existingTokens?.refresh_token ?? null,
-  );
+  let refreshTokenToStore = mergeGoogleReconnectRefreshToken(tokens.refresh_token, null);
+  if (existingRow?.id) {
+    const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+      connectedAccountId: existingRow.id,
+      photographerId: payload.photographerId,
+    });
+    const existingRt = loaded.ok ? loaded.tokens.refresh_token : null;
+    refreshTokenToStore = mergeGoogleReconnectRefreshToken(tokens.refresh_token, existingRt);
+  }
 
   const { error: rpcErr } = await supabaseAdmin.rpc("complete_google_oauth_connection", {
     p_photographer_id: payload.photographerId,

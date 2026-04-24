@@ -3,6 +3,7 @@
  * Used by import-candidate-review (approve fallback) and by G2 prepare worker (precompute before approval).
  */
 import { ensureValidGoogleAccessToken } from "./ensureGoogleAccess.ts";
+import { loadConnectedGoogleTokens } from "./loadConnectedGoogleTokens.ts";
 import { preferredCanonicalBody, type GmailPayloadPart } from "./gmailMessageBody.ts";
 import type { GmailAttachmentCandidate } from "./gmailMimeAttachments.ts";
 import {
@@ -103,9 +104,12 @@ import { extractSuppressionRelevantInboundHeaders } from "./inboundHeaderExtract
  *
  * @param gmailThreadFetchCache Optional: when provided (e.g. grouped batch), skip repeated
  *   Gmail thread fetches for the same `(connectedAccountId, rawProviderThreadId)` in one chunk.
+ *
+ * @param photographerId Tenant id — required so OAuth token reads are scoped with `connected_account_id`.
  */
 export async function computeGmailMaterializationBundle(
   connectedAccountId: string,
+  photographerId: string,
   rawProviderThreadId: string,
   snippetFallback: string | null,
   persist?: GmailMaterializationPersistOptions | null,
@@ -143,19 +147,12 @@ export async function computeGmailMaterializationBundle(
         });
       }
     } else {
-      const { data: account, error: aErr } = await supabaseAdmin
-        .from("connected_accounts")
-        .select("id, photographer_id, token_expires_at")
-        .eq("id", connectedAccountId)
-        .maybeSingle();
+      const loaded = await loadConnectedGoogleTokens(supabaseAdmin, {
+        connectedAccountId,
+        photographerId,
+      });
 
-      const { data: tok, error: tErr } = await supabaseAdmin
-        .from("connected_account_oauth_tokens")
-        .select("access_token, refresh_token")
-        .eq("connected_account_id", connectedAccountId)
-        .maybeSingle();
-
-      if (aErr || !account || tErr || !tok?.access_token) {
+      if (!loaded.ok) {
         if (substepTel) {
           logGmailMaterializeFallbackSubstepV1({
             ...baseCor,
@@ -175,11 +172,13 @@ export async function computeGmailMaterializationBundle(
         };
       }
 
+      const { account, tokens: tok } = loaded;
+
       const ensured = await ensureValidGoogleAccessToken(
         {
-          id: account.id as string,
-          photographer_id: account.photographer_id as string,
-          token_expires_at: account.token_expires_at as string | null,
+          id: account.id,
+          photographer_id: account.photographer_id,
+          token_expires_at: account.token_expires_at,
         },
         { access_token: tok.access_token, refresh_token: tok.refresh_token },
       );
